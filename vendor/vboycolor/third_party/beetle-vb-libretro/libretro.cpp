@@ -2261,6 +2261,29 @@ static void check_variables(void)
 static uint16_t input_buf[MAX_PLAYERS];
 static uint16_t low_battery;
 
+static void FreeVideoSurface(void)
+{
+#if defined(WANT_16BPP)
+   if(surf.pixels16)
+      free(surf.pixels16);
+#elif defined(WANT_32BPP)
+   if(surf.pixels)
+      free(surf.pixels);
+#endif
+   surf.pixels8           = NULL;
+   surf.pixels16          = NULL;
+   surf.pixels            = NULL;
+   surf.w                 = 0;
+   surf.h                 = 0;
+   surf.pitchinpix        = 0;
+   surf.format.bpp        = 0;
+   surf.format.colorspace = 0;
+   surf.format.Rshift     = 0;
+   surf.format.Gshift     = 0;
+   surf.format.Bshift     = 0;
+   surf.format.Ashift     = 0;
+}
+
 bool retro_load_game(const struct retro_game_info *info)
 {
    struct MDFN_PixelFormat pix_fmt;
@@ -2373,6 +2396,7 @@ void retro_unload_game(void)
    MDFN_FlushGameCheats(0);
    CloseGame();
    MDFNMP_Kill();
+   FreeVideoSurface();
 }
 
 static void update_input(void)
@@ -2559,25 +2583,7 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
 
 void retro_deinit(void)
 {
-#if defined(WANT_16BPP)
-   if(surf.pixels16)
-      free(surf.pixels16);
-#elif defined(WANT_32BPP)
-   if(surf.pixels)
-      free(surf.pixels);
-#endif
-   surf.pixels8           = NULL;
-   surf.pixels16          = NULL;
-   surf.pixels            = NULL;
-   surf.w                 = 0;
-   surf.h                 = 0;
-   surf.pitchinpix        = 0;
-   surf.format.bpp        = 0;
-   surf.format.colorspace = 0;
-   surf.format.Rshift     = 0;
-   surf.format.Gshift     = 0;
-   surf.format.Bshift     = 0;
-   surf.format.Ashift     = 0;
+   FreeVideoSurface();
 
    libretro_supports_bitmasks = false;
 }

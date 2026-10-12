@@ -33,6 +33,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <new>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -1004,8 +1005,14 @@ extern "C"
     {
         beetle_retro_unload_game();
         vbgo_tiletrack_set_enabled(false);
-        g_renderer.SetPack(nullptr);
-        g_pack.Clear();
+        // Release per-game cache capacities before the Wii loads the next cartridge.
+        g_renderer.~ColorPackRenderer();
+        new (&g_renderer) ColorPackRenderer();
+        g_pack.~TileColorPack();
+        new (&g_pack) TileColorPack();
+        std::vector<uint8_t>().swap(g_raw);
+        std::vector<uint8_t>().swap(g_colored);
+        std::vector<uint8_t>().swap(g_out);
         g_loaded = false;
     }
 

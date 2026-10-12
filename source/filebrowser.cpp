@@ -574,7 +574,7 @@ int BrowserLoadFile()
 {
 	char filepath[1024];
 	size_t filesize = 0;
-	romLoaded = false;
+	CloseVBGame();
 
 	int device;
 

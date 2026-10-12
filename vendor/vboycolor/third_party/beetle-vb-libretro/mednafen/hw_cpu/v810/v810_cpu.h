@@ -5,6 +5,7 @@
 #ifndef V810_CPU_H_
 #define V810_CPU_H_
 
+#include <vector>
 #include "fpu-new/softfloat.h"
 #include "../../mednafen-types.h"
 #include "../../state.h"
@@ -313,7 +314,7 @@ class V810
  bool have_src_cache, have_dst_cache;
 
  uint8 *FastMap[(1ULL << 32) / V810_FAST_MAP_PSIZE];
- uint8 *FastMapAllocList;
+ std::vector<uint8 *> FastMapAllocList;
 
  /* For CacheDump and CacheRestore */
  void CacheOpMemStore(v810_timestamp_t &timestamp, uint32 A, uint32 V);

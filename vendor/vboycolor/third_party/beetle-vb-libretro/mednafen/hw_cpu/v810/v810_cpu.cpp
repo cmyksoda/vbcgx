@@ -315,9 +315,9 @@ bool V810::Init(V810_Emu_Mode mode, bool vb_mode)
 
 void V810::Kill(void)
 {
-   if (FastMapAllocList)
-      free(FastMapAllocList);
-   FastMapAllocList = NULL;
+   for (uint8 *allocation : FastMapAllocList)
+      free(allocation);
+   FastMapAllocList.clear();
 }
 
 void V810::SetInt(int level)
@@ -345,7 +345,7 @@ uint8 *V810::SetFastMap(uint32 addresses[], uint32 length, unsigned int num_addr
          FastMap[addr / V810_FAST_MAP_PSIZE] = ret - addresses[i];
    }
 
-   FastMapAllocList = ret;
+   FastMapAllocList.push_back(ret);
 
    return ret;
 }
