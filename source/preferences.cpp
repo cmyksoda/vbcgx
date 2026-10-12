@@ -30,11 +30,12 @@
 #include "menu.h"
 #include "fileop.h"
 #include "videosupport.h"
+#include "emu/ColorSchemes.h"
 #include "pad.h"
 
 #if defined(HW_RVL) || defined(HW_DOL)
 #include "drivers/ogc/wii/WiiPlatform.h"
-#include "drivers/ogc/gamecube/GameCubePlatform.h"
+
 #include "drivers/ogc/videofilters.h"
 #endif
 
@@ -165,6 +166,11 @@ preparePrefsData ()
 	createXMLSetting("videoAspectRatioCorrection", "Aspect Ratio Correction", toStr(EmuSettings.videoAspectRatioCorrection));
 	createXMLSetting("hideOverscan", "Cropping", toStr(EmuSettings.hideOverscan));
 	createXMLSetting("currentPalette", "Palette", toStr(EmuSettings.currentPalette));
+    createXMLSetting("colorPacks", "Color Packs", BtoStr(EmuSettings.colorPacks));
+    createXMLSetting("tint", "tint", toStr(EmuSettings.tint));
+    createXMLSetting("gradient", "gradient", toStr(EmuSettings.gradient));
+    createXMLSetting("stereoMode", "stereoMode", toStr(EmuSettings.stereoMode));
+    createXMLSetting("colorMode", "colorMode", toStr(EmuSettings.colorMode));
 	createXMLSetting("videoBilinearFilter", "Bilinear Filtering", BtoStr(EmuSettings.videoBilinearFilter));
 	createXMLSetting("videoHardwareSoften", "Hardware Soften", toStr(EmuSettings.videoHardwareSoften));
 	createXMLSetting("videoScanlines", "Scanlines", BtoStr(EmuSettings.videoScanlines));
@@ -200,14 +206,11 @@ preparePrefsData ()
 	createXMLSetting("turboModeButton", "Turbo Mode Button", toStr(EmuSettings.turboModeButton));
 	createXMLSetting("gamepadMenuToggle", "Gamepad Menu Toggle", toStr(EmuSettings.gamepadMenuToggle));
 
-	createXMLController(btnmap[CTRL_PAD][INPUT_HW_GAMECUBE], "btnmapping_pad_gcpad", "NES Pad - GameCube Controller");
-	createXMLController(btnmap[CTRL_PAD][INPUT_HW_WIIMOTE], "btnmapping_pad_wiimote", "NES Pad - Wiimote");
-	createXMLController(btnmap[CTRL_PAD][INPUT_HW_CLASSIC], "btnmapping_pad_classic", "NES Pad - Classic Controller");
-	createXMLController(btnmap[CTRL_PAD][INPUT_HW_WUPC], "btnmapping_pad_wupc", "NES Pad - Wii U Pro Controller");
-	createXMLController(btnmap[CTRL_PAD][INPUT_HW_DRC], "btnmapping_pad_wiidrc", "NES Pad - Wii U Gamepad");
-	createXMLController(btnmap[CTRL_PAD][INPUT_HW_NUNCHUK], "btnmapping_pad_nunchuk", "NES Pad - Nunchuk + Wiimote");
-	createXMLController(btnmap[CTRL_ZAPPER][INPUT_HW_GAMECUBE], "btnmapping_zapper_gcpad", "Zapper - GameCube Controller");
-	createXMLController(btnmap[CTRL_ZAPPER][INPUT_HW_WIIMOTE], "btnmapping_zapper_wiimote", "Zapper - Wiimote");
+	createXMLController(btnmap[CTRL_PAD][INPUT_HW_GAMECUBE], "btnmapping_pad_gcpad", "Virtual Boy Pad - GameCube Controller");
+	createXMLController(btnmap[CTRL_PAD][INPUT_HW_CLASSIC], "btnmapping_pad_classic", "Virtual Boy Pad - Classic Controller");
+	createXMLController(btnmap[CTRL_PAD][INPUT_HW_WUPC], "btnmapping_pad_wupc", "Virtual Boy Pad - Wii U Pro Controller");
+	createXMLController(btnmap[CTRL_PAD][INPUT_HW_DRC], "btnmapping_pad_wiidrc", "Virtual Boy Pad - Wii U Gamepad");
+	createXMLController(btnmap[CTRL_PAD][INPUT_HW_NUNCHUK], "btnmapping_pad_nunchuk", "Virtual Boy Pad - Nunchuk + Wiimote");
 
 	int datasize = mxmlSaveString(xml, (char *)savebuffer, SAVEBUFFERSIZE, XMLSaveCallback);
 
@@ -346,6 +349,11 @@ decodePrefsData ()
 	loadXMLSetting(&EmuSettings.videoAspectRatioCorrection, "videoAspectRatioCorrection");
 	loadXMLSetting(&EmuSettings.hideOverscan, "hideOverscan");
 	loadXMLSetting(&EmuSettings.currentPalette, "currentPalette");
+    loadXMLSetting(&EmuSettings.colorPacks, "colorPacks");
+    loadXMLSetting(&EmuSettings.tint, "tint");
+    loadXMLSetting(&EmuSettings.gradient, "gradient");
+    loadXMLSetting(&EmuSettings.stereoMode, "stereoMode");
+    loadXMLSetting(&EmuSettings.colorMode, "colorMode");
 	loadXMLSetting(&EmuSettings.videoBilinearFilter, "videoBilinearFilter");
 	loadXMLSetting(&EmuSettings.videoHardwareSoften, "videoHardwareSoften");
 	loadXMLSetting(&EmuSettings.videoUpscalingFilter, "videoUpscalingFilter");
@@ -380,13 +388,10 @@ decodePrefsData ()
 	loadXMLSetting(&EmuSettings.gamepadMenuToggle, "gamepadMenuToggle");
 
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_GAMECUBE], "btnmapping_pad_gcpad");
-	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_WIIMOTE], "btnmapping_pad_wiimote");
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_CLASSIC], "btnmapping_pad_classic");
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_WUPC], "btnmapping_pad_wupc");
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_DRC], "btnmapping_pad_wiidrc");
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_NUNCHUK], "btnmapping_pad_nunchuk");
-	loadXMLController(btnmap[CTRL_ZAPPER][INPUT_HW_GAMECUBE], "btnmapping_zapper_gcpad");
-	loadXMLController(btnmap[CTRL_ZAPPER][INPUT_HW_WIIMOTE], "btnmapping_zapper_wiimote");
 
 	mxmlDelete(xml);
 	return true;
@@ -414,8 +419,12 @@ void FixInvalidSettings()
 		}
 	}
 
-	if(!(EmuSettings.currentPalette >= 0 && EmuSettings.currentPalette <= MAXPAL))
-		EmuSettings.currentPalette = 1;
+    if (EmuSettings.colorMode < 0 || EmuSettings.colorMode >= 5) EmuSettings.colorMode = 0;
+    if (EmuSettings.stereoMode < 0 || EmuSettings.stereoMode >= 9) EmuSettings.stereoMode = 0;
+    if (EmuSettings.gradient < 0 || EmuSettings.gradient >= ColorSchemes::kGradientCount) EmuSettings.gradient = 0;
+    if (EmuSettings.tint < 0 || EmuSettings.tint >= ColorSchemes::kTintCount) EmuSettings.tint = 0;
+	if(!(EmuSettings.currentPalette >= 0 && EmuSettings.currentPalette < ColorSchemes::kMulticolorCount))
+		EmuSettings.currentPalette = 0;
 	if(!(EmuSettings.videoZoomHor > 0.5 && EmuSettings.videoZoomHor < 1.5))
 		EmuSettings.videoZoomHor = 1.0;
 	if(!(EmuSettings.videoZoomVert > 0.5 && EmuSettings.videoZoomVert < 1.5))
@@ -431,7 +440,7 @@ void FixInvalidSettings()
 	if(EmuSettings.language < 0 || EmuSettings.language >= LANG_LENGTH)
 		EmuSettings.language = LANG_ENGLISH;
 	if(EmuSettings.controller > CTRL_PAD4 || EmuSettings.controller < CTRL_ZAPPER)
-		EmuSettings.controller = CTRL_PAD2;
+		EmuSettings.controller = CTRL_PAD;
 	if(!(EmuSettings.videoHardwareSoften >= VIDEO_HW_SOFTEN_OFF && EmuSettings.videoHardwareSoften < VIDEO_HW_SOFTEN_LENGTH))
 		EmuSettings.videoHardwareSoften = VIDEO_HW_SOFTEN_AUTO;
 	if(!(EmuSettings.videoAspectRatioCorrection >= VIDEO_ASPECT_RATIO_CORRECTION_NONE && EmuSettings.videoAspectRatioCorrection < VIDEO_ASPECT_RATIO_CORRECTION_LENGTH))
@@ -442,10 +451,6 @@ void FixInvalidSettings()
 	if(!(EmuSettings.videoUpscalingFilter >= UPSCALE_NONE && EmuSettings.videoUpscalingFilter < NUM_UPSCALE_FILTERS))
 		EmuSettings.videoUpscalingFilter = UPSCALE_NONE;
 #endif
-	if(EmuSettings.timing < TIMING_NTSC || EmuSettings.timing >= TIMING_LENGTH)
-		EmuSettings.timing = TIMING_AUTOMATIC;
-	if(!(EmuSettings.hideOverscan >= HIDEOVERSCAN_OFF && EmuSettings.hideOverscan < HIDEOVERSCAN_LENGTH))
-		EmuSettings.hideOverscan = HIDEOVERSCAN_BOTH;
 	if(!(EmuSettings.wiimoteOrientation >= WIIMOTE_ORIENTATION_VERTICAL && EmuSettings.wiimoteOrientation < WIIMOTE_ORIENTATION_LENGTH))
 		EmuSettings.wiimoteOrientation = WIIMOTE_ORIENTATION_VERTICAL;
 }
@@ -502,7 +507,7 @@ void DefaultSettings()
 
 	EmuSettings.videoMode = VIDEOMODE_AUTO;
 	EmuSettings.hideOverscan = HIDEOVERSCAN_BOTH;
-	EmuSettings.currentPalette = 1;
+	EmuSettings.currentPalette = 0;
 	EmuSettings.videoBilinearFilter = false;
 	EmuSettings.videoHardwareSoften = VIDEO_HW_SOFTEN_SHARP;
 	EmuSettings.videoScanlines = false;
@@ -528,8 +533,10 @@ void DefaultSettings()
 		EmuSettings.videoAspectRatioCorrection = VIDEO_ASPECT_RATIO_CORRECTION_NONE;
 #endif
 
-	EmuSettings.timing = TIMING_AUTOMATIC;
-	EmuSettings.controller = CTRL_PAD2; // NES pad, Four Score, Zapper
+	EmuSettings.colorMode = EmuSettings.stereoMode = EmuSettings.gradient = EmuSettings.tint = 0;
+    EmuSettings.colorPacks = true;
+    EmuSettings.timing = TIMING_AUTOMATIC;
+	EmuSettings.controller = CTRL_PAD;
 	EmuSettings.crosshair = true; // show zapper crosshair
 	EmuSettings.spriteLimit = true; // enforce 8 sprite limit
 	EmuSettings.gameGenie = false;
@@ -546,10 +553,10 @@ void DefaultSettings()
 	EmuSettings.rumble = true;
 	EmuSettings.previewImage = PREVIEWIMAGE_COVER;
 	EmuSettings.hideSramSaving = false;
-	
+
 #ifdef HW_RVL
 	EmuSettings.language = CONF_GetLanguage();
-	
+
 	if(EmuSettings.language == LANG_TRAD_CHINESE)
 		EmuSettings.language = LANG_SIMP_CHINESE;
 #elif HW_DOL

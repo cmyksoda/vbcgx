@@ -11,6 +11,7 @@
 
 #include <gccore.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "OgcEmulatorAudio.h"
 #include "../../fceugx.h"
@@ -167,10 +168,13 @@ void OgcEmulatorAudio::playSound(const int32_t* buffer, int count)
 
 	for (int i = 0; i < count; i++) {
 		// Duplicate the 16-bit mono sample into both stereo channels.
-		u32 sample = (u32)(buffer[i] & 0xffff);
-		mixbuffer[head++] = sample | (sample << 16);
-		if (head == MIX_SAMPLES)
-			head = 0;
+        int next = head + 1;
+        if (next == MIX_SAMPLES) next = 0;
+        while (next == mixtail && appRequest == AppRequest::NONE) usleep(100);
+        if (appRequest != AppRequest::NONE) break;
+        mixbuffer[head] = (uint32_t)buffer[i];
+        head = next;
+        mixhead = head;
 	}
 
 	mixhead = head;
@@ -185,11 +189,11 @@ void OgcEmulatorAudio::updateSampleRate(int rate)
 {
 	if (samplerate != rate) {
 		samplerate = rate;
-		FCEUI_Sound(samplerate);
+
 	}
 }
 
 void OgcEmulatorAudio::setSampleRate()
 {
-	FCEUI_Sound(samplerate);
+
 }

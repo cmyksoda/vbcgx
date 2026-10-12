@@ -23,8 +23,8 @@
 #include "fceuram.h"
 #include "fceustate.h"
 #include "patch.h"
-#include "pocketnes/goombasav.h"
-#include "pocketnes/pocketnesrom.h"
+
+
 #include "drivers/Platform.h"
 #include "drivers/FileSystemDriver.h"
 
@@ -261,7 +261,7 @@ static void CleanupPath(char * path)
 {
 	if(!path || path[0] == 0)
 		return;
-	
+
 	int pathlen = strlen(path);
 	int j = 0;
 	for(int i=0; i < pathlen && i < MAXPATHLEN; i++)
@@ -325,7 +325,7 @@ int UpdateDirName()
 				size = strlen(test);
 				test = strtok(nullptr,"/");
 			}
-	
+
 			/* remove last subdirectory name */
 			size = strlen(browser.dir) - size - 1;
 			strncpy(EmuSettings.lastFileLoaded, &browser.dir[size], strlen(browser.dir) - size - 1); //set as loaded file the previous dir
@@ -394,7 +394,7 @@ bool MakeFilePath(char filepath[], int type, char * filename, int filenum)
 				sprintf(folder, EmuSettings.saveFolder);
 
 				if(type == FILE_RAM) sprintf(ext, "sav");
-				else sprintf(ext, "fcs");
+				else sprintf(ext, "vbs");
 
 				if(filenum >= -1)
 				{
@@ -463,18 +463,12 @@ int FileSortCallback(const void *f1, const void *f2)
  ***************************************************************************/
 static bool IsValidROM()
 {
-	if (strlen(browserList[browser.selIndex].filename) > 4)
+	if (strlen(browserList[browser.selIndex].filename) > 3)
 	{
 		char * p = strrchr(browserList[browser.selIndex].filename, '.');
 
 		if (p != nullptr)
 		{
-			if(strcasecmp(p, ".gba") == 0)
-			{
-				// File will be checked for GBA ROMs later.
-				return true;
-			}
-			
 			char * zippedFilename = nullptr;
 
 			if(strcasecmp(p, ".zip") == 0 && !inSz)
@@ -491,12 +485,9 @@ static bool IsValidROM()
 			if(p != nullptr)
 			{
 				if (
-					strcasecmp(p, ".nes") == 0 ||
-					strcasecmp(p, ".fds") == 0 ||
-					strcasecmp(p, ".nsf") == 0 ||
-					strcasecmp(p, ".unf") == 0 ||
-					strcasecmp(p, ".nez") == 0 ||
-					strcasecmp(p, ".unif") == 0
+					strcasecmp(p, ".vb") == 0 ||
+                    strcasecmp(p, ".vboy") == 0 ||
+                    strcasecmp(p, ".bin") == 0
 				)
 				{
 					if(zippedFilename) free(zippedFilename);
@@ -517,7 +508,7 @@ static bool IsValidROM()
  ***************************************************************************/
 bool IsSz()
 {
-	if (strlen(browserList[browser.selIndex].filename) > 4)
+	if (strlen(browserList[browser.selIndex].filename) > 3)
 	{
 		char * p = strrchr(browserList[browser.selIndex].filename, '.');
 
@@ -558,7 +549,7 @@ int BrowserLoadSz()
 	size_t dirLen = strlen(browser.dir);
 	if(dirLen > 0)
 		strncpy(szpath, browser.dir, dirLen - 1);
-	
+
 	strncpy(szname, strrchr(szpath, '/') + 1, strrchr(szpath, '.') - strrchr(szpath, '/'));
 	*strrchr(szname, '.') = '\0';
 
@@ -586,7 +577,7 @@ int BrowserLoadFile()
 	romLoaded = false;
 
 	int device;
-			
+
 	if(!FindDevice(browser.dir, &device))
 		return 0;
 
@@ -601,31 +592,8 @@ int BrowserLoadFile()
 		if(!MakeFilePath(filepath, FILE_ROM))
 			goto done;
 
-		filesize = LoadFile ((char *)nesrom, filepath, 0, (1024*1024*4), NOTSILENT);
+		filesize = LoadFile ((char *)nesrom, filepath, 0, (1024*1024*16), NOTSILENT);
 
-		if(filesize > 0) {
-			// check nesrom for PocketNES embedded roms
-			const char *ext = strrchr(filepath, '.');
-			if (ext != nullptr && strcmp(ext, ".gba") == 0)
-			{
-				const pocketnes_romheader* rom1 = pocketnes_first_rom(nesrom, filesize);
-				const pocketnes_romheader* rom2 = nullptr;
-				if (rom1 != nullptr) {
-					rom2 = pocketnes_next_rom(nesrom, filesize, rom1);
-				}
-
-				if (rom1 == nullptr)
-					ErrorPrompt("No NES ROMs found in this file.");
-				else if (rom2 != nullptr)
-					ErrorPrompt("More than one NES ROM found in this file. Only files with one ROM are supported.");
-				else
-				{
-					const void* rom = rom1 + 1;
-					filesize = little_endian_conv_32(rom1->filesize);
-					memcpy(nesrom, rom, filesize);
-				}
-			}
-		}
 	}
 	else
 	{
@@ -637,7 +605,7 @@ int BrowserLoadFile()
 			BrowserChangeFolder();
 		}
 	}
-	
+
 	loadingFile = false;
 
 	if (filesize <= 0)
@@ -649,7 +617,7 @@ int BrowserLoadFile()
 		// store the filename (w/o ext) - used for ram/state naming
 		StripExt(romFilename, browserList[browser.selIndex].filename);
 		snprintf(EmuSettings.lastFileLoaded, MAXPATHLEN, "%s", browserList[browser.selIndex].filename);
-		
+
 		// load UPS/IPS/PPF patch
 		filesize = LoadPatch(filesize);
 
@@ -781,7 +749,7 @@ int BrowserChangeFolder()
 		browser.dir[0] = 0;
 		browser.numEntries += AddDeviceListing();
 	}
-	
+
 	if(browser.dir[0] == 0)
 	{
 		EmuSettings.loadFolder[0] = 0;
@@ -826,7 +794,7 @@ int OpenGameList()
 		browser.dir[0] = 0;
 		browser.numEntries = 0;
 	}
-	
+
 	BrowserChangeFolder();
 	return browser.numEntries;
 }

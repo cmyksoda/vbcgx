@@ -540,7 +540,7 @@ void CreateAppPath(char * origpath)
 
 	if(!path)
 		return;
-	
+
 	char * loc = strrchr(path,'/');
 	if (loc != nullptr)
 		*loc = 0; // strip file name
@@ -576,10 +576,10 @@ static char *GetExt(char *file)
 	return ext;
 }
 
-void FindAndSelectLastLoadedFile () 
+void FindAndSelectLastLoadedFile ()
 {
 	int indexFound = -1;
-	
+
 	for(int j=1; j < browser.numEntries; j++)
 	{
 		if(strcmp(browserList[j].filename, EmuSettings.lastFileLoaded) == 0)
@@ -593,7 +593,7 @@ void FindAndSelectLastLoadedFile ()
 	if(indexFound > 0)
 	{
 		if(indexFound >= FILE_PAGESIZE)
-		{			
+		{
 			int newIndex = (floor(indexFound/(float)FILE_PAGESIZE)) * FILE_PAGESIZE;
 
 			if(newIndex + FILE_PAGESIZE > browser.numEntries)
@@ -606,7 +606,7 @@ void FindAndSelectLastLoadedFile ()
 		}
 		browser.selIndex = indexFound;
 	}
-	
+
 	selectLoadedFile = 2; // selecting done
 }
 
@@ -644,15 +644,13 @@ static bool ParseDirEntries(int batchSize)
 		if(parseFilter && !isdir)
 		{
 			ext = GetExt(entry->d_name);
-			
+
 			if(ext == nullptr)
 				continue;
 
-			if(	strcasecmp(ext, "nes") != 0 && strcasecmp(ext, "fds") != 0 &&
-				strcasecmp(ext, "nsf") != 0 && strcasecmp(ext, "unf") != 0 &&
-				strcasecmp(ext, "nez") != 0 && strcasecmp(ext, "unif") != 0 &&
-				strcasecmp(ext, "gba") != 0 &&
-				strcasecmp(ext, "zip") != 0 && strcasecmp(ext, "7z") != 0)
+			if (strcasecmp(ext, "vb") != 0 && strcasecmp(ext, "vboy") != 0 &&
+                strcasecmp(ext, "bin") != 0 && strcasecmp(ext, "zip") != 0 &&
+                strcasecmp(ext, "7z") != 0)
 				continue;
 		}
 
@@ -685,7 +683,7 @@ static bool ParseDirEntries(int batchSize)
 		// Sort the file list
 		if(i >= 0)
 			qsort(browserList, browser.numEntries+i, sizeof(BROWSERENTRY), FileSortCallback);
-	
+
 		browser.numEntries += i;
 	}
 
@@ -693,7 +691,7 @@ static bool ParseDirEntries(int batchSize)
 	{
 		closedir(dir); // close directory
 		dir = nullptr;
-		
+
 		return false; // no more entries
 	}
 	return true; // more entries
@@ -724,9 +722,9 @@ int ParseDirectory(bool waitParse, bool filter, const char * namePrefix)
 	parseFilter = filter;
 	snprintf(parsePrefix, sizeof(parsePrefix), "%s", namePrefix ? namePrefix : "");
 	parsePrefixLen = strlen(parsePrefix);
-	
+
 	ResetBrowser(); // reset browser
-	
+
 	// add trailing slash
 	if(browser.dir[strlen(browser.dir)-1] != '/')
 		strcat(browser.dir, "/");
@@ -766,7 +764,7 @@ int ParseDirectory(bool waitParse, bool filter, const char * namePrefix)
 				break;
 		}
 	}
-	
+
 	if(dir == nullptr)
 	{
 		if(device > DEVICE_AUTO)
@@ -1050,7 +1048,7 @@ size_t SaveFile (char * buffer, char *filepath, size_t datasize, bool silent)
 	size_t writesize, nextwrite;
 	int retry = 1;
 	int device;
-		
+
 	if(!FindDevice(filepath, &device))
 		return 0;
 

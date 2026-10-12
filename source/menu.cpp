@@ -22,6 +22,7 @@
 #include "fceusupport.h"
 #include "pad.h"
 #include "videosupport.h"
+#include "emu/ColorSchemes.h"
 #include "filebrowser.h"
 #include "fileop.h"
 #include "fceuram.h"
@@ -232,7 +233,8 @@ struct Menu {
 		btnSoundOver(button_over_pcm, button_over_pcm_size, SOUND::PCM),
 		btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM)
 	{
-		logoTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
+		logoTxt.setAlignment(ALIGN_H::CENTRE, ALIGN_V::BOTTOM);
+        logoTxt.setPosition(0, 17);
 
 		btnLogo.setAlignment(ALIGN_H::RIGHT, ALIGN_V::TOP);
 		btnLogo.setPosition(-50, 24);
@@ -446,13 +448,13 @@ static void CreditsWindow()
 	txt[i]->setPosition(335,y); i++; y+=24;
 	txt[i] = new GuiText("dsbomb, others");
 	txt[i]->setPosition(335,y); i++; y+=24;
-	txt[i] = new GuiText("FCE Ultra");
+	txt[i] = new GuiText("VBoy Color / Beetle VB");
 	txt[i]->setPosition(40,y); i++;
-	txt[i] = new GuiText("Xodnizel");
+	txt[i] = new GuiText("yuk27 / Mednafen team");
 	txt[i]->setPosition(335,y); i++; y+=24;
-	txt[i] = new GuiText("Original FCE");
+	txt[i] = new GuiText("Wii integration");
 	txt[i]->setPosition(40,y); i++;
-	txt[i] = new GuiText("BERO");
+	txt[i] = new GuiText("cmyksoda");
 	txt[i]->setPosition(335,y); i++; y+=24;
 
 	txt[i] = new GuiText("libogc / devkitPPC");
@@ -1346,7 +1348,7 @@ static int MenuGameSelection()
 			if(gameBrowser.fileList[i]->getState() == STATE::CLICKED)
 			{
 				gameBrowser.fileList[i]->resetState();
-				
+
 				// check corresponding browser entry
 				if(browserList[browser.selIndex].isdir || IsSz())
 				{
@@ -1672,7 +1674,7 @@ static int MenuGame()
 	deleteBtn.setSoundClick(&btnSoundClick);
 	deleteBtn.setTrigger(trigA);
 	deleteBtn.setEffectGrow();
-	
+
 	GuiText resetBtnTxt("Reset", 22, (PixelColor){0, 0, 0, 255});
 	MenuButtonShape resetBtnImg(MenuButtonShape::LARGE);
 	GuiImage resetBtnIcon(&iconReset);
@@ -1782,7 +1784,7 @@ static int MenuGame()
 	w.append(&deleteBtn);
 	w.append(&resetBtn);
 	w.append(&gameSettingsBtn);
-		
+
 	#ifndef HW_DOL
 	w.append(batteryBtn[0]);
 	w.append(batteryBtn[1]);
@@ -2046,7 +2048,7 @@ static int SaveListTask(void * arg)
 
 		if(strncmp(&browserList[i].filename[len2-4], ".sav", 4) == 0)
 			type = FILE_RAM;
-		else if(strncmp(&browserList[i].filename[len2-4], ".fcs", 4) == 0)
+		else if(strncmp(&browserList[i].filename[len2-4], ".vbs", 4) == 0)
 			type = FILE_STATE;
 		else
 			continue;
@@ -2141,8 +2143,8 @@ static int SaveOpTask(void * arg)
 				remove(deletepath); // Delete the *.png file (Screenshot file)
 				snprintf(deletepath, sizeof(deletepath), "%s", a->filepath);
 				deletepath[strlen(deletepath)-4] = 0;
-				strcat(deletepath, ".fcs");
-				remove(deletepath); // Delete the *.fcs file (Save State file)
+				strcat(deletepath, ".vbs");
+				remove(deletepath); // Delete the *.vbs file (Save State file)
 			}
 			break;
 	}
@@ -2208,7 +2210,7 @@ static int MenuGameSaves(int action)
 	GuiTrigger trigB;
 	trigHome.setButtonOnlyTrigger(-1, INPUT_BTN_HOME);
 	trigB.setSecondaryTrigger();
-	
+
 	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
 	MenuButtonShape backBtnImg(MenuButtonShape::NORMAL);
 	GuiButton backBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
@@ -2403,7 +2405,7 @@ static int MenuGameSettings()
 	GuiTrigger trigB;
 	trigHome.setButtonOnlyTrigger(-1, INPUT_BTN_HOME);
 	trigB.setSecondaryTrigger();
-	
+
 	GuiText mappingBtnTxt("Button Mappings", 22, (PixelColor){0, 0, 0, 255});
 	mappingBtnTxt.setWrap(true, MENU_BTN_LARGE_W-30);
 	MenuButtonShape mappingBtnImg(MenuButtonShape::LARGE);
@@ -2419,7 +2421,7 @@ static int MenuGameSettings()
 	mappingBtn.setTrigger(trigA);
 	mappingBtn.setEffectGrow();
 
-	GuiText emulationBtnTxt("Emulation", 22, (PixelColor){0, 0, 0, 255});
+	GuiText emulationBtnTxt("Colors & 3D", 22, (PixelColor){0, 0, 0, 255});
 	emulationBtnTxt.setWrap(true, MENU_BTN_LARGE_W-20);
 	MenuButtonShape emulationBtnImg(MenuButtonShape::LARGE);
 	GuiImage emulationBtnIcon(&iconEmulation);
@@ -2449,7 +2451,7 @@ static int MenuGameSettings()
 	videoBtn.setTrigger(trigA);
 	videoBtn.setEffectGrow();
 
-	GuiText controllerBtnTxt("Controller", 22, (PixelColor){0, 0, 0, 255});
+	GuiText controllerBtnTxt("Button Mappings", 22, (PixelColor){0, 0, 0, 255});
 	MenuButtonShape controllerBtnImg(MenuButtonShape::LARGE);
 	GuiImage controllerBtnIcon(&iconController);
 	GuiButton controllerBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
@@ -2476,7 +2478,7 @@ static int MenuGameSettings()
 	screenshotBtn.setSoundClick(&btnSoundClick);
 	screenshotBtn.setTrigger(trigA);
 	screenshotBtn.setEffectGrow();
-		
+
 	GuiText cheatsBtnTxt("Cheats", 22, (PixelColor){0, 0, 0, 255});
 	MenuButtonShape cheatsBtnImg(MenuButtonShape::LARGE);
 	GuiImage cheatsBtnIcon(&iconCheats);
@@ -2522,9 +2524,8 @@ static int MenuGameSettings()
 	w.append(&mappingBtn);
 	w.append(&videoBtn);
 	w.append(&emulationBtn);
-	w.append(&controllerBtn);
 	w.append(&screenshotBtn);
-	w.append(&cheatsBtn);
+
 	w.append(&closeBtn);
 	w.append(&backBtn);
 
@@ -2554,7 +2555,7 @@ static int MenuGameSettings()
 		else if(cheatsBtn.getState() == STATE::CLICKED)
 		{
 			cheatsBtn.resetState();
-			if(numcheats > 0)
+			if(false)
 				selection = MENU_GAMESETTINGS_CHEATS;
 			else
 				InfoPrompt("Cheats file not found!");
@@ -2564,7 +2565,7 @@ static int MenuGameSettings()
 			if (WindowPrompt("Preview Screenshot", "Save a new Preview Screenshot? Current Screenshot image will be overwritten.", "OK", "Cancel"))
 			{
 				platform->getFileSystem()->getPath(filepath, EmuSettings.loadDevice, EmuSettings.screenshotsFolder, romFilename);
-				SavePreviewImg(filepath, NOTSILENT); 
+				SavePreviewImg(filepath, NOTSILENT);
 			}
 		}
 		else if(closeBtn.getState() == STATE::CLICKED)
@@ -2603,193 +2604,12 @@ static int MenuGameSettings()
  * them.
  ***************************************************************************/
 
-static int MenuGameCheats()
-{
-	int selection = MENU_NONE;
-	int ret;
-	uint16_t i = 0;
-	OptionList options;
-	std::string name; // cheat name
-	int status; // cheat status (on/off)
-
-	for(i=0; i < numcheats; i++)
-	{
-		if(!FCEUI_GetCheat(i,&name,nullptr,nullptr,nullptr,&status,nullptr))
-			break;
-
-		snprintf (options.name[i], 100, "%s", name.c_str());
-		sprintf (options.value[i], status ? "On" : "Off");
-	}
-
-	options.length = i;
-
-	GuiText titleTxt("Game Settings - Cheats", 26, (PixelColor){255, 255, 255, 255});
-	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
-	titleTxt.setPosition(50,50);
-
-	GuiSound btnSoundOver(button_over_pcm, button_over_pcm_size, SOUND::PCM);
-	GuiSound btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM);
-
-	GuiTrigger trigHome;
-	GuiTrigger trigB;
-	trigHome.setButtonOnlyTrigger(-1, INPUT_BTN_HOME);
-	trigB.setSecondaryTrigger();
-	
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
-	MenuButtonShape backBtnImg(MenuButtonShape::NORMAL);
-	GuiButton backBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
-	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
-	backBtn.setPosition(50, -35);
-	backBtn.setLabel(&backBtnTxt);
-	backBtn.setImage(&backBtnImg);
-	backBtn.setSoundOver(&btnSoundOver);
-	backBtn.setSoundClick(&btnSoundClick);
-	backBtn.setTrigger(trigA);
-	backBtn.setTrigger(&trigB);
-	backBtn.setEffectGrow();
-
-	GuiOptionBrowser optionBrowser(552, 248, &options);
-	optionBrowser.setPosition(0, 108);
-	optionBrowser.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	optionBrowser.setCol2Position(400);
-
-	GuiWindow w(platform->getVideo()->getScreenWidth(), platform->getVideo()->getScreenHeight());
-	w.append(&backBtn);
-	menu->mainWindow.appendWithAutoRemove(&optionBrowser);
-	menu->mainWindow.appendWithAutoRemove(&w);
-	menu->mainWindow.appendWithAutoRemove(&titleTxt);
-
-	while(selection == MENU_NONE)
-	{
-		if(!UpdateGui()) return MENU_EXIT;
-
-		ret = optionBrowser.getClickedOption();
-
-		if(ret >= 0)
-		{
-			FCEUI_ToggleCheat(ret);
-			sprintf (options.value[ret], "%s", options.value[ret][1] == 'f' ? "On" : "Off");
-			optionBrowser.triggerUpdate();
-		}
-
-		if(backBtn.getState() == STATE::CLICKED)
-		{
-			selection = MENU_GAMESETTINGS;
-		}
-	}
-	return selection;
-}
+static int MenuGameCheats() { return MENU_GAMESETTINGS; }
 
 /****************************************************************************
  * MenuSettingsMappings
  ***************************************************************************/
-static int MenuSettingsMappings()
-{
-	int selection = MENU_NONE;
-
-	GuiText titleTxt("Game Settings - Button Mappings", 26, (PixelColor){255, 255, 255, 255});
-	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
-	titleTxt.setPosition(50,50);
-
-	GuiSound btnSoundOver(button_over_pcm, button_over_pcm_size, SOUND::PCM);
-	GuiSound btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM);
-	MenuIconData iconNESController(icon_settings_nescontroller_png);
-	MenuIconData iconZapper(icon_settings_zapper_png);
-
-	GuiTrigger trigB;
-	trigB.setSecondaryTrigger();
-
-	GuiText nesBtnTxt("NES Controller", 22, (PixelColor){0, 0, 0, 255});
-	nesBtnTxt.setWrap(true, MENU_BTN_LARGE_W-30);
-	MenuButtonShape nesBtnImg(MenuButtonShape::LARGE);
-	GuiImage nesBtnIcon(&iconNESController);
-	GuiButton nesBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
-	nesBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	nesBtn.setPosition(-125, 120);
-	nesBtn.setLabel(&nesBtnTxt);
-	nesBtn.setImage(&nesBtnImg);
-	nesBtn.setIcon(&nesBtnIcon);
-	nesBtn.setSoundOver(&btnSoundOver);
-	nesBtn.setSoundClick(&btnSoundClick);
-	nesBtn.setTrigger(trigA);
-	nesBtn.setEffectGrow();
-
-	GuiText zapperBtnTxt("Zapper", 22, (PixelColor){0, 0, 0, 255});
-	zapperBtnTxt.setWrap(true, MENU_BTN_LARGE_W-30);
-	MenuButtonShape zapperBtnImg(MenuButtonShape::LARGE);
-	GuiImage zapperBtnIcon(&iconZapper);
-	GuiButton zapperBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
-	zapperBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	zapperBtn.setPosition(125, 120);
-	zapperBtn.setLabel(&zapperBtnTxt);
-	zapperBtn.setImage(&zapperBtnImg);
-	zapperBtn.setIcon(&zapperBtnIcon);
-	zapperBtn.setSoundOver(&btnSoundOver);
-	zapperBtn.setSoundClick(&btnSoundClick);
-	zapperBtn.setTrigger(trigA);
-	zapperBtn.setEffectGrow();
-
-	GuiText otherBtnTxt("Other Mappings", 22, (PixelColor){0, 0, 0, 255});
-	MenuButtonShape otherBtnImg(MenuButtonShape::LARGE);
-	GuiButton otherBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
-	otherBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	otherBtn.setPosition(0, 250);
-	otherBtn.setLabel(&otherBtnTxt);
-	otherBtn.setImage(&otherBtnImg);
-	otherBtn.setSoundOver(&btnSoundOver);
-	otherBtn.setSoundClick(&btnSoundClick);
-	otherBtn.setTrigger(trigA);
-	otherBtn.setEffectGrow();
-
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
-	MenuButtonShape backBtnImg(MenuButtonShape::NORMAL);
-	GuiButton backBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
-	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
-	backBtn.setPosition(50, -35);
-	backBtn.setLabel(&backBtnTxt);
-	backBtn.setImage(&backBtnImg);
-	backBtn.setSoundOver(&btnSoundOver);
-	backBtn.setSoundClick(&btnSoundClick);
-	backBtn.setTrigger(trigA);
-	backBtn.setTrigger(&trigB);
-	backBtn.setEffectGrow();
-
-	GuiWindow w(platform->getVideo()->getScreenWidth(), platform->getVideo()->getScreenHeight());
-	w.append(&titleTxt);
-	w.append(&nesBtn);
-	w.append(&zapperBtn);
-	w.append(&otherBtn);
-
-	w.append(&backBtn);
-
-	menu->mainWindow.appendWithAutoRemove(&w);
-
-
-	while(selection == MENU_NONE)
-	{
-		if(!UpdateGui()) return MENU_EXIT;
-
-		if(nesBtn.getState() == STATE::CLICKED)
-		{
-			selection = MENU_GAMESETTINGS_MAPPINGS_CTRL;
-			mapMenuCtrlNES = CTRL_PAD;
-		}
-		else if(zapperBtn.getState() == STATE::CLICKED)
-		{
-			selection = MENU_GAMESETTINGS_MAPPINGS_CTRL;
-			mapMenuCtrlNES = CTRL_ZAPPER;
-		}
-		else if(otherBtn.getState() == STATE::CLICKED)
-		{
-			selection = MENU_GAMESETTINGS_MAPPINGS_OTHER;
-		}
-		else if(backBtn.getState() == STATE::CLICKED)
-		{
-			selection = MENU_GAMESETTINGS;
-		}
-	}
-	return selection;
-}
+static int MenuSettingsMappings() { mapMenuCtrlNES = CTRL_PAD; return MENU_GAMESETTINGS_MAPPINGS_CTRL; }
 
 static int MenuSettingsMappingsController()
 {
@@ -2932,7 +2752,7 @@ static int MenuSettingsMappingsController()
 
 	w.append(&gamecubeBtn);
 #ifndef HW_DOL
-	w.append(&wiimoteBtn);
+
 
 	if(mapMenuCtrlNES == CTRL_PAD)
 	{
@@ -2941,7 +2761,7 @@ static int MenuSettingsMappingsController()
 			wiimoteBtn.setPosition(0, 120);
 			w.append(&drcBtn);
 		}
-		
+
 		w.append(&classicBtn);
 		w.append(&nunchukBtn);
 		w.append(&wiiuproBtn);
@@ -3064,6 +2884,7 @@ static uint32_t ButtonMappingWindow()
 
 		// Listen strictly to the specific hardware profile being mapped
 		pressed = pad.hw_buttons_d[mapMenuCtrl];
+        if (mapMenuCtrl == INPUT_HW_NUNCHUK) pressed |= pad.hw_buttons_d[INPUT_HW_WIIMOTE];
 
 		// C-Stick clear for GameCube specifically
 		if(mapMenuCtrl == INPUT_HW_GAMECUBE)
@@ -3149,28 +2970,11 @@ static int MenuSettingsMappingsMap()
 
 	i=0;
 
-	switch(mapMenuCtrlNES)
-	{
-		case CTRL_PAD:
-			sprintf(options.name[i++], "B");
-			sprintf(options.name[i++], "A");
-			sprintf(options.name[i++], "B (Rapid)");
-			sprintf(options.name[i++], "A (Rapid)");
-			sprintf(options.name[i++], "Select");
-			sprintf(options.name[i++], "Start");
-			sprintf(options.name[i++], "Up");
-			sprintf(options.name[i++], "Down");
-			sprintf(options.name[i++], "Left");
-			sprintf(options.name[i++], "Right");
-			sprintf(options.name[i++], "Insert Coin / Switch Disk");
-			options.length = i;
-			break;
-		case CTRL_ZAPPER:
-			sprintf(options.name[i++], "Fire");
-			sprintf(options.name[i++], "Insert Coin");
-			options.length = i;
-			break;
-	};
+    const char *names[MAXJP] = {"B", "A", "L", "R", "Select", "Start",
+        "Left Pad Up", "Left Pad Down", "Left Pad Left", "Left Pad Right",
+        "Right Pad Up", "Right Pad Down", "Right Pad Left", "Right Pad Right"};
+    for (i = 0; i < MAXJP; ++i) snprintf(options.name[i], 100, "%s", names[i]);
+    options.length = MAXJP;
 
 	for(i=0; i < options.length; i++)
 		options.value[i][0] = 0;
@@ -3490,7 +3294,7 @@ static int MenuSettingsOtherMappings()
 	bool firstRun = true;
 	OptionList options;
 
-	sprintf(options.name[i++], "Turbo Mode");
+	sprintf(options.name[i++], "Turbo Mode (unused)");
 	sprintf(options.name[i++], "Turbo Mode Button");
 	sprintf(options.name[i++], "Menu Toggle");
 
@@ -3627,42 +3431,19 @@ static int MenuSettingsOtherMappings()
 /****************************************************************************
  * MenuSettingsVideo
  ***************************************************************************/
-static int MenuSettingsVideo()
+static int MenuVBOptions(bool colors)
 {
-	int selection = MENU_NONE;
-	int ret;
-	int i = 0;
-	bool firstRun = true;
-	OptionList options;
-
-#if defined(HW_RVL) || defined(HW_DOL)
-	sprintf(options.name[i++], "Output Mode");
-#else
-	options.name[i++][0] = 0; // Output Mode is GameCube / Wii only
-#endif
-	sprintf(options.name[i++], "Aspect Ratio Correction");
-	sprintf(options.name[i++], "Cropping");
-	sprintf(options.name[i++], "Palette");
-	sprintf(options.name[i++], "Bilinear Filtering");
-#if defined(HW_RVL) || defined(HW_DOL)
-	sprintf(options.name[i++], "Hardware Softening");
-#else
-	options.name[i++][0] = 0; // Hardware Softening is GameCube / Wii only
-#endif
-#if defined(HW_RVL) || defined(HW_DOL) || defined(__WIIU__)
-	sprintf(options.name[i++], "Upscaling");
-#else
-	options.name[i++][0] = 0; // upscaling filters not available on this platform
-#endif
-	sprintf(options.name[i++], "Scanline Overlay");
-	sprintf(options.name[i++], "Screen Zoom");
-	sprintf(options.name[i++], "Screen Position");
-	options.length = i;
-
-	for(i=0; i < options.length; i++)
-		options.value[i][0] = 0;
-
-	GuiText titleTxt("Game Settings - Video", 26, (PixelColor){255, 255, 255, 255});
+    int selection = MENU_NONE;
+    OptionList options;
+    bool firstRun = true;
+    const char *videoNames[] = {"Output Mode", "Aspect Correction", "Bilinear Filtering", "Screen Zoom", "Screen Position"};
+    const char *colorNames[] = {"Colors", "3D Layout", "Color Packs", "Multicolor Palette", "Gradient", "Tint"};
+    options.length = colors ? 6 : 5;
+    for (int i = 0; i < options.length; ++i) {
+        snprintf(options.name[i], 100, "%s", colors ? colorNames[i] : videoNames[i]);
+        options.value[i][0] = 0;
+    }
+	GuiText titleTxt(colors ? "Game Settings - Colors & 3D" : "Game Settings - Video", 26, (PixelColor){255, 255, 255, 255});
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,50);
 
@@ -3696,243 +3477,62 @@ static int MenuSettingsVideo()
 	menu->mainWindow.appendWithAutoRemove(&w);
 	menu->mainWindow.appendWithAutoRemove(&titleTxt);
 
-	while(selection == MENU_NONE)
-	{
-		if(!UpdateGui()) return MENU_EXIT;
 
-		ret = optionBrowser.getClickedOption();
-
-		switch (ret)
-		{
-			case 0:
-				EmuSettings.videoMode++;
-				if(EmuSettings.videoMode >= VIDEOMODE_LENGTH)
-					EmuSettings.videoMode = VIDEOMODE_AUTO;
-				break;
-
-			case 1:
-				EmuSettings.videoAspectRatioCorrection++;
-				if(EmuSettings.videoAspectRatioCorrection >= VIDEO_ASPECT_RATIO_CORRECTION_LENGTH)
-					EmuSettings.videoAspectRatioCorrection = VIDEO_ASPECT_RATIO_CORRECTION_NONE;
-				break;
-
-			case 2:
-				EmuSettings.hideOverscan++;
-				if (EmuSettings.hideOverscan >= HIDEOVERSCAN_LENGTH)
-					EmuSettings.hideOverscan = HIDEOVERSCAN_OFF;
-				break;
-
-			case 3:
-				if ( ++EmuSettings.currentPalette > MAXPAL )
-					EmuSettings.currentPalette = 0;
-				break;
-
-			case 4:
-				EmuSettings.videoBilinearFilter = !EmuSettings.videoBilinearFilter;
-				break;
-
-			case 5:
-				EmuSettings.videoHardwareSoften++;
-				if(EmuSettings.videoHardwareSoften >= VIDEO_HW_SOFTEN_LENGTH)
-					EmuSettings.videoHardwareSoften = VIDEO_HW_SOFTEN_OFF;
-				break;
-
-#if defined(HW_RVL) || defined(HW_DOL) || defined(__WIIU__)
-			case 6:
-				EmuSettings.videoUpscalingFilter++;
-				if (EmuSettings.videoUpscalingFilter >= NUM_UPSCALE_FILTERS)
-					EmuSettings.videoUpscalingFilter = UPSCALE_NONE;
-				break;
-#endif
-
-			case 7:
-				EmuSettings.videoScanlines = !EmuSettings.videoScanlines;
-				break;
-
-			case 8:
-				ScreenZoomWindow();
-				break;
-
-			case 9:
-				ScreenPositionWindow();
-				break;
-		}
-
-		if(ret >= 0 || firstRun)
-		{
-			firstRun = false;
-
-			switch(EmuSettings.videoMode)
-			{
-				case VIDEOMODE_AUTO:
-					sprintf (options.value[0], "Automatic (Recommended)"); break;
-				case VIDEOMODE_NTSC:
-					sprintf (options.value[0], "NTSC (480i)"); break;
-				case VIDEOMODE_PROGRESSIVE:
-					sprintf (options.value[0], "Progressive (480p)"); break;
-				case VIDEOMODE_PAL:
-					sprintf (options.value[0], "PAL (50Hz)"); break;
-				case VIDEOMODE_PAL60:
-					sprintf (options.value[0], "PAL (60Hz)"); break;
-				case VIDEOMODE_ORIGINAL_240P:
-					sprintf (options.value[0], "Original (240p)"); break;
-			}
-
-			switch(EmuSettings.videoAspectRatioCorrection)
-			{
-				case VIDEO_ASPECT_RATIO_CORRECTION_NONE:
-					sprintf (options.value[1], "None"); break;
-				case VIDEO_ASPECT_RATIO_CORRECTION_16_9:
-					sprintf (options.value[1], "16:9"); break;
-			}
-
-			switch(EmuSettings.hideOverscan)
-			{
-				case HIDEOVERSCAN_OFF: sprintf (options.value[2], "Off"); break;
-				case HIDEOVERSCAN_VERTICAL: sprintf (options.value[2], "Vertical"); break;
-				case HIDEOVERSCAN_HORIZONTAL: sprintf (options.value[2], "Horizontal"); break;
-				case HIDEOVERSCAN_BOTH: sprintf (options.value[2], "Both"); break;
-			}
-
-			sprintf (options.value[3], "%s", EmuSettings.currentPalette ? palettes[EmuSettings.currentPalette-1].desc : "Default");
-
-#ifdef __WIIU__
-			if (EmuSettings.videoUpscalingFilter == UPSCALE_SHARP_BILINEAR)
-				sprintf (options.value[4], "N/A"); // Sharp Bilinear does its own filtering
-			else
-#endif
-			sprintf (options.value[4], "%s", EmuSettings.videoBilinearFilter ? "On" : "Off");
-
-			switch(EmuSettings.videoHardwareSoften)
-			{
-				case VIDEO_HW_SOFTEN_OFF:
-					sprintf (options.value[5], "Off"); break;
-				case VIDEO_HW_SOFTEN_AUTO:
-					sprintf (options.value[5], "Auto"); break;
-				case VIDEO_HW_SOFTEN_SHARP:
-					sprintf (options.value[5], "Sharp"); break;
-				case VIDEO_HW_SOFTEN_SOFT:
-					sprintf (options.value[5], "Soft"); break;
-			}
-
-#if defined(HW_RVL) || defined(HW_DOL) || defined(__WIIU__)
-			sprintf (options.value[6], "%s", GetUpscaleFilterName(EmuSettings.videoUpscalingFilter));
-#endif
-			sprintf (options.value[7], "%s", EmuSettings.videoScanlines ? "On" : "Off");
-			sprintf (options.value[8], "%.2f%%, %.2f%%", EmuSettings.videoZoomHor*100, EmuSettings.videoZoomVert*100);
-			sprintf (options.value[9], "%d, %d", EmuSettings.videoXshift, EmuSettings.videoYshift);
-
-			optionBrowser.triggerUpdate();
-		}
-
-		if(backBtn.getState() == STATE::CLICKED)
-		{
-			selection = MENU_GAMESETTINGS;
-		}
-	}
-	return selection;
+    while (selection == MENU_NONE) {
+        if (!UpdateGui()) return MENU_EXIT;
+        int ret = optionBrowser.getClickedOption();
+        if (ret >= 0) {
+            if (colors) {
+                switch (ret) {
+                case 0: EmuSettings.colorMode = (EmuSettings.colorMode + 1) % 5; break;
+                case 1: EmuSettings.stereoMode = (EmuSettings.stereoMode + 1) % 9; break;
+                case 2: EmuSettings.colorPacks = !EmuSettings.colorPacks; break;
+                case 3: EmuSettings.currentPalette = (EmuSettings.currentPalette + 1) % ColorSchemes::kMulticolorCount; break;
+                case 4: EmuSettings.gradient = (EmuSettings.gradient + 1) % ColorSchemes::kGradientCount; break;
+                case 5: EmuSettings.tint = (EmuSettings.tint + 1) % ColorSchemes::kTintCount; break;
+                }
+                SetPalette();
+            } else {
+                switch (ret) {
+                case 0:
+                    EmuSettings.videoMode = (EmuSettings.videoMode + 1) % VIDEOMODE_LENGTH;
+                    platform->getVideo()->startMenuVideo();
+                    break;
+                case 1: EmuSettings.videoAspectRatioCorrection ^= 1; break;
+                case 2: EmuSettings.videoBilinearFilter = !EmuSettings.videoBilinearFilter; break;
+                case 3: ScreenZoomWindow(); break;
+                case 4: ScreenPositionWindow(); break;
+                }
+            }
+        }
+        if (firstRun || ret >= 0) {
+            firstRun = false;
+            if (colors) {
+                const char *modes[] = {"Game's Own", "Auto", "Multicolor", "Gradient", "Tint"};
+                const char *stereo[] = {"Mono", "Side by Side", "Side by Side (TV)", "Cross Eyed",
+                    "Top and Bottom", "Top and Bottom (TV)", "Red / Cyan", "Green / Magenta", "Amber / Blue"};
+                snprintf(options.value[0], 100, "%s", modes[EmuSettings.colorMode]);
+                snprintf(options.value[1], 100, "%s", stereo[EmuSettings.stereoMode]);
+                snprintf(options.value[2], 100, "%s", EmuSettings.colorPacks ? "On" : "Off");
+                snprintf(options.value[3], 100, "%s", ColorSchemes::kMulticolorNames[EmuSettings.currentPalette]);
+                snprintf(options.value[4], 100, "%s", ColorSchemes::kGradientNames[EmuSettings.gradient]);
+                snprintf(options.value[5], 100, "%s", ColorSchemes::kTintNames[EmuSettings.tint]);
+            } else {
+                const char *modes[] = {"Automatic", "NTSC (480i)", "Progressive (480p)", "PAL (576i)", "PAL60 (480i)", "240p (60Hz)", "240p (50Hz)"};
+                snprintf(options.value[0], 100, "%s", modes[EmuSettings.videoMode]);
+                snprintf(options.value[1], 100, "%s", EmuSettings.videoAspectRatioCorrection ? "16:9" : "4:3");
+                snprintf(options.value[2], 100, "%s", EmuSettings.videoBilinearFilter ? "On" : "Off");
+                snprintf(options.value[3], 100, "%.0f%%, %.0f%%", EmuSettings.videoZoomHor * 100, EmuSettings.videoZoomVert * 100);
+                snprintf(options.value[4], 100, "%d, %d", EmuSettings.videoXshift, EmuSettings.videoYshift);
+            }
+            optionBrowser.triggerUpdate();
+        }
+        if (backBtn.getState() == STATE::CLICKED) selection = MENU_GAMESETTINGS;
+    }
+    return selection;
 }
-
-/****************************************************************************
- * MenuSettingsEmulation
- ***************************************************************************/
-static int MenuSettingsEmulation()
-{
-	int selection = MENU_NONE;
-	int ret;
-	int i = 0;
-	bool firstRun = true;
-	OptionList options;
-
-	sprintf(options.name[i++], "Game Timing");
-	sprintf(options.name[i++], "Sprite Limit");
-	sprintf(options.name[i++], "Zapper Crosshair");
-	options.length = i;
-
-	for(i=0; i < options.length; i++)
-		options.value[i][0] = 0;
-
-	GuiText titleTxt("Game Settings - Emulation", 26, (PixelColor){255, 255, 255, 255});
-	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
-	titleTxt.setPosition(50,50);
-
-	GuiSound btnSoundOver(button_over_pcm, button_over_pcm_size, SOUND::PCM);
-	GuiSound btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM);
-
-	GuiTrigger trigB;
-	trigB.setSecondaryTrigger();
-
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
-	MenuButtonShape backBtnImg(MenuButtonShape::NORMAL);
-	GuiButton backBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
-	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
-	backBtn.setPosition(50, -35);
-	backBtn.setLabel(&backBtnTxt);
-	backBtn.setImage(&backBtnImg);
-	backBtn.setSoundOver(&btnSoundOver);
-	backBtn.setSoundClick(&btnSoundClick);
-	backBtn.setTrigger(trigA);
-	backBtn.setTrigger(&trigB);
-	backBtn.setEffectGrow();
-
-	GuiOptionBrowser optionBrowser(552, 248, &options);
-	optionBrowser.setPosition(0, 108);
-	optionBrowser.setCol2Position(200);
-	optionBrowser.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-
-	GuiWindow w(platform->getVideo()->getScreenWidth(), platform->getVideo()->getScreenHeight());
-	w.append(&backBtn);
-	menu->mainWindow.appendWithAutoRemove(&optionBrowser);
-	menu->mainWindow.appendWithAutoRemove(&w);
-	menu->mainWindow.appendWithAutoRemove(&titleTxt);
-
-	while(selection == MENU_NONE)
-	{
-		if(!UpdateGui()) return MENU_EXIT;
-		ret = optionBrowser.getClickedOption();
-
-		switch (ret)
-		{
-			case 0:
-				EmuSettings.timing++;
-				if(EmuSettings.timing >= TIMING_LENGTH)
-					EmuSettings.timing = TIMING_NTSC;
-				break;
-
-			case 1:
-				EmuSettings.spriteLimit = !EmuSettings.spriteLimit;
-				break;
-
-			case 2:
-				EmuSettings.crosshair = !EmuSettings.crosshair;
-				break;
-		}
-
-		if(ret >= 0 || firstRun)
-		{
-			firstRun = false;
-
-			switch(EmuSettings.timing)
-			{
-				case TIMING_NTSC: sprintf (options.value[0], "NTSC"); break;
-				case TIMING_PAL: sprintf (options.value[0], "PAL"); break;
-				case TIMING_AUTOMATIC: sprintf (options.value[0], "Automatic"); break;
-				case TIMING_DENDY: sprintf (options.value[0], "Dendy"); break;
-			}
-
-			sprintf (options.value[1], "%s", EmuSettings.spriteLimit ? "On" : "Off");
-			sprintf (options.value[2], "%s", EmuSettings.crosshair ? "On" : "Off");
-
-			optionBrowser.triggerUpdate();
-		}
-
-		if(backBtn.getState() == STATE::CLICKED)
-		{
-			selection = MENU_GAMESETTINGS;
-		}
-	}
-	return selection;
-}
+static int MenuSettingsVideo() { return MenuVBOptions(false); }
+static int MenuSettingsEmulation() { return MenuVBOptions(true); }
 
 /****************************************************************************
  * MenuSettings
@@ -3941,8 +3541,8 @@ static int MenuSettings()
 {
 	int selection = MENU_NONE;
 	char gameGenieTxt[10];
-	
-	if(!FindGameGenie()) sprintf(gameGenieTxt, "DISABLED");
+
+	if(!false) sprintf(gameGenieTxt, "DISABLED");
 	else if(EmuSettings.gameGenie) sprintf(gameGenieTxt, "ON");
 	else sprintf(gameGenieTxt, "OFF");
 
@@ -4010,7 +3610,7 @@ static int MenuSettings()
 	networkBtn.setSoundClick(&btnSoundClick);
 	networkBtn.setTrigger(trigA);
 	networkBtn.setEffectGrow();
-	
+
 	GuiText cheatsBtnTxt("Game Genie", 22, (PixelColor){0, 0, 0, 255});
 	GuiText cheatsBtnTxt2(gameGenieTxt, 18, (PixelColor){0, 0, 0, 255});
 	cheatsBtnTxt.setPosition(0, -16);
@@ -4074,7 +3674,7 @@ static int MenuSettings()
 	w.append(&savingBtn);
 	w.append(&menuBtn);
 	w.append(&networkBtn);
-	w.append(&cheatsBtn);
+
 	w.append(&creditsBtn);
 	w.append(&backBtn);
 	w.append(&resetBtn);
@@ -4106,8 +3706,8 @@ static int MenuSettings()
 		else if(cheatsBtn.getState() == STATE::CLICKED)
 		{
 			cheatsBtn.resetState();
-			
-			if(!FindGameGenie())
+
+			if(!false)
 			{
 				ErrorPrompt("Game Genie ROM not found!");
 			}
@@ -4232,7 +3832,7 @@ static int MenuSettingsFile()
 			case 4:
 				OnScreenKeyboard(EmuSettings.cheatFolder, MAXPATHLEN);
 				break;
-				
+
 			case 5:
 				OnScreenKeyboard(EmuSettings.screenshotsFolder, MAXPATHLEN);
 				break;
@@ -4540,7 +4140,7 @@ static int MenuSettingsMenu()
 				break;
 			case 5:
 				EmuSettings.language++;
-				
+
 				if(EmuSettings.language == LANG_TRAD_CHINESE) // skip (not supported)
 					EmuSettings.language = LANG_KOREAN;
 				else if(EmuSettings.language >= LANG_LENGTH)
@@ -4623,20 +4223,20 @@ static int MenuSettingsMenu()
 				case LANG_TURKISH:			sprintf(options.value[5], "Turkish"); 	break;
 				case LANG_SWEDISH:			sprintf(options.value[5], "Swedish"); 	break;
 			}
-			
+
 			switch(EmuSettings.previewImage)
 			{
-				case 0:	
+				case 0:
 					sprintf(options.value[6], "Screenshots");
-					break; 
-				case 1:	
+					break;
+				case 1:
 					sprintf(options.value[6], "Covers");
-					break; 
-				case 2:	
+					break;
+				case 2:
 					sprintf(options.value[6], "Artwork");
-					break; 
+					break;
 			}
-			
+
 			optionBrowser.triggerUpdate();
 		}
 
@@ -5061,10 +4661,10 @@ void MainMenu (int selection)
 				break;
 			case MENU_GAME_SAVE:
 				currentMenu = MenuGameSaves(1);
-				break;			
+				break;
 			case MENU_GAME_DELETE:
 				currentMenu = MenuGameSaves(2);
-				break;	
+				break;
 			case MENU_GAMESETTINGS:
 				currentMenu = MenuGameSettings();
 				break;
@@ -5105,6 +4705,10 @@ void MainMenu (int selection)
 				currentMenu = MenuGameSelection();
 				break;
 		}
+        if (currentMenu == MENU_EXIT && romLoaded && !platform->shouldExit() && !HasGameplayController()) {
+            ErrorPrompt("Connect a Nunchuk, Classic, GameCube or Pro Controller to play");
+            currentMenu = MENU_GAME;
+        }
 		lastMenu = currentMenu;
 
 		if(guiExiting)

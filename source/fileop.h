@@ -15,7 +15,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#define SAVEBUFFERSIZE (1024 * 512)
+#define SAVEBUFFERSIZE (1024 * 1024 * 2)
 
 #if defined(HW_RVL) || defined(HW_DOL)
 #define FILE_READ_CHUNK   4096

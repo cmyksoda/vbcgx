@@ -1,0 +1,17 @@
+VBoy Color GX
+Original Wii integration: cmyksoda, 2026. GNU GPL version 3.
+
+GX frontend: FCE Ultra GX by Daryl Borth (Tantric), 2008-2026, and its contributors.
+https://github.com/dborth/fceugx
+Imported revision 603e1d7dfdd4f6436e1cb1ae6ffe4e44f214e606; upstream identifies this code as GPL licensed.
+Original source copyright headers are retained.
+
+VBoy Color by yuk27 and contributors. GNU GPL version 3.
+https://github.com/yuk27/VBoyColor
+Imported revision 528297b2c7f8d116277e776dead69caa4d50663b.
+Beetle VB revision 38e7a0ec9ac7079ca1c1e3dd9aaf5b56f527efca; GPL version 2 or later.
+See vendor/vboycolor/LICENSE, third_party/beetle-vb-libretro/COPYING, licenses/ and THIRD-PARTY-NOTICES.txt.
+
+WiiMednafen and WiirtualBoy were consulted for controller design. Their code was not copied.
+https://github.com/raz0red/wii-mednafen
+https://github.com/raz0red/wiirtual-boy

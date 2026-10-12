@@ -17,22 +17,20 @@ export	FREETYPE_LIBS		:=	`$(DEVKITPRO)/portlibs/ppc/bin/powerpc-eabi-pkg-config 
 # SOURCES is a list of directories containing source code
 # INCLUDES is a list of directories containing extra header files
 #---------------------------------------------------------------------------------
-TARGET		:=	fceugx-wii
+TARGET		:=	vboycolorgx-wii
 TARGETDIR	:=  executables
 BUILD		:=	build_wii
-SOURCES		:=	source source/libgui source/utils source/utils/sz \
-				source/drivers source/drivers/ogc source/drivers/ogc/wii \
-				source/pocketnes source/pocketnes/minilzo \
-				source/fceultra source/fceultra/boards source/fceultra/input source/fceultra/utils
+SOURCES := source source/libgui source/utils source/utils/sz \
+           source/drivers source/drivers/ogc source/drivers/ogc/wii
 DATA		:=	data/images data/sounds data/fonts data/lang			
-INCLUDES	:=	source
+INCLUDES := source vendor/vboycolor/third_party/beetle-vb-libretro/libretro-common/include vendor/vboycolor/core
 
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
 SHAREDFLAGS	=	-g -O3 -Wall $(MACHDEP) $(INCLUDE) $(FREETYPE_CFLAGS) \
 				-DFCEUGX \
-				-DFORMAT_PAL8 -DFRAMESKIP -DPSS_STYLE=1 -DPATH_MAX=1024 -DHAVE_ASPRINTF \
+				-DFRAMESKIP -DPSS_STYLE=1 -DPATH_MAX=1024 -DHAVE_ASPRINTF \
 				-D_SZ_ONE_DIRECTORY -D_LZMA_IN_CB -D_LZMA_OUT_READ \
 				-fomit-frame-pointer -fno-strict-aliasing -ffunction-sections -fdata-sections \
 				-Wno-format -Wno-format-overflow \
@@ -42,14 +40,14 @@ SHAREDFLAGS	=	-g -O3 -Wall $(MACHDEP) $(INCLUDE) $(FREETYPE_CFLAGS) \
 				-Wno-narrowing -Wno-misleading-indentation -Wno-restrict -Wno-maybe-uninitialized -Wno-infinite-recursion
 
 CFLAGS		=	$(SHAREDFLAGS) -Wno-incompatible-pointer-types
-CXXFLAGS	=	$(SHAREDFLAGS) -Wno-register -Wno-catch-value -Wno-class-memaccess -fno-exceptions -fno-rtti -fno-threadsafe-statics
+CXXFLAGS	=	$(SHAREDFLAGS) -std=gnu++17 -Wno-register -Wno-catch-value -Wno-class-memaccess -fno-exceptions -fno-rtti -fno-threadsafe-statics
 LDFLAGS		=	-g -O3 $(MACHDEP) -Wl,-Map,$(notdir $@).map -Wl,--gc-sections
 LDFLAGS		+=	-L../buildtools
 
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS	:=	-ldi -liso9660 -lpng -lmxml $(FREETYPE_LIBS) \
+LIBS	:=	../build-core/libvboycolor.a ../build-core/libbeetle_vb.a -ldi -liso9660 -lpng -lmxml $(FREETYPE_LIBS) \
 			-lfat -lwiiuse -lz -lbte -lasnd -logc -lvorbisidec -logg -lsmb2
 
 #---------------------------------------------------------------------------------
@@ -96,7 +94,7 @@ export OFILES_BIN	:=	$(addsuffix .o,$(BINFILES))
 
 # Filter out x6502.o so we can build it with custom I-Cache optimized flags
 export OFILES_SOURCES := $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(sFILES:.s=.o) $(SFILES:.S=.o)
-export OFILES := $(OFILES_BIN) $(OFILES_SOURCES) x6502.o
+export OFILES := $(OFILES_BIN) $(OFILES_SOURCES)
 
 export HFILES := $(addsuffix .h,$(subst .,_,$(BINFILES)))
 
@@ -117,10 +115,14 @@ export OUTPUT	:=	$(CURDIR)/$(TARGETDIR)/$(TARGET)
 .PHONY: $(BUILD) clean
 
 #---------------------------------------------------------------------------------
-$(BUILD):
+$(BUILD): core
 	@[ -d $@ ] || mkdir -p $@
 	@[ -d $(TARGETDIR) ] || mkdir -p $(TARGETDIR)
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile.wii
+
+core:
+	@cmake -S . -B build-core -DCMAKE_TOOLCHAIN_FILE=cmake/wii-toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+	@cmake --build build-core --parallel 2
 
 #---------------------------------------------------------------------------------
 clean:

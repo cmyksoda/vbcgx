@@ -15,11 +15,11 @@
 
 #include "drivers/InputDriver.h"
 #include "drivers/FileSystemDriver.h"
-#include "fceultra/driver.h"
+#include <gccore.h>
 
-#define APPNAME			"FCE Ultra GX"
-#define APPVERSION		"4.0.2"
-#define APPFOLDER 		"fceugx"
+#define APPNAME			"VBoy Color GX"
+#define APPVERSION		"0.1.0-dev"
+#define APPFOLDER 		"vboycolorgx"
 #define PREF_FILE_NAME	"settings.xml"
 
 #define MAXPATHLEN 1024
@@ -57,7 +57,7 @@ const FolderDef loadFolder[] = {
     { LOADFOLDER_ARTWORK,     "artwork" }
 };
 
-enum 
+enum
 {
 	FILE_RAM,
 	FILE_STATE,
@@ -106,6 +106,7 @@ enum {
 	VIDEOMODE_PAL,
 	VIDEOMODE_PAL60,
 	VIDEOMODE_ORIGINAL_240P,
+    VIDEOMODE_240P_PAL,
 	VIDEOMODE_LENGTH
 };
 
@@ -146,7 +147,7 @@ enum
 const char ctrlName[6][20] =
 { "NES Controller", "NES Zapper", "NES Controllers (2)", "NES Controllers (4)" };
 
-enum 
+enum
 {
 	LANG_JAPANESE = 0,
 	LANG_ENGLISH,
@@ -199,7 +200,7 @@ struct SEmuSettings
 	char	coverFolder[MAXPATHLEN]; 	// Path to cover files
 	char	artworkFolder[MAXPATHLEN]; 	// Path to artwork files
 	bool	autoloadGame;
-	
+
 	SmbShareInfo smbShare; // host/share/user/password for DEVICE_SMB
 
 	int		videoMode;
@@ -213,6 +214,8 @@ struct SEmuSettings
 	int		videoXshift;
 	int		videoYshift;
 	int		currentPalette;
+    int colorMode, stereoMode, gradient, tint;
+    bool colorPacks;
 	int		hideOverscan; // 0 = off, 1 = vertical, 2 = horizontal, 3 = both
 
 	bool	crosshair;

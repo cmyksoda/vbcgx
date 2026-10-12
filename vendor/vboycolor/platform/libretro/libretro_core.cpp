@@ -755,8 +755,18 @@ namespace
         const size_t pixels = static_cast<size_t>(w) * h;
         g_raw.resize(pixels * 4);
         g_colored.resize(pixels * 4);
-        for (unsigned y = 0; y < h; ++y)
+        for (unsigned y = 0; y < h; ++y) {
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+            for (unsigned x = 0; x < w; ++x) {
+                uint32_t pixel;
+                std::memcpy(&pixel, g_frame + y * g_framePitch + x * 4, 4);
+                uint8_t *dst = &g_raw[(static_cast<size_t>(y) * w + x) * 4];
+                dst[0] = pixel; dst[1] = pixel >> 8; dst[2] = pixel >> 16; dst[3] = pixel >> 24;
+            }
+#else
             std::memcpy(&g_raw[static_cast<size_t>(y) * w * 4], g_frame + y * g_framePitch, static_cast<size_t>(w) * 4);
+#endif
+        }
 
         if (g_shadeColors)
         {

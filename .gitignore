@@ -8,3 +8,5 @@ project-notes/
 *.MD
 AGENTS.*
 CLAUDE.*
+
+__pycache__/

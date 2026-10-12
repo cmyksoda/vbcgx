@@ -153,10 +153,10 @@ void ShadeColorizer::Colorize(const uint8_t *src, uint8_t *dst, size_t pixelCoun
     {
         uint32_t pixel, color;
         std::memcpy(&pixel, src, 4);
-        std::memcpy(&color, m_lut[pixel >> 24].data(), 4);
+        std::memcpy(&color, m_lut[src[3]].data(), 4);
         // A shade switched fully off by the game (output 0) shows as
         // background, whatever the fade level says.
-        color = (pixel & 0xFFFFFFu) ? color : background;
+        color = (src[0] | src[1] | src[2]) ? color : background;
         std::memcpy(dst, &color, 4);
     }
 }

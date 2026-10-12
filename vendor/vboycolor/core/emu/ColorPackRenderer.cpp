@@ -11,6 +11,11 @@
 
 namespace
 {
+uint32_t ReadTaggedPixel(const uint8_t *p)
+{
+    return p[0] | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
+}
+
 int Sign9(uint16_t v)
 {
     v &= 0x1FF;
@@ -822,7 +827,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                     if (!slotBits.Any() || !VBGO_TAG_PIXEL(t) || (chr == lastChr && (y >> 3) == lastBand))
                         continue;
                     uint32_t rawPixel;
-                    std::memcpy(&rawPixel, r + static_cast<size_t>(y) * fbWidth * 4, 4);
+                    rawPixel = ReadTaggedPixel(r + static_cast<size_t>(y) * fbWidth * 4);
                     if (!(rawPixel & 0xFFFFFFu))
                         continue; // (a shade the game switched off)
                     lastChr = chr, lastBand = y >> 3;
@@ -1051,7 +1056,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                     const size_t i = stripBase + k * 4 + y * rowBytes;
                     const uint8_t *r = &raw[i];
                     uint32_t rawPixel; // B, G, R, tag (shade, brightness) from the low byte up (little-endian, as everywhere this runs)
-                    std::memcpy(&rawPixel, r, 4);
+                    rawPixel = ReadTaggedPixel(r);
                     const unsigned pixel = VBGO_TAG_PIXEL(t);
                     if (pixel && !(rawPixel & 0xFFFFFFu))
                         continue; // drawn in a shade the game switched off - stays background
@@ -1252,7 +1257,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, const uint8_t *raw, uint3
             for (uint32_t y = 0; y < VBGO_TT_HEIGHT; ++y, src += rowBytes)
             {
                 uint32_t rawPixel;
-                std::memcpy(&rawPixel, src, 4);
+                rawPixel = ReadTaggedPixel(src);
                 const unsigned shade = (rawPixel >> 24) & 3;
                 if (!shade || !(rawPixel & 0xFFFFFFu))
                     continue;

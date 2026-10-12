@@ -14,7 +14,7 @@
 #include "fceugx.h"
 #include "drivers/InputData.h"
 
-#define MAXJP 			11
+#define MAXJP 			14
 
 extern int playerMapping[4];
 extern uint32_t btnmap[CTRL_BTN_MAPPINGS][INPUT_HW_MAX][MAXJP];
@@ -25,3 +25,5 @@ void GetJoy();
 bool isMenuRequested();
 
 #endif
+
+bool HasGameplayController();

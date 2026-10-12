@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
-#include <zlib.h>
+#include <vector>
 
 #include "fceugx.h"
 #include "fceusupport.h"
@@ -31,7 +31,7 @@ bool SaveState (char * filepath, bool silent)
 	int datasize;
 	int offset = 0;
 	int device;
-			
+
 	if(!FindDevice(filepath, &device))
 		return 0;
 
@@ -44,14 +44,14 @@ bool SaveState (char * filepath, bool silent)
 		SaveFile((char *)gameScreenPng.buffer, screenpath, gameScreenPng.size, silent);
 	}
 
-	EMUFILE_MEMFILE save(SAVEBUFFERSIZE);
-	FCEUSS_SaveMS(&save, Z_BEST_COMPRESSION);
+	std::vector<unsigned char> save(retro_serialize_size());
+	if (!retro_serialize(save.data(), save.size())) return false;
 	datasize = save.size();
 
 	if (datasize)
-		offset = SaveFile(save.buf(), filepath, datasize, silent);
+		offset = SaveFile((char *)save.data(), filepath, datasize, silent);
 
-	if (offset > 0)
+	if (offset == datasize && datasize > 0)
 	{
 		if (!silent)
 			InfoPrompt("Save successful");
@@ -92,11 +92,11 @@ StateSnapshot * SnapshotStateAuto ()
 	}
 
 	{
-		EMUFILE_MEMFILE save(SAVEBUFFERSIZE);
+		std::vector<unsigned char> save(retro_serialize_size());
 
-		if(save.buf())
+		if(!save.empty() && retro_serialize(save.data(), save.size()))
 		{
-			FCEUSS_SaveMS(&save, Z_BEST_COMPRESSION);
+
 
 			int datasize = save.size();
 
@@ -107,7 +107,7 @@ StateSnapshot * SnapshotStateAuto ()
 
 				if(snapshot->data)
 				{
-					memcpy(snapshot->data, save.buf(), datasize);
+					memcpy(snapshot->data, save.data(), datasize);
 					snapshot->size = datasize;
 				}
 			}
@@ -150,7 +150,7 @@ bool WriteStateSnapshot (StateSnapshot * snapshot, bool silent)
 		SaveFile((char *)snapshot->png, screenpath, snapshot->pngSize, silent);
 	}
 
-	return SaveFile((char *)snapshot->data, snapshot->path, snapshot->size, silent) > 0;
+	return SaveFile((char *)snapshot->data, snapshot->path, snapshot->size, silent) == snapshot->size;
 }
 
 void FreeStateSnapshot (StateSnapshot * snapshot)
@@ -178,9 +178,8 @@ bool LoadState (char * filepath, bool silent)
 
 	if (offset > 0)
 	{
-		EMUFILE_MEMFILE save(savebuffer, offset);
-		FCEUSS_LoadFP(&save, SSLOADPARAM_NOBACKUP);
-		retval = true;
+		retval = offset == static_cast<int>(retro_serialize_size()) && retro_unserialize(savebuffer, offset);
+        if (!retval && !silent) ErrorPrompt("Invalid or incompatible save state");
 	}
 	else
 	{
@@ -206,7 +205,7 @@ LoadStateAuto (bool silent)
 bool SavePreviewImg (char * filepath, bool silent)
 {
 	int device;
-	
+
 	if(!FindDevice(filepath, &device))
 		return 0;
 
@@ -218,6 +217,6 @@ bool SavePreviewImg (char * filepath, bool silent)
 		strcat(screenpath, ".png");
 		SaveFile((char *)gameScreenPng.buffer, screenpath, gameScreenPng.size, silent);
 	}
-	
+
 	return 1;
 }

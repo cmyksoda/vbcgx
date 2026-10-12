@@ -94,36 +94,6 @@ static inline void copy_to_xfb (u32 arg)
 
 	++systemFrameTimer;
 
-	// FDS switch disk requested - need to eject, select, and insert
-	// but not all at once!
-	if(FDSSwitchRequested)
-	{
-		switch(FDSSwitchRequested)
-		{
-			case 1:
-				FDSSwitchRequested++;
-				FCEUI_FDSInsert(); // eject disk
-				FDSTimer = 0;
-				break;
-			case 2:
-				if(FDSTimer > 60)
-				{
-					FDSSwitchRequested++;
-					FDSTimer = 0;
-					FCEUI_FDSSelect(); // select other side
-					FCEUI_FDSInsert(); // insert disk
-				}
-				break;
-			case 3:
-				if(FDSTimer > 200)
-				{
-					FDSSwitchRequested = 0;
-					FDSTimer = 0;
-				}
-				break;
-		}
-		FDSTimer++;
-	}
 }
 
 uint32_t OgcVideoDriver::getFrameTimer()
@@ -205,6 +175,16 @@ GXRModeObj* OgcVideoDriver::findVideoMode()
 	// choose the desired video mode
 	switch(EmuSettings.videoMode)
 	{
+		case VIDEOMODE_240P_PAL:
+            mode = &PAL_240p;
+            mode->fbWidth = 640;
+            mode->viTVMode = VI_TVMODE_PAL_DS;
+            break;
+        case VIDEOMODE_ORIGINAL_240P:
+            mode = &NTSC_240p;
+            mode->fbWidth = 640;
+            mode->viTVMode = CONF_GetVideo() == CONF_VIDEO_PAL ? VI_TVMODE_EURGB60_DS : VI_TVMODE_NTSC_DS;
+            break;
 		case VIDEOMODE_NTSC: // NTSC (480i)
 			mode = &TVNtsc480IntDf;
 			break;
@@ -222,41 +202,7 @@ GXRModeObj* OgcVideoDriver::findVideoMode()
 			break;
 	}
 
-	// configure original modes
-	switch (mode->viTVMode >> 2)
-	{
-		case VI_PAL:
-			// 576 lines (PAL 50Hz)
-			vmode_60hz = false;
-
-			// Original Video modes (forced to PAL 50Hz)
-			// set video signal mode
-			NTSC_240p.viTVMode = VI_TVMODE_PAL_DS;
-			NTSC_240p.viYOrigin = (VI_MAX_HEIGHT_PAL/2 - 480/2)/2;
-			break;
-
-		case VI_NTSC:
-			// 480 lines (NTSC 60Hz)
-			vmode_60hz = true;
-
-			// Original Video modes (forced to NTSC 60Hz)
-			// set video signal mode
-			PAL_240p.viTVMode = VI_TVMODE_NTSC_DS;
-			PAL_240p.viYOrigin = (VI_MAX_HEIGHT_NTSC/2 - 480/2)/2;
-			NTSC_240p.viTVMode = VI_TVMODE_NTSC_DS;
-			break;
-
-		default:
-			// 480 lines (PAL 60Hz)
-			vmode_60hz = true;
-
-			// Original Video modes (forced to PAL 60Hz)
-			// set video signal mode
-			PAL_240p.viTVMode = VI_TVMODE(mode->viTVMode >> 2, VI_NON_INTERLACE);
-			PAL_240p.viYOrigin = (VI_MAX_HEIGHT_NTSC/2 - 480/2)/2;
-			NTSC_240p.viTVMode = VI_TVMODE(mode->viTVMode >> 2, VI_NON_INTERLACE);
-			break;
-	}
+    vmode_60hz = (mode->viTVMode >> 2) != VI_PAL;
 
 	// check for progressive scan
 	if ((mode->viTVMode & 3) == VI_PROGRESSIVE)
@@ -279,12 +225,12 @@ GXRModeObj* OgcVideoDriver::findVideoMode()
 	if(vmode_60hz)
 	{
 		mode->viXOrigin = (VI_MAX_WIDTH_NTSC - mode->viWidth) / 2;
-		mode->viYOrigin = (VI_MAX_HEIGHT_NTSC - mode->viHeight) / 2;
+		mode->viYOrigin = (VI_MAX_HEIGHT_NTSC - mode->viHeight) / ((mode->viTVMode & 3) == VI_NON_INTERLACE ? 4 : 2);
 	}
 	else
 	{
 		mode->viXOrigin = (VI_MAX_WIDTH_PAL - mode->viWidth) / 2;
-		mode->viYOrigin = (VI_MAX_HEIGHT_PAL - mode->viHeight) / 2;
+		mode->viYOrigin = (VI_MAX_HEIGHT_PAL - mode->viHeight) / ((mode->viTVMode & 3) == VI_NON_INTERLACE ? 4 : 2);
 	}
 	#endif
 
@@ -305,7 +251,7 @@ void OgcVideoDriver::startMenuVideo()
 	GX_SetCopyClear (background, GX_MAX_Z24);
 
 	GX_SetScissor(0,0,videoMode->fbWidth,videoMode->efbHeight);
-	GX_SetDispCopyFrame2Field(videoMode->copy_interlaced);
+	GX_SetDispCopyFrame2Field(GX_COPY_PROGRESSIVE);
 	GX_SetDispCopySrc(0,0,videoMode->fbWidth,videoMode->efbHeight);
 	yscale = GX_GetYScaleFactor(videoMode->efbHeight,videoMode->xfbHeight);
 	xfbHeight = GX_SetDispCopyYScale(yscale);

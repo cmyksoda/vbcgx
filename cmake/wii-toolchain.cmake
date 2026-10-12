@@ -1,0 +1,8 @@
+set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_SYSTEM_PROCESSOR powerpc)
+set(CMAKE_C_COMPILER $ENV{DEVKITPPC}/bin/powerpc-eabi-gcc)
+set(CMAKE_CXX_COMPILER $ENV{DEVKITPPC}/bin/powerpc-eabi-g++)
+set(CMAKE_AR $ENV{DEVKITPPC}/bin/powerpc-eabi-ar)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+set(CMAKE_C_FLAGS_INIT "-mcpu=750 -meabi -mhard-float -DGEKKO -DHW_RVL -DMSB_FIRST -ffunction-sections -fdata-sections")
+set(CMAKE_CXX_FLAGS_INIT "${CMAKE_C_FLAGS_INIT} -fno-exceptions -fno-rtti")

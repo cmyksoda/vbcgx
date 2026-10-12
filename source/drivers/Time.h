@@ -28,7 +28,7 @@ class SystemTime
 			#if defined(__WIIU__)
 			return (Ticks)OSGetSystemTime();
 			#else
-			return (Ticks)SYS_GetSystemTime();
+			return (Ticks)gettime();
 			#endif
 		}
 
