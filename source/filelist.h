@@ -66,7 +66,7 @@
 #include "icon_settings_menu_png.h"
 #include "icon_settings_network_png.h"
 #include "icon_settings_video_png.h"
-#include "icon_settings_emulation_png.h"
+#include "icon_settings_colors3d_png.h"
 #include "icon_settings_screenshot_png.h"
 #include "button_gamesave_png.h"
 #include "button_gamesave_over_png.h"

@@ -2395,7 +2395,7 @@ static int MenuGameSettings()
 	GuiSound btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM);
 	MenuIconData iconMappings(icon_settings_vbcontroller_png);
 	MenuIconData iconVideo(icon_settings_video_png);
-	MenuIconData iconEmulation(icon_settings_emulation_png);
+	MenuIconData iconEmulation(icon_settings_colors3d_png);
 	MenuIconData iconController(icon_game_controllers_png);
 	MenuIconData iconCheats(icon_game_cheats_png);
 	MenuIconData iconScreenshot(icon_settings_screenshot_png);
