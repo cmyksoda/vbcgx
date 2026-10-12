@@ -1,0 +1,35 @@
+# VBoy Color - the libretro core (https://github.com/yuk27/VBoyColor)
+
+# Software Information
+display_name = "Nintendo - Virtual Boy (VBoy Color)"
+authors = "yuk27|Mednafen Team"
+supported_extensions = "vb|vboy|bin"
+corename = "VBoy Color"
+categories = "Emulator"
+license = "GPLv3"
+permissions = ""
+display_version = "1.0.0"
+
+# Hardware Information
+manufacturer = "Nintendo"
+systemname = "Virtual Boy"
+systemid = "virtual_boy"
+
+# Libretro Features
+database = "Nintendo - Virtual Boy"
+supports_no_game = "false"
+savestate = "true"
+savestate_features = "deterministic"
+cheats = "true"
+input_descriptors = "true"
+memory_descriptors = "false"
+libretro_saves = "true"
+core_options = "true"
+core_options_version = "1.0"
+load_subsystem = "false"
+hw_render = "false"
+needs_fullpath = "false"
+disk_control = "false"
+is_experimental = "false"
+
+description = "Virtual Boy games in color: Beetle VB (Mednafen's Virtual Boy emulation) with VBoy Color's coloring - hand-painted color packs for many games, automatic colors for every other one, Multicolor palettes, gradients and tints - and the 3D picture for a normal screen: side by side, top and bottom, or colored 3D glasses. VBoy Color's own app also plays the games in stereoscopic 3D on Meta Quest."

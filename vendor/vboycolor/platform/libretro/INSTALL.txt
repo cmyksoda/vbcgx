@@ -1,0 +1,23 @@
+VBoy Color - RetroArch core
+===========================
+
+Two files, two folders:
+
+1. vboycolor_libretro.dll / .so / .dylib -> RetroArch's cores folder
+   (Settings > Directory > Cores shows where it is).
+   On Android: Load Core > Install or Restore a Core > vboycolor_libretro_android.so.
+
+2. vboycolor_libretro.info -> RetroArch's core info folder
+   (Settings > Directory > Core Info shows where it is; on Windows usually the "info"
+   folder next to retroarch.exe).
+
+   Don't skip this one: RetroArch's file browser only lists the file types that the
+   installed cores' .info files name. Without it, Load Content shows a folder's .zip
+   files but hides its .vb games.
+
+Then: Load Core > Nintendo - Virtual Boy (VBoy Color), and Load Content > your .vb or .zip.
+
+Quick Menu > Core Options has the colors (the game's own, Auto, Multicolor, Gradient,
+Tint), the color packs and the 3D (side by side, top and bottom, colored glasses).
+
+https://github.com/yuk27/VBoyColor

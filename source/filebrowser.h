@@ -1,0 +1,87 @@
+/****************************************************************************
+ * FCE Ultra GX
+ *
+ * Daryl Borth 2008-2026
+ *
+ * filebrowser.h
+ *
+ * Generic file routines - reading, writing, browsing
+ ****************************************************************************/
+
+#ifndef _FILEBROWSER_H_
+#define _FILEBROWSER_H_
+
+#include <unistd.h>
+#include <stdint.h>
+#include "fceugx.h"
+
+#define MAXJOLIET 255
+#ifdef HW_DOL
+#define MAX_BROWSER_SIZE	1000
+#else
+#define MAX_BROWSER_SIZE	3000
+#endif
+
+typedef struct
+{
+	char dir[MAXPATHLEN + 1]; // directory path of browserList
+	int numEntries; // # of entries in browserList
+	int selIndex; // currently selected index of browserList
+	int pageIndex; // starting index of browserList page display
+	int size; // # of entries browerList has space allocated to store
+} BROWSERINFO;
+
+typedef struct
+{
+	size_t length; // file length
+	int isdir; // 0 - file, 1 - directory
+	char filename[MAXJOLIET + 1]; // full filename
+	char displayname[MAXJOLIET + 1]; // name for browser display
+	int filenum; // file # (for 7z support)
+	int icon; // icon to display
+} BROWSERENTRY;
+
+extern BROWSERINFO browser;
+extern BROWSERENTRY * browserList;
+extern bool browserDeviceListChanged;
+extern volatile uint32_t removedDeviceMask;
+
+enum
+{
+	ICON_NONE,
+	ICON_FOLDER,
+	ICON_SD,
+	ICON_USB,
+	ICON_DVD,
+	ICON_SMB
+};
+
+extern char romFilename[];
+extern bool loadingFile;
+extern char szname[MAXPATHLEN];
+extern bool inSz;
+
+bool isValidLoadDevice(int device);
+bool isValidSaveDevice(int device);
+int getNextLoadDevice(int device);
+int getNextSaveDevice(int device);
+bool MakeFilePath(char filepath[], int type, char * filename = nullptr, int filenum = -2);
+int UpdateDirName();
+int OpenGameList();
+void AutoDetectDevices();
+int autoSaveMethod();
+int FileSortCallback(const void *f1, const void *f2);
+void StripExt(char* returnstring, char * inputstring);
+bool IsSz();
+void ResetBrowser();
+bool AddBrowserEntry();
+int AddDeviceListing();
+bool IsDeviceRoot(char * path);
+void GetDefaultFolderPath(char * fullPath, const char * folderName);
+void MakeFilePathForFolderPath(char * filepath, int device, const char * folder);
+int BrowserLoadSz();
+int BrowserChangeFolder();
+int BrowserLoadFile();
+bool AutoloadGame(char* filepath, char* filename);
+
+#endif

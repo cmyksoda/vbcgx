@@ -1,0 +1,10 @@
+build_wii/
+executables/
+build-core/
+dist/
+project-notes/
+*.log
+*.md
+*.MD
+AGENTS.*
+CLAUDE.*
