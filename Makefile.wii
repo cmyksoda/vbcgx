@@ -146,7 +146,7 @@ DEPENDS	:=	$(OFILES:.o=.d)
 # main targets
 #---------------------------------------------------------------------------------
 $(OUTPUT).dol: $(OUTPUT).elf
-$(OUTPUT).elf: $(OFILES)
+$(OUTPUT).elf: $(OFILES) ../build-core/libvboycolor.a ../build-core/libbeetle_vb.a
 
 $(OFILES_SOURCES) : $(HFILES)
 
