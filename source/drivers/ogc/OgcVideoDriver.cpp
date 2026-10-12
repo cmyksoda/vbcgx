@@ -401,6 +401,8 @@ void OgcVideoDriver::renderMenu()
 	GX_SetColorUpdate(GX_TRUE);
 	GX_CopyDisp(xfb[whichfb],GX_TRUE);
 	GX_DrawDone();
+	// Menu elements use draw order; depth testing is only needed for the clear.
+	GX_SetZMode(GX_FALSE, GX_LEQUAL, GX_FALSE);
 	VIDEO_SetNextFramebuffer(xfb[whichfb]);
 	VIDEO_Flush();
 	VIDEO_WaitForFlush();

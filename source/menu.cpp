@@ -168,10 +168,10 @@ struct ProgressOverlayState {
 	ProgressOverlayState() :
 		progressWindow(448, 288),
 		dialogBoxImg(MENU_DIALOG_W, MENU_DIALOG_H, MENU_DIALOG_HEADER_H),
-		titleTxt(nullptr, 26, (PixelColor){255, 255, 255, 255}),
-		msgTxt(nullptr, 26, (PixelColor){0, 0, 0, 255}),
+		titleTxt(nullptr, 26, MenuPaletteCurrent().text),
+		msgTxt(nullptr, 26, MenuPaletteCurrent().text),
 		cancelImg(MenuButtonShape::NORMAL),
-		cancelTxt("Cancel", 22, (PixelColor){0, 0, 0, 255}),
+		cancelTxt("Cancel", 22, MenuPaletteCurrent().text),
 		cancelBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H),
 		cancelShown(false),
 		overlayShown(false), waitingToShow(false), pendingStart(0),
@@ -228,7 +228,7 @@ struct Menu {
 		bgBottomImg(MenuBarShape::BOTTOM),
 		logo(logo_png), logoImg(&logo),
 		logoOver(logo_over_png), logoImgOver(&logoOver),
-		logoTxt(APPVERSION, 18, (PixelColor){255, 255, 255, 255}),
+		logoTxt(APPVERSION, 18, MenuPaletteCurrent().text),
 		btnLogo(logoImg.getWidth(), logoImg.getHeight()),
 		btnSoundOver(button_over_pcm, button_over_pcm_size, SOUND::PCM),
 		btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM)
@@ -414,14 +414,13 @@ static void CreditsWindow()
 	int numEntries = 24;
 	GuiText * txt[numEntries];
 
-	// the title sits on the dialog's chrome band, so it is white; the credits start below the band
-	txt[i] = new GuiText("Credits", 30, (PixelColor){255, 255, 255, 255});
+	txt[i] = new GuiText("Credits", 30, MenuPaletteCurrent().text);
 	txt[i]->setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP); txt[i]->setPosition(0,y); i++; y+=56;
 
-	txt[i] = new GuiText("Official Site: https://github.com/dborth/fceugx", 20, (PixelColor){0, 0, 0, 255});
+	txt[i] = new GuiText("Official Site: https://github.com/dborth/fceugx", 20, MenuPaletteCurrent().text);
 	txt[i]->setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP); txt[i]->setPosition(0,y); i++; y+=32;
 
-	GuiText::setPresets(20, (PixelColor){0, 0, 0, 255}, 0, GUI_TEXT_JUSTIFY_LEFT | GUI_TEXT_ALIGN_TOP, ALIGN_H::LEFT, ALIGN_V::TOP);
+	GuiText::setPresets(20, MenuPaletteCurrent().text, 0, GUI_TEXT_JUSTIFY_LEFT | GUI_TEXT_ALIGN_TOP, ALIGN_H::LEFT, ALIGN_V::TOP);
 
 	txt[i] = new GuiText("Coding & menu design");
 	txt[i]->setPosition(40,y); i++;
@@ -468,14 +467,14 @@ static void CreditsWindow()
 	snprintf(consoleDetails, sizeof(consoleDetails), "%s", platform->getConsoleDetails());
 	snprintf(memoryFreeInfo, sizeof(memoryFreeInfo), "%s", platform->getMemoryFreeInfo());
 
-	txt[i] = new GuiText(consoleDetails, 14, (PixelColor){0, 0, 0, 255});
+	txt[i] = new GuiText(consoleDetails, 14, MenuPaletteCurrent().text);
 	txt[i]->setAlignment(ALIGN_H::RIGHT, ALIGN_V::BOTTOM);
 	txt[i]->setPosition(-20,-66); i++;
-	txt[i] = new GuiText(memoryFreeInfo, 14, (PixelColor){0, 0, 0, 255});
+	txt[i] = new GuiText(memoryFreeInfo, 14, MenuPaletteCurrent().text);
 	txt[i]->setAlignment(ALIGN_H::RIGHT, ALIGN_V::BOTTOM);
 	txt[i]->setPosition(-20,-52); i++;
 
-	GuiText::setPresets(12, (PixelColor){0, 0, 0, 255}, 0, GUI_TEXT_JUSTIFY_CENTER | GUI_TEXT_ALIGN_TOP, ALIGN_H::CENTRE, ALIGN_V::BOTTOM);
+	GuiText::setPresets(12, MenuPaletteCurrent().text, 0, GUI_TEXT_JUSTIFY_CENTER | GUI_TEXT_ALIGN_TOP, ALIGN_H::CENTRE, ALIGN_V::BOTTOM);
 
 	txt[i] = new GuiText("This software is open source and may be copied, distributed, or modified");
 	txt[i]->setPosition(0, -32); i++;
@@ -635,15 +634,15 @@ static int WindowPrompt(const char *title, const char *msg, const char *btn1Labe
 
 	MenuDialogShape dialogBoxImg(MENU_DIALOG_W, MENU_DIALOG_H, MENU_DIALOG_HEADER_H);
 
-	GuiText titleTxt(title, 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt(title, 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
 	titleTxt.setPosition(0,14);
-	GuiText msgTxt(msg, 26, (PixelColor){0, 0, 0, 255});
+	GuiText msgTxt(msg, 26, MenuPaletteCurrent().text);
 	msgTxt.setAlignment(ALIGN_H::CENTRE, ALIGN_V::MIDDLE);
 	msgTxt.setPosition(0,-20);
 	msgTxt.setWrap(true, 430);
 
-	GuiText btn1Txt(btn1Label, 22, (PixelColor){0, 0, 0, 255});
+	GuiText btn1Txt(btn1Label, 22, MenuPaletteCurrent().text);
 	MenuButtonShape btn1Img(MenuButtonShape::NORMAL);
 	GuiButton btn1(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
 
@@ -667,7 +666,7 @@ static int WindowPrompt(const char *title, const char *msg, const char *btn1Labe
 	btn1.setState(STATE::SELECTED);
 	btn1.setEffectGrow();
 
-	GuiText btn2Txt(btn2Label, 22, (PixelColor){0, 0, 0, 255});
+	GuiText btn2Txt(btn2Label, 22, MenuPaletteCurrent().text);
 	MenuButtonShape btn2Img(MenuButtonShape::NORMAL);
 	GuiButton btn2(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
 	btn2.setAlignment(ALIGN_H::RIGHT, ALIGN_V::BOTTOM);
@@ -861,7 +860,7 @@ static void OnScreenKeyboard(char * var, uint32_t maxlen)
 	GuiSound btnSoundOver(button_over_pcm, button_over_pcm_size, SOUND::PCM);
 	GuiSound btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM);
 
-	GuiText okBtnTxt("OK", 22, (PixelColor){0, 0, 0, 255});
+	GuiText okBtnTxt("OK", 22, MenuPaletteCurrent().text);
 	MenuButtonShape okBtnImg(MenuButtonShape::NORMAL);
 	GuiButton okBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
 
@@ -875,7 +874,7 @@ static void OnScreenKeyboard(char * var, uint32_t maxlen)
 	okBtn.setTrigger(trigA);
 	okBtn.setEffectGrow();
 
-	GuiText cancelBtnTxt("Cancel", 22, (PixelColor){0, 0, 0, 255});
+	GuiText cancelBtnTxt("Cancel", 22, MenuPaletteCurrent().text);
 	MenuButtonShape cancelBtnImg(MenuButtonShape::NORMAL);
 	GuiButton cancelBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
 	cancelBtn.setAlignment(ALIGN_H::RIGHT, ALIGN_V::BOTTOM);
@@ -930,11 +929,11 @@ SettingWindow(const char * title, GuiWindow * w)
 
 	MenuDialogShape dialogBoxImg(MENU_DIALOG_W, MENU_DIALOG_H, MENU_DIALOG_HEADER_H);
 
-	GuiText titleTxt(title, 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt(title, 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
 	titleTxt.setPosition(0,14);
 
-	GuiText okBtnTxt("OK", 22, (PixelColor){0, 0, 0, 255});
+	GuiText okBtnTxt("OK", 22, MenuPaletteCurrent().text);
 	MenuButtonShape okBtnImg(MenuButtonShape::NORMAL);
 	GuiButton okBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
 
@@ -948,7 +947,7 @@ SettingWindow(const char * title, GuiWindow * w)
 	okBtn.setTrigger(trigA);
 	okBtn.setEffectGrow();
 
-	GuiText cancelBtnTxt("Cancel", 22, (PixelColor){0, 0, 0, 255});
+	GuiText cancelBtnTxt("Cancel", 22, MenuPaletteCurrent().text);
 	MenuButtonShape cancelBtnImg(MenuButtonShape::NORMAL);
 	GuiButton cancelBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
 	cancelBtn.setAlignment(ALIGN_H::RIGHT, ALIGN_V::BOTTOM);
@@ -1195,7 +1194,7 @@ static int MenuGameSelection()
 	bool res;
 	int i;
 
-	GuiText titleTxt("Choose Game", 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt("Choose Game", 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,50);
 
@@ -1207,7 +1206,7 @@ static int MenuGameSelection()
 	GuiTrigger trigHome;
 	trigHome.setButtonOnlyTrigger(-1, INPUT_BTN_HOME);
 
-	GuiText settingsBtnTxt("Settings", 22, (PixelColor){0, 0, 0, 255});
+	GuiText settingsBtnTxt("Settings", 22, MenuPaletteCurrent().text);
 	GuiImage settingsBtnIcon(&iconSettings);
 	settingsBtnIcon.setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
 	settingsBtnIcon.setPosition(14,0);
@@ -1223,7 +1222,7 @@ static int MenuGameSelection()
 	settingsBtn.setTrigger(trigA);
 	settingsBtn.setEffectGrow();
 
-	GuiText exitBtnTxt("Exit", 22, (PixelColor){0, 0, 0, 255});
+	GuiText exitBtnTxt("Exit", 22, MenuPaletteCurrent().text);
 	GuiImage exitBtnIcon(&iconHome);
 	exitBtnIcon.setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
 	exitBtnIcon.setPosition(14,0);
@@ -1492,7 +1491,7 @@ static void ControllerWindow()
 	arrowRightBtn.setSelectable(false);
 	arrowRightBtn.setUpdateCallback(ControllerWindowRightClick);
 
-	settingText = new GuiText(ctrlName[EmuSettings.controller], 22, (PixelColor){0, 0, 0, 255});
+	settingText = new GuiText(ctrlName[EmuSettings.controller], 22, MenuPaletteCurrent().text);
 
 	int currentController = EmuSettings.controller;
 
@@ -1567,7 +1566,7 @@ static void PlayerMappingWindow(int chan)
 	char playerNumber[20];
 	sprintf(playerNumber, "Player %d", playerMapping[playerMappingChan]+1);
 
-	settingText = new GuiText(playerNumber, 22, (PixelColor){0, 0, 0, 255});
+	settingText = new GuiText(playerNumber, 22, MenuPaletteCurrent().text);
 
 	w->append(&arrowLeftBtn);
 	w->append(&arrowRightBtn);
@@ -1612,7 +1611,7 @@ static int MenuGame()
 
 	char romTitle[512];
 	platform->getFileSystem()->nameToDisplay(romFilename, romTitle, sizeof(romTitle)); // raw name -> UTF-8 for display only
-	GuiText titleTxt(romTitle, 22, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt(romTitle, 22, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,40);
 
@@ -1633,7 +1632,7 @@ static int MenuGame()
 	trigHome.setButtonOnlyTrigger(-1, INPUT_BTN_HOME);
 	trigB.setSecondaryTrigger();
 
-	GuiText saveBtnTxt("Save", 22, (PixelColor){0, 0, 0, 255});
+	GuiText saveBtnTxt("Save", 22, MenuPaletteCurrent().text);
 	MenuButtonShape saveBtnImg(MenuButtonShape::LARGE);
 	GuiImage saveBtnIcon(&iconSave);
 	GuiButton saveBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
@@ -1647,7 +1646,7 @@ static int MenuGame()
 	saveBtn.setTrigger(trigA);
 	saveBtn.setEffectGrow();
 
-	GuiText loadBtnTxt("Load", 22, (PixelColor){0, 0, 0, 255});
+	GuiText loadBtnTxt("Load", 22, MenuPaletteCurrent().text);
 	MenuButtonShape loadBtnImg(MenuButtonShape::LARGE);
 	GuiImage loadBtnIcon(&iconLoad);
 	GuiButton loadBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
@@ -1661,7 +1660,7 @@ static int MenuGame()
 	loadBtn.setTrigger(trigA);
 	loadBtn.setEffectGrow();
 
-	GuiText deleteBtnTxt("Delete", 22, (PixelColor){0, 0, 0, 255});
+	GuiText deleteBtnTxt("Delete", 22, MenuPaletteCurrent().text);
 	MenuButtonShape deleteBtnImg(MenuButtonShape::LARGE);
 	GuiImage deleteBtnIcon(&iconDelete);
 	GuiButton deleteBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
@@ -1675,7 +1674,7 @@ static int MenuGame()
 	deleteBtn.setTrigger(trigA);
 	deleteBtn.setEffectGrow();
 
-	GuiText resetBtnTxt("Reset", 22, (PixelColor){0, 0, 0, 255});
+	GuiText resetBtnTxt("Reset", 22, MenuPaletteCurrent().text);
 	MenuButtonShape resetBtnImg(MenuButtonShape::LARGE);
 	GuiImage resetBtnIcon(&iconReset);
 	GuiButton resetBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
@@ -1689,7 +1688,7 @@ static int MenuGame()
 	resetBtn.setTrigger(trigA);
 	resetBtn.setEffectGrow();
 
-	GuiText gameSettingsBtnTxt("Game Settings", 22, (PixelColor){0, 0, 0, 255});
+	GuiText gameSettingsBtnTxt("Game Settings", 22, MenuPaletteCurrent().text);
 	gameSettingsBtnTxt.setWrap(true, MENU_BTN_LARGE_W-30);
 	MenuButtonShape gameSettingsBtnImg(MenuButtonShape::LARGE);
 	GuiImage gameSettingsBtnIcon(&iconGameSettings);
@@ -1704,7 +1703,7 @@ static int MenuGame()
 	gameSettingsBtn.setTrigger(trigA);
 	gameSettingsBtn.setEffectGrow();
 
-	GuiText mainmenuBtnTxt("Main Menu", 22, (PixelColor){0, 0, 0, 255});
+	GuiText mainmenuBtnTxt("Main Menu", 22, MenuPaletteCurrent().text);
 	if(EmuSettings.autoloadGame) {
 		mainmenuBtnTxt.setText("Exit");
 	}
@@ -1719,7 +1718,7 @@ static int MenuGame()
 	mainmenuBtn.setTrigger(trigA);
 	mainmenuBtn.setEffectGrow();
 
-	GuiText closeBtnTxt("Close", 20, (PixelColor){0, 0, 0, 255});
+	GuiText closeBtnTxt("Close", 20, MenuPaletteCurrent().text);
 	MenuButtonShape closeBtnImg(MenuButtonShape::SMALL);
 	GuiButton closeBtn(MENU_BTN_SMALL_W, MENU_BTN_SMALL_H);
 	closeBtn.setAlignment(ALIGN_H::RIGHT, ALIGN_V::TOP);
@@ -1748,7 +1747,7 @@ static int MenuGame()
 	{
 		sprintf(txt, "P%d", i+1);
 
-		batteryTxt[i] = new GuiText(txt, 20, (PixelColor){255, 255, 255, 255});
+		batteryTxt[i] = new GuiText(txt, 20, MenuPaletteCurrent().text);
 		batteryTxt[i]->setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
 		batteryImg[i] = new GuiImage(&battery);
 		batteryImg[i]->setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
@@ -2192,7 +2191,7 @@ static int MenuGameSaves(int action)
 	if(!changeOk)
 		return MENU_GAME;
 
-	GuiText titleTxt(nullptr, 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt(nullptr, 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,50);
 
@@ -2211,7 +2210,7 @@ static int MenuGameSaves(int action)
 	trigHome.setButtonOnlyTrigger(-1, INPUT_BTN_HOME);
 	trigB.setSecondaryTrigger();
 
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
+	GuiText backBtnTxt("Go Back", 22, MenuPaletteCurrent().text);
 	MenuButtonShape backBtnImg(MenuButtonShape::NORMAL);
 	GuiButton backBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
 	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
@@ -2224,7 +2223,7 @@ static int MenuGameSaves(int action)
 	backBtn.setTrigger(&trigB);
 	backBtn.setEffectGrow();
 
-	GuiText closeBtnTxt("Close", 20, (PixelColor){0, 0, 0, 255});
+	GuiText closeBtnTxt("Close", 20, MenuPaletteCurrent().text);
 	MenuButtonShape closeBtnImg(MenuButtonShape::SMALL);
 	GuiButton closeBtn(MENU_BTN_SMALL_W, MENU_BTN_SMALL_H);
 	closeBtn.setAlignment(ALIGN_H::RIGHT, ALIGN_V::TOP);
@@ -2388,13 +2387,13 @@ static int MenuGameSettings()
 	int selection = MENU_NONE;
 	char filepath[1024];
 
-	GuiText titleTxt("Game Settings", 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt("Game Settings", 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,50);
 
 	GuiSound btnSoundOver(button_over_pcm, button_over_pcm_size, SOUND::PCM);
 	GuiSound btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM);
-	MenuIconData iconMappings(icon_settings_mappings_png, -4.0f);
+	MenuIconData iconMappings(icon_settings_vbcontroller_png);
 	MenuIconData iconVideo(icon_settings_video_png);
 	MenuIconData iconEmulation(icon_settings_emulation_png);
 	MenuIconData iconController(icon_game_controllers_png);
@@ -2406,7 +2405,7 @@ static int MenuGameSettings()
 	trigHome.setButtonOnlyTrigger(-1, INPUT_BTN_HOME);
 	trigB.setSecondaryTrigger();
 
-	GuiText mappingBtnTxt("Button Mappings", 22, (PixelColor){0, 0, 0, 255});
+	GuiText mappingBtnTxt("Button Mappings", 22, MenuPaletteCurrent().text);
 	mappingBtnTxt.setWrap(true, MENU_BTN_LARGE_W-30);
 	MenuButtonShape mappingBtnImg(MenuButtonShape::LARGE);
 	GuiImage mappingBtnIcon(&iconMappings);
@@ -2421,7 +2420,7 @@ static int MenuGameSettings()
 	mappingBtn.setTrigger(trigA);
 	mappingBtn.setEffectGrow();
 
-	GuiText emulationBtnTxt("Colors & 3D", 22, (PixelColor){0, 0, 0, 255});
+	GuiText emulationBtnTxt("Colors & 3D", 22, MenuPaletteCurrent().text);
 	emulationBtnTxt.setWrap(true, MENU_BTN_LARGE_W-20);
 	MenuButtonShape emulationBtnImg(MenuButtonShape::LARGE);
 	GuiImage emulationBtnIcon(&iconEmulation);
@@ -2436,7 +2435,7 @@ static int MenuGameSettings()
 	emulationBtn.setTrigger(trigA);
 	emulationBtn.setEffectGrow();
 
-	GuiText videoBtnTxt("Video", 22, (PixelColor){0, 0, 0, 255});
+	GuiText videoBtnTxt("Video", 22, MenuPaletteCurrent().text);
 	videoBtnTxt.setWrap(true, MENU_BTN_LARGE_W-20);
 	MenuButtonShape videoBtnImg(MenuButtonShape::LARGE);
 	GuiImage videoBtnIcon(&iconVideo);
@@ -2451,7 +2450,7 @@ static int MenuGameSettings()
 	videoBtn.setTrigger(trigA);
 	videoBtn.setEffectGrow();
 
-	GuiText controllerBtnTxt("Button Mappings", 22, (PixelColor){0, 0, 0, 255});
+	GuiText controllerBtnTxt("Button Mappings", 22, MenuPaletteCurrent().text);
 	MenuButtonShape controllerBtnImg(MenuButtonShape::LARGE);
 	GuiImage controllerBtnIcon(&iconController);
 	GuiButton controllerBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
@@ -2465,7 +2464,7 @@ static int MenuGameSettings()
 	controllerBtn.setTrigger(trigA);
 	controllerBtn.setEffectGrow();
 
-	GuiText screenshotBtnTxt("Screenshot", 22, (PixelColor){0, 0, 0, 255});
+	GuiText screenshotBtnTxt("Screenshot", 22, MenuPaletteCurrent().text);
 	MenuButtonShape screenshotBtnImg(MenuButtonShape::LARGE);
 	GuiImage screenshotBtnIcon(&iconScreenshot);
 	GuiButton screenshotBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
@@ -2479,7 +2478,7 @@ static int MenuGameSettings()
 	screenshotBtn.setTrigger(trigA);
 	screenshotBtn.setEffectGrow();
 
-	GuiText cheatsBtnTxt("Cheats", 22, (PixelColor){0, 0, 0, 255});
+	GuiText cheatsBtnTxt("Cheats", 22, MenuPaletteCurrent().text);
 	MenuButtonShape cheatsBtnImg(MenuButtonShape::LARGE);
 	GuiImage cheatsBtnIcon(&iconCheats);
 	GuiButton cheatsBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
@@ -2493,7 +2492,7 @@ static int MenuGameSettings()
 	cheatsBtn.setTrigger(trigA);
 	cheatsBtn.setEffectGrow();
 
-	GuiText closeBtnTxt("Close", 20, (PixelColor){0, 0, 0, 255});
+	GuiText closeBtnTxt("Close", 20, MenuPaletteCurrent().text);
 	MenuButtonShape closeBtnImg(MenuButtonShape::SMALL);
 	GuiButton closeBtn(MENU_BTN_SMALL_W, MENU_BTN_SMALL_H);
 	closeBtn.setAlignment(ALIGN_H::RIGHT, ALIGN_V::TOP);
@@ -2506,7 +2505,7 @@ static int MenuGameSettings()
 	closeBtn.setTrigger(&trigHome);
 	closeBtn.setEffectGrow();
 
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
+	GuiText backBtnTxt("Go Back", 22, MenuPaletteCurrent().text);
 	MenuButtonShape backBtnImg(MenuButtonShape::NORMAL);
 	GuiButton backBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
 	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
@@ -2618,12 +2617,12 @@ static int MenuSettingsMappingsController()
 	char menuSubtitle[100];
 
 	sprintf(menuTitle, "Game Settings - Button Mappings");
-	GuiText titleTxt(menuTitle, 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt(menuTitle, 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,30);
 
 	sprintf(menuSubtitle, "%s", ctrlName[mapMenuCtrlNES]);
-	GuiText subtitleTxt(menuSubtitle, 20, (PixelColor){255, 255, 255, 255});
+	GuiText subtitleTxt(menuSubtitle, 20, MenuPaletteCurrent().text);
 	subtitleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	subtitleTxt.setPosition(50,60);
 
@@ -2639,7 +2638,7 @@ static int MenuSettingsMappingsController()
 	GuiTrigger trigB;
 	trigB.setSecondaryTrigger();
 
-	GuiText gamecubeBtnTxt("GameCube Controller", 22, (PixelColor){0, 0, 0, 255});
+	GuiText gamecubeBtnTxt("GameCube Controller", 22, MenuPaletteCurrent().text);
 	gamecubeBtnTxt.setWrap(true, MENU_BTN_LARGE_W-30);
 	MenuButtonShape gamecubeBtnImg(MenuButtonShape::LARGE);
 	GuiImage gamecubeBtnIcon(&iconGamecube);
@@ -2654,7 +2653,7 @@ static int MenuSettingsMappingsController()
 	gamecubeBtn.setTrigger(trigA);
 	gamecubeBtn.setEffectGrow();
 
-	GuiText wiimoteBtnTxt("Wiimote", 22, (PixelColor){0, 0, 0, 255});
+	GuiText wiimoteBtnTxt("Wiimote", 22, MenuPaletteCurrent().text);
 	MenuButtonShape wiimoteBtnImg(MenuButtonShape::LARGE);
 	GuiImage wiimoteBtnIcon(&iconWiimote);
 	GuiButton wiimoteBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
@@ -2668,7 +2667,7 @@ static int MenuSettingsMappingsController()
 	wiimoteBtn.setTrigger(trigA);
 	wiimoteBtn.setEffectGrow();
 
-	GuiText drcBtnTxt("Wii U GamePad", 22, (PixelColor){0, 0, 0, 255});
+	GuiText drcBtnTxt("Wii U GamePad", 22, MenuPaletteCurrent().text);
 	drcBtnTxt.setWrap(true, MENU_BTN_LARGE_W-30);
 	MenuButtonShape drcBtnImg(MenuButtonShape::LARGE);
 	GuiImage drcBtnIcon(&iconDrc);
@@ -2683,7 +2682,7 @@ static int MenuSettingsMappingsController()
 	drcBtn.setTrigger(trigA);
 	drcBtn.setEffectGrow();
 
-	GuiText classicBtnTxt("Classic Controller", 22, (PixelColor){0, 0, 0, 255});
+	GuiText classicBtnTxt("Classic Controller", 22, MenuPaletteCurrent().text);
 	classicBtnTxt.setWrap(true, MENU_BTN_LARGE_W-30);
 	MenuButtonShape classicBtnImg(MenuButtonShape::LARGE);
 	GuiImage classicBtnIcon(&iconClassic);
@@ -2698,9 +2697,9 @@ static int MenuSettingsMappingsController()
 	classicBtn.setTrigger(trigA);
 	classicBtn.setEffectGrow();
 
-	GuiText nunchukBtnTxt1("Wiimote", 22, (PixelColor){0, 0, 0, 255});
-	GuiText nunchukBtnTxt2("&", 18, (PixelColor){0, 0, 0, 255});
-	GuiText nunchukBtnTxt3("Nunchuk", 22, (PixelColor){0, 0, 0, 255});
+	GuiText nunchukBtnTxt1("Wiimote", 22, MenuPaletteCurrent().text);
+	GuiText nunchukBtnTxt2("&", 18, MenuPaletteCurrent().text);
+	GuiText nunchukBtnTxt3("Nunchuk", 22, MenuPaletteCurrent().text);
 	nunchukBtnTxt1.setPosition(0, -20);
 	nunchukBtnTxt3.setPosition(0, +20);
 	MenuButtonShape nunchukBtnImg(MenuButtonShape::LARGE);
@@ -2718,7 +2717,7 @@ static int MenuSettingsMappingsController()
 	nunchukBtn.setTrigger(trigA);
 	nunchukBtn.setEffectGrow();
 
-	GuiText wiiuproBtnTxt("Wii U Pro Controller", 22, (PixelColor){0, 0, 0, 255});
+	GuiText wiiuproBtnTxt("Wii U Pro Controller", 22, MenuPaletteCurrent().text);
 	wiiuproBtnTxt.setWrap(true, MENU_BTN_LARGE_W-20);
 	MenuButtonShape wiiuproBtnImg(MenuButtonShape::LARGE);
 	GuiImage wiiuproBtnIcon(&iconWiiupro);
@@ -2733,7 +2732,7 @@ static int MenuSettingsMappingsController()
 	wiiuproBtn.setTrigger(trigA);
 	wiiuproBtn.setEffectGrow();
 
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
+	GuiText backBtnTxt("Go Back", 22, MenuPaletteCurrent().text);
 	MenuButtonShape backBtnImg(MenuButtonShape::NORMAL);
 	GuiButton backBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
 	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
@@ -2827,7 +2826,7 @@ static uint32_t ButtonMappingWindow()
 
 	MenuDialogShape dialogBoxImg(MENU_DIALOG_W, MENU_DIALOG_H, MENU_DIALOG_HEADER_H);
 
-	GuiText titleTxt("Button Mapping", 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt("Button Mapping", 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
 	titleTxt.setPosition(0,14);
 
@@ -2858,7 +2857,7 @@ static uint32_t ButtonMappingWindow()
 			break;
 	}
 
-	GuiText msgTxt(msg, 26, (PixelColor){0, 0, 0, 255});
+	GuiText msgTxt(msg, 26, MenuPaletteCurrent().text);
 	msgTxt.setAlignment(ALIGN_H::CENTRE, ALIGN_V::MIDDLE);
 	msgTxt.setPosition(0,-20);
 	msgTxt.setWrap(true, 430);
@@ -2932,19 +2931,19 @@ static int MenuSettingsMappingsMap()
 	char menuSubtitle[100];
 	sprintf(menuTitle, "Game Settings - Button Mappings");
 
-	GuiText titleTxt(menuTitle, 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt(menuTitle, 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,30);
 
 	sprintf(menuSubtitle, "%s - %s", textTranslator->getText(ctrlName[mapMenuCtrlNES]), textTranslator->getText(ctrlrName[mapMenuCtrl]));
-	GuiText subtitleTxt(menuSubtitle, 20, (PixelColor){255, 255, 255, 255});
+	GuiText subtitleTxt(menuSubtitle, 20, MenuPaletteCurrent().text);
 	subtitleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	subtitleTxt.setPosition(50,60);
 
 	GuiSound btnSoundOver(button_over_pcm, button_over_pcm_size, SOUND::PCM);
 	GuiSound btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM);
 
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
+	GuiText backBtnTxt("Go Back", 22, MenuPaletteCurrent().text);
 	MenuButtonShape backBtnImg(MenuButtonShape::NORMAL);
 	GuiButton backBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
 	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
@@ -2956,7 +2955,7 @@ static int MenuSettingsMappingsMap()
 	backBtn.setTrigger(trigA);
 	backBtn.setEffectGrow();
 
-	GuiText resetBtnTxt("Reset Mappings", 22, (PixelColor){0, 0, 0, 255});
+	GuiText resetBtnTxt("Reset Mappings", 22, MenuPaletteCurrent().text);
 	MenuButtonShape resetBtnImg(MenuButtonShape::SHORT);
 	GuiButton resetBtn(MENU_BTN_SHORT_W, MENU_BTN_SHORT_H);
 	resetBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
@@ -3144,8 +3143,8 @@ static void ScreenZoomWindow()
 	screenPositionImg.setAlignment(ALIGN_H::CENTRE, ALIGN_V::MIDDLE);
 	screenPositionImg.setPosition(0, 0);
 
-	settingText = new GuiText(nullptr, 20, (PixelColor){0, 0, 0, 255});
-	settingText2 = new GuiText(nullptr, 20, (PixelColor){0, 0, 0, 255});
+	settingText = new GuiText(nullptr, 20, MenuPaletteCurrent().text);
+	settingText2 = new GuiText(nullptr, 20, MenuPaletteCurrent().text);
 	char zoom[10];
 	sprintf(zoom, "%.2f%%", EmuSettings.videoZoomHor*100);
 	settingText->setText(zoom);
@@ -3260,7 +3259,7 @@ static void ScreenPositionWindow()
 	GuiImage screenPositionImg(&screenPosition);
 	screenPositionImg.setAlignment(ALIGN_H::CENTRE, ALIGN_V::MIDDLE);
 
-	settingText = new GuiText(nullptr, 20, (PixelColor){0, 0, 0, 255});
+	settingText = new GuiText(nullptr, 20, MenuPaletteCurrent().text);
 	char shift[10];
 	sprintf(shift, "%i, %i", EmuSettings.videoXshift, EmuSettings.videoYshift);
 	settingText->setText(shift);
@@ -3303,11 +3302,11 @@ static int MenuSettingsOtherMappings()
 	for(i=0; i < options.length; i++)
 		options.value[i][0] = 0;
 
-	GuiText titleTxt("Game Settings - Button Mappings", 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt("Game Settings - Button Mappings", 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,30);
 
-	GuiText subtitleTxt("Other Mappings", 20, (PixelColor){255, 255, 255, 255});
+	GuiText subtitleTxt("Other Mappings", 20, MenuPaletteCurrent().text);
 	subtitleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	subtitleTxt.setPosition(50,60);
 
@@ -3317,7 +3316,7 @@ static int MenuSettingsOtherMappings()
 	GuiTrigger trigB;
 	trigB.setSecondaryTrigger();
 
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
+	GuiText backBtnTxt("Go Back", 22, MenuPaletteCurrent().text);
 	MenuButtonShape backBtnImg(MenuButtonShape::NORMAL);
 	GuiButton backBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
 	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
@@ -3443,7 +3442,7 @@ static int MenuVBOptions(bool colors)
         snprintf(options.name[i], 100, "%s", colors ? colorNames[i] : videoNames[i]);
         options.value[i][0] = 0;
     }
-	GuiText titleTxt(colors ? "Game Settings - Colors & 3D" : "Game Settings - Video", 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt(colors ? "Game Settings - Colors & 3D" : "Game Settings - Video", 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,50);
 
@@ -3453,7 +3452,7 @@ static int MenuVBOptions(bool colors)
 	GuiTrigger trigB;
 	trigB.setSecondaryTrigger();
 
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
+	GuiText backBtnTxt("Go Back", 22, MenuPaletteCurrent().text);
 	MenuButtonShape backBtnImg(MenuButtonShape::NORMAL);
 	GuiButton backBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
 	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
@@ -3546,7 +3545,7 @@ static int MenuSettings()
 	else if(EmuSettings.gameGenie) sprintf(gameGenieTxt, "ON");
 	else sprintf(gameGenieTxt, "OFF");
 
-	GuiText titleTxt("Settings", 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt("Settings", 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,50);
 
@@ -3561,9 +3560,9 @@ static int MenuSettings()
 	GuiTrigger trigB;
 	trigB.setSecondaryTrigger();
 
-	GuiText savingBtnTxt1("Saving", 22, (PixelColor){0, 0, 0, 255});
-	GuiText savingBtnTxt2("&", 18, (PixelColor){0, 0, 0, 255});
-	GuiText savingBtnTxt3("Loading", 22, (PixelColor){0, 0, 0, 255});
+	GuiText savingBtnTxt1("Saving", 22, MenuPaletteCurrent().text);
+	GuiText savingBtnTxt2("&", 18, MenuPaletteCurrent().text);
+	GuiText savingBtnTxt3("Loading", 22, MenuPaletteCurrent().text);
 	savingBtnTxt1.setPosition(0, -20);
 	savingBtnTxt3.setPosition(0, +20);
 	MenuButtonShape savingBtnImg(MenuButtonShape::LARGE);
@@ -3581,7 +3580,7 @@ static int MenuSettings()
 	savingBtn.setTrigger(trigA);
 	savingBtn.setEffectGrow();
 
-	GuiText menuBtnTxt("Menu", 22, (PixelColor){0, 0, 0, 255});
+	GuiText menuBtnTxt("Menu", 22, MenuPaletteCurrent().text);
 	menuBtnTxt.setWrap(true, MENU_BTN_LARGE_W-30);
 	MenuButtonShape menuBtnImg(MenuButtonShape::LARGE);
 	GuiImage menuBtnIcon(&iconMenu);
@@ -3596,7 +3595,7 @@ static int MenuSettings()
 	menuBtn.setTrigger(trigA);
 	menuBtn.setEffectGrow();
 
-	GuiText networkBtnTxt("Network Share", 22, (PixelColor){0, 0, 0, 255});
+	GuiText networkBtnTxt("Network Share", 22, MenuPaletteCurrent().text);
 	networkBtnTxt.setWrap(true, MENU_BTN_LARGE_W-30);
 	MenuButtonShape networkBtnImg(MenuButtonShape::LARGE);
 	GuiImage networkBtnIcon(&iconNetwork);
@@ -3611,8 +3610,8 @@ static int MenuSettings()
 	networkBtn.setTrigger(trigA);
 	networkBtn.setEffectGrow();
 
-	GuiText cheatsBtnTxt("Game Genie", 22, (PixelColor){0, 0, 0, 255});
-	GuiText cheatsBtnTxt2(gameGenieTxt, 18, (PixelColor){0, 0, 0, 255});
+	GuiText cheatsBtnTxt("Game Genie", 22, MenuPaletteCurrent().text);
+	GuiText cheatsBtnTxt2(gameGenieTxt, 18, MenuPaletteCurrent().text);
 	cheatsBtnTxt.setPosition(0, -16);
 	cheatsBtnTxt2.setPosition(0, +8);
 	MenuButtonShape cheatsBtnImg(MenuButtonShape::LARGE);
@@ -3629,7 +3628,7 @@ static int MenuSettings()
 	cheatsBtn.setTrigger(trigA);
 	cheatsBtn.setEffectGrow();
 
-	GuiText creditsBtnTxt("Credits", 22, (PixelColor){0, 0, 0, 255});
+	GuiText creditsBtnTxt("Credits", 22, MenuPaletteCurrent().text);
 	creditsBtnTxt.setWrap(true, MENU_BTN_LARGE_W-20);
 	MenuButtonShape creditsBtnImg(MenuButtonShape::LARGE);
 	GuiImage creditsBtnIcon(&iconCredits);
@@ -3644,7 +3643,7 @@ static int MenuSettings()
 	creditsBtn.setTrigger(trigA);
 	creditsBtn.setEffectGrow();
 
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
+	GuiText backBtnTxt("Go Back", 22, MenuPaletteCurrent().text);
 	MenuButtonShape backBtnImg(MenuButtonShape::LONG);
 	GuiButton backBtn(MENU_BTN_LONG_W, MENU_BTN_LONG_H);
 	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
@@ -3657,7 +3656,7 @@ static int MenuSettings()
 	backBtn.setTrigger(&trigB);
 	backBtn.setEffectGrow();
 
-	GuiText resetBtnTxt("Reset Settings", 22, (PixelColor){0, 0, 0, 255});
+	GuiText resetBtnTxt("Reset Settings", 22, MenuPaletteCurrent().text);
 	MenuButtonShape resetBtnImg(MenuButtonShape::LONG);
 	GuiButton resetBtn(MENU_BTN_LONG_W, MENU_BTN_LONG_H);
 	resetBtn.setAlignment(ALIGN_H::RIGHT, ALIGN_V::BOTTOM);
@@ -3771,7 +3770,7 @@ static int MenuSettingsFile()
 	for(i=0; i < options.length; i++)
 		options.value[i][0] = 0;
 
-	GuiText titleTxt("Settings - Saving & Loading", 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt("Settings - Saving & Loading", 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,50);
 
@@ -3781,7 +3780,7 @@ static int MenuSettingsFile()
 	GuiTrigger trigB;
 	trigB.setSecondaryTrigger();
 
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
+	GuiText backBtnTxt("Go Back", 22, MenuPaletteCurrent().text);
 	MenuButtonShape backBtnImg(MenuButtonShape::LONG);
 	GuiButton backBtn(MENU_BTN_LONG_W, MENU_BTN_LONG_H);
 	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
@@ -4064,7 +4063,7 @@ static int MenuSettingsMenu()
 	for(i=0; i < options.length; i++)
 		options.value[i][0] = 0;
 
-	GuiText titleTxt("Settings - Menu", 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt("Settings - Menu", 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,50);
 
@@ -4074,7 +4073,7 @@ static int MenuSettingsMenu()
 	GuiTrigger trigB;
 	trigB.setSecondaryTrigger();
 
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
+	GuiText backBtnTxt("Go Back", 22, MenuPaletteCurrent().text);
 	MenuButtonShape backBtnImg(MenuButtonShape::LONG);
 	GuiButton backBtn(MENU_BTN_LONG_W, MENU_BTN_LONG_H);
 	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
@@ -4269,7 +4268,7 @@ static int MenuSettingsNetwork()
 	for(i=0; i < options.length; i++)
 		options.value[i][0] = 0;
 
-	GuiText titleTxt("Settings - Network Share", 26, (PixelColor){255, 255, 255, 255});
+	GuiText titleTxt("Settings - Network Share", 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,50);
 
@@ -4279,7 +4278,7 @@ static int MenuSettingsNetwork()
 	GuiTrigger trigB;
 	trigB.setSecondaryTrigger();
 
-	GuiText backBtnTxt("Go Back", 22, (PixelColor){0, 0, 0, 255});
+	GuiText backBtnTxt("Go Back", 22, MenuPaletteCurrent().text);
 	MenuButtonShape backBtnImg(MenuButtonShape::LONG);
 	GuiButton backBtn(MENU_BTN_LONG_W, MENU_BTN_LONG_H);
 	backBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
@@ -4414,7 +4413,8 @@ static void * CreateBlurredGameTexture() {
 	}
 
 	int blurAmount = 4; // blur amount
-	PixelColor blurOverlayColor = (PixelColor){50, 50, 50, 160};
+	PixelColor blurOverlayColor = MenuPaletteCurrent().backgroundBottom;
+	blurOverlayColor.a = 232;
 
 	int screenWidth = platform->getVideo()->getScreenWidth();
 	int screenHeight = platform->getVideo()->getScreenHeight();

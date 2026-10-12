@@ -104,26 +104,26 @@ struct MenuPalette {
 	PixelColor text, textMuted, textOnAccent;
 };
 
-//!FCE Ultra GX: crimson chrome, gray secondary
+//!VBoy Color GX: red highlights over black surfaces
 static inline MenuPalette MenuPaletteDefault()
 {
 	MenuPalette p;
-	p.chromeLight    = MenuRGBA(152, 30, 30);
-	p.chromeDark     = MenuRGBA(94, 2, 2);
-	p.chromeEdge     = MenuRGBA(184, 56, 56);
-	p.backgroundTop    = MenuRGBA(241, 241, 244);
-	p.backgroundBottom = MenuRGBA(213, 213, 220);
-	p.accent         = MenuRGBA(200, 32, 32);
-	p.accentDark     = MenuRGBA(146, 14, 14);
-	p.accentTint     = MenuRGBA(252, 232, 232);
-	p.glow           = MenuRGBA(255, 214, 200, 170);
-	p.surface        = MenuRGBA(246, 246, 249);
-	p.surfaceRaised  = MenuRGBA(255, 255, 255);
-	p.outline        = MenuRGBA(208, 208, 215);
-	p.outlineStrong  = MenuRGBA(166, 166, 175);
-	p.text           = MenuRGBA(30, 30, 34);
-	p.textMuted      = MenuRGBA(118, 118, 127);
-	p.textOnAccent   = MenuRGBA(255, 255, 255);
+	p.chromeLight    = MenuRGBA(56, 6, 12);
+	p.chromeDark     = MenuRGBA(7, 0, 2);
+	p.chromeEdge     = MenuRGBA(164, 20, 34);
+	p.backgroundTop    = MenuRGBA(11, 3, 6);
+	p.backgroundBottom = MenuRGBA(2, 0, 1);
+	p.accent         = MenuRGBA(255, 54, 70);
+	p.accentDark     = MenuRGBA(177, 17, 37);
+	p.accentTint     = MenuRGBA(52, 7, 18);
+	p.glow           = MenuRGBA(255, 54, 70, 100);
+	p.surface        = MenuRGBA(13, 4, 8);
+	p.surfaceRaised  = MenuRGBA(30, 7, 15);
+	p.outline        = MenuRGBA(75, 17, 30);
+	p.outlineStrong  = MenuRGBA(161, 37, 55);
+	p.text           = MenuRGBA(255, 77, 88);
+	p.textMuted      = MenuRGBA(198, 95, 110);
+	p.textOnAccent   = MenuRGBA(13, 4, 8);
 	return p;
 }
 
@@ -167,7 +167,7 @@ static inline GuiShapeStyle MenuButtonStyle()
 
 	GuiPaint rest = GuiPaint()
 		.gradient(p.surfaceRaised, MenuMix(p.surface, p.outline, 0.45f))
-		.stroke(2.0f, p.chromeDark)
+		.stroke(2.0f, p.outlineStrong)
 		.shadow(8.0f, MenuRGBA(0, 0, 0, 100), 0.0f, 2.0f);
 
 	GuiPaint lit = GuiPaint()
@@ -177,7 +177,7 @@ static inline GuiShapeStyle MenuButtonStyle()
 
 	GuiPaint pressed = GuiPaint()
 		.gradient(MenuMix(p.accentTint, p.outlineStrong, 0.25f), MenuMix(p.accentTint, p.outlineStrong, 0.5f))
-		.stroke(2.0f, p.chromeDark)
+		.stroke(2.0f, p.outlineStrong)
 		.shadow(4.0f, MenuRGBA(0, 0, 0, 80), 0.0f, 1.0f);
 
 	return GuiShapeStyle(rest).onFocus(lit).onPress(pressed);
@@ -219,7 +219,7 @@ static inline GuiPaint MenuDialogBodyPaint()
 	const MenuPalette& p = MenuPaletteCurrent();
 	return GuiPaint()
 		.gradient(p.surfaceRaised, p.surface)
-		.stroke(2.0f, p.chromeDark)
+		.stroke(2.0f, p.outlineStrong)
 		.shadow(26.0f, MenuRGBA(0, 0, 0, 150), 0.0f, 8.0f);
 }
 
@@ -229,7 +229,7 @@ static inline GuiPaint MenuDialogHeaderPaint()
 	const MenuPalette& p = MenuPaletteCurrent();
 	return GuiPaint()
 		.gradient(p.chromeLight, p.chromeDark)
-		.stroke(2.0f, p.chromeDark);
+		.stroke(2.0f, p.outlineStrong);
 }
 
 //!The empty part of a progress bar

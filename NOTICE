@@ -15,3 +15,12 @@ See vendor/vboycolor/LICENSE, third_party/beetle-vb-libretro/COPYING, licenses/ 
 WiiMednafen and WiirtualBoy were consulted for controller design. Their code was not copied.
 https://github.com/raz0red/wii-mednafen
 https://github.com/raz0red/wiirtual-boy
+
+Virtual Boy controller icon:
+Photograph by Sesu Prime; transparent-background derivative by JohnnyMrNinja.
+https://commons.wikimedia.org/wiki/File:Virtual_Boy_controller.png
+Licensed under Creative Commons Attribution-ShareAlike 3.0 Unported.
+https://creativecommons.org/licenses/by-sa/3.0/
+Wii menu adaptation: cable trimmed, cropped, resized, darkened, opacity reduced,
+and a subtle red edge added. This adapted image retains CC BY-SA 3.0.
+The source-code license remains GPL version 3.
