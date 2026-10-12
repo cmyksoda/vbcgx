@@ -201,8 +201,8 @@ GuiImageData::DecodedImage GuiImageData::decodeToRgba(const uint8_t * pngData, i
 
 	unsigned long long rowPtrBytes = static_cast<unsigned long long>(srcH) * sizeof(png_bytep);
 	unsigned long long srcRgbaBytes = static_cast<unsigned long long>(rowBytes) * srcH;
-	unsigned long long resizedRgbaBytes = needsResize ? static_cast<unsigned long long>(w) * h * 4 : 0;
-	unsigned long long totalScratchBytes = rowPtrBytes + srcRgbaBytes + resizedRgbaBytes;
+	const bool streamRows = interlace_type == PNG_INTERLACE_NONE;
+	unsigned long long totalScratchBytes = streamRows ? rowBytes : rowPtrBytes + srcRgbaBytes;
 	if(totalScratchBytes > localScratchBufferSize)
 	{
 		png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
@@ -218,37 +218,66 @@ GuiImageData::DecodedImage GuiImageData::decodeToRgba(const uint8_t * pngData, i
 		return out;
 	}
 
-	png_bytep * row_pointers = reinterpret_cast<png_bytep *>(localScratchBuffer);
-	uint8_t * srcRgba = localScratchBuffer + rowPtrBytes;
-
-	for(png_uint_32 i = 0; i < srcH; i++)
-		row_pointers[i] = srcRgba + (static_cast<size_t>(i) * rowBytes);
-
-	png_read_image(png_ptr, row_pointers);
-
-	if(needsResize)
+	if(streamRows)
 	{
-		uint32_t xRatio = ((srcW << 16) / w) + 1;
-		uint32_t yRatio = ((srcH << 16) / h) + 1;
-
-		for(png_uint_32 y = 0; y < h; y++)
+		// Resize from one decoded row so large local covers do not need a full source bitmap.
+		png_uint_32 nextY = 0;
+		const uint32_t xRatio = ((srcW << 16) / w) + 1;
+		const uint32_t yRatio = ((srcH << 16) / h) + 1;
+		for(png_uint_32 sy = 0; sy < srcH; ++sy)
 		{
-			png_uint_32 sy = (y * yRatio) >> 16;
-			if(sy >= srcH) sy = srcH - 1;
-			const uint8_t * srcRow = srcRgba + static_cast<size_t>(sy) * rowBytes;
-			uint8_t * dstRow = outRgba.get() + static_cast<size_t>(y) * w * 4;
-
-			for(png_uint_32 x = 0; x < w; x++)
+			if(!needsResize)
 			{
-				png_uint_32 sx = (x * xRatio) >> 16;
-				if(sx >= srcW) sx = srcW - 1;
-				memcpy(dstRow + x * 4, srcRow + sx * 4, 4);
+				png_read_row(png_ptr, outRgba.get() + static_cast<size_t>(sy) * rowBytes, nullptr);
+				continue;
+			}
+			png_read_row(png_ptr, localScratchBuffer, nullptr);
+			while(nextY < h && std::min<png_uint_32>((nextY * yRatio) >> 16, srcH - 1) == sy)
+			{
+				uint8_t * dstRow = outRgba.get() + static_cast<size_t>(nextY) * w * 4;
+				for(png_uint_32 x = 0; x < w; ++x)
+				{
+					png_uint_32 sx = std::min<png_uint_32>((x * xRatio) >> 16, srcW - 1);
+					memcpy(dstRow + x * 4, localScratchBuffer + sx * 4, 4);
+				}
+				++nextY;
 			}
 		}
 	}
 	else
 	{
-		memcpy(outRgba.get(), srcRgba, srcRgbaBytes);
+		png_bytep * row_pointers = reinterpret_cast<png_bytep *>(localScratchBuffer);
+		uint8_t * srcRgba = localScratchBuffer + rowPtrBytes;
+
+		for(png_uint_32 i = 0; i < srcH; i++)
+			row_pointers[i] = srcRgba + (static_cast<size_t>(i) * rowBytes);
+
+		png_read_image(png_ptr, row_pointers);
+
+		if(needsResize)
+		{
+			uint32_t xRatio = ((srcW << 16) / w) + 1;
+			uint32_t yRatio = ((srcH << 16) / h) + 1;
+
+			for(png_uint_32 y = 0; y < h; y++)
+			{
+				png_uint_32 sy = (y * yRatio) >> 16;
+				if(sy >= srcH) sy = srcH - 1;
+				const uint8_t * srcRow = srcRgba + static_cast<size_t>(sy) * rowBytes;
+				uint8_t * dstRow = outRgba.get() + static_cast<size_t>(y) * w * 4;
+
+				for(png_uint_32 x = 0; x < w; x++)
+				{
+					png_uint_32 sx = (x * xRatio) >> 16;
+					if(sx >= srcW) sx = srcW - 1;
+					memcpy(dstRow + x * 4, srcRow + sx * 4, 4);
+				}
+			}
+		}
+		else
+		{
+			memcpy(outRgba.get(), srcRgba, srcRgbaBytes);
+		}
 	}
 
 	png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
