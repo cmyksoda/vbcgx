@@ -663,6 +663,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         }
     }
     std::array<uint64_t, kBands> keep{}, keepRight{}; // (bit per cell)
+    uint8_t keptCell[kBands][kGridW] = {}, keptRightCell[kBands][kGridW] = {}; // (the same, a byte each - 64-bit shifts cost PowerPC)
     if (have[0] && !depth && view[0].clut && view[0].cell_version && view[0].band_chr)
     {
         uint32_t ambiguous[2048 / 32] = {};
@@ -683,7 +684,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             for (unsigned c = 0; !ambiguousHere && c < static_cast<unsigned>(kGridW); ++c)
             {
                 const uint32_t version = view[0].cell_version[b * kGridW + c];
-                keep[b] |= static_cast<uint64_t>(version && band.cells[c].version == version) << c;
+                keptCell[b][c] = version && band.cells[c].version == version;
+                keep[b] |= static_cast<uint64_t>(keptCell[b][c]) << c;
             }
         }
     }
@@ -697,7 +699,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
             {
                 const uint32_t version = view[1].cell_version[b * kGridW + c];
-                keepRight[b] |= static_cast<uint64_t>(version && band.cells[c].version == version) << c;
+                keptRightCell[b][c] = version && band.cells[c].version == version;
+                keepRight[b] |= static_cast<uint64_t>(keptRightCell[b][c]) << c;
             }
         }
     ContextGroupBits *markers = nullptr; // this frame's marker grid (Near reads it and the two before it)
@@ -762,7 +765,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                 for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
                 {
                     const uint64_t *column = v.columns[x];
-                    if (!column || (keep[band] >> (x >> 3) & 1))
+                    if (!column || keptCell[band][x >> 3])
                         continue;
                     const uint8_t *r = &raw[(static_cast<size_t>(eyeOffset[0]) + x) * 4];
                     unsigned lastChr = ~0u, lastBand = ~0u; // (a cell's marker counted once per tile and band)
@@ -1082,7 +1085,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                 for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
                 {
                     BandColumn &here = rightColumns[b * VBGO_TT_WIDTH + x];
-                    const bool kept = keepRight[b] >> (x >> 3) & 1;
+                    const bool kept = keptRightCell[b][x >> 3];
                     if (kept)
                     {
                         if (here.first == kNoKey)
@@ -1209,7 +1212,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
             {
             BandColumn &here = bandColumns[b * VBGO_TT_WIDTH + x];
-            const bool kept = keep[b] >> (x >> 3) & 1;
+            const bool kept = keptCell[b][x >> 3];
             if (kept)
             {
                 if (here.first == kNoKey)
