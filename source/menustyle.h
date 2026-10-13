@@ -115,11 +115,11 @@ static inline MenuPalette MenuPaletteDefault()
 	p.backgroundBottom = MenuRGBA(2, 0, 1);
 	p.accent         = MenuRGBA(255, 54, 70);
 	p.accentDark     = MenuRGBA(177, 17, 37);
-	p.accentTint     = MenuRGBA(52, 7, 18);
+	p.accentTint     = MenuRGBA(30, 4, 10);
 	p.glow           = MenuRGBA(255, 54, 70, 100);
-	p.surface        = MenuRGBA(13, 4, 8);
-	p.surfaceRaised  = MenuRGBA(30, 7, 15);
-	p.outline        = MenuRGBA(75, 17, 30);
+	p.surface        = MenuRGBA(8, 2, 4);
+	p.surfaceRaised  = MenuRGBA(17, 4, 8);
+	p.outline        = MenuRGBA(42, 9, 16);
 	p.outlineStrong  = MenuRGBA(161, 37, 55);
 	p.text           = MenuRGBA(255, 77, 88);
 	p.textMuted      = MenuRGBA(198, 95, 110);
