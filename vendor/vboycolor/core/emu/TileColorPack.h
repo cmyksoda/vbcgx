@@ -67,6 +67,10 @@ struct ContextGroupBits
         return *this;
     }
     ContextGroupBits operator|(const ContextGroupBits &o) const { ContextGroupBits r = *this; return r |= o; }
+    bool operator==(const ContextGroupBits &o) const
+    {
+        return w[0] == o.w[0] && w[1] == o.w[1] && w[2] == o.w[2] && w[3] == o.w[3];
+    }
     ContextGroupBits operator&(const ContextGroupBits &o) const
     {
         ContextGroupBits r;

@@ -1195,6 +1195,19 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         static const uint32_t kNoVersions[kGridW] = {};
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
             startCells(bands[b], keep[b], v.cell_version ? &v.cell_version[b * kGridW] : kNoVersions, v.clut);
+        // A kept cell's slow columns are painted again only if the markers their context goes by
+        // moved (without layer-bound groups, only sprites' count; their marker writes are the pre-pass's).
+        uint8_t contextSame[kBands][kGridW] = {};
+        for (unsigned b = 0; haveContexts && b < static_cast<unsigned>(kBands); ++b)
+            for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
+            {
+                Cell &cell = bands[b].cells[c];
+                const unsigned i = b * kGridW + c;
+                contextSame[b][c] = keptCell[b][c] && !m_layerBound.Any() && cell.nearSprites == m_nearSprites[i] &&
+                                    cell.closeSprites == m_closeSprites[i];
+                cell.nearSprites = m_nearSprites[i];
+                cell.closeSprites = m_closeSprites[i];
+            }
         const size_t rowBytes = static_cast<size_t>(fbWidth) * 4;
         Cell unkept; // (a kept cell's columns painted again: their bookkeeping goes nowhere)
         for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
@@ -1217,7 +1230,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             {
                 if (here.first == kNoKey)
                     continue;
-                if (!(here.first & kSlowColumn))
+                if (!(here.first & kSlowColumn) || contextSame[b][x >> 3])
                 {
                     const uint64_t first = here.first & 0xFFFFFFFFFFFFull;
                     if (first != runKey)

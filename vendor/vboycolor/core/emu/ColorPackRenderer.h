@@ -131,6 +131,7 @@ private:
         uint8_t markerLayer = 0xFF;
         std::array<uint16_t, 32> extent{};
         ContextGroupBits markers; // (left eye: the marker pre-pass's grid cell)
+        ContextGroupBits nearSprites, closeSprites; // (left eye: sprites' markers around it as its slow runs were painted)
     };
     struct Band
     {
