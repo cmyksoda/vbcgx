@@ -228,16 +228,16 @@ struct Menu {
 		bgBottomImg(MenuBarShape::BOTTOM),
 		logo(logo_png), logoImg(&logo),
 		logoOver(logo_over_png), logoImgOver(&logoOver),
-		logoTxt(APPVERSION, 18, MenuPaletteCurrent().text),
+		logoTxt(APPVERSION, 14, MenuPaletteCurrent().text),
 		btnLogo(logoImg.getWidth(), logoImg.getHeight()),
 		btnSoundOver(button_over_pcm, button_over_pcm_size, SOUND::PCM),
 		btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM)
 	{
 		logoTxt.setAlignment(ALIGN_H::CENTRE, ALIGN_V::BOTTOM);
-        logoTxt.setPosition(0, 17);
+		logoTxt.setPosition(0, 16);
 
 		btnLogo.setAlignment(ALIGN_H::RIGHT, ALIGN_V::TOP);
-		btnLogo.setPosition(-50, 24);
+		btnLogo.setPosition(-50, 8);
 		btnLogo.setImage(&logoImg);
 		btnLogo.setImageOver(&logoImgOver);
 		btnLogo.setLabel(&logoTxt);
@@ -1279,7 +1279,7 @@ static int MenuGameSelection()
 #endif
 
 	menu->btnLogo.setAlignment(ALIGN_H::RIGHT, ALIGN_V::TOP);
-	menu->btnLogo.setPosition(-50, 24);
+	menu->btnLogo.setPosition(-50, 8);
 	menu->mainWindow.appendWithAutoRemove(&titleTxt);
 	menu->mainWindow.appendWithAutoRemove(&gameBrowser);
 	menu->mainWindow.appendWithAutoRemove(&bgPreview);
@@ -1600,7 +1600,7 @@ static int MenuGame()
 		// that a prompt appears right away. The menu frame slides in behind it.
 		enterSound->play();
 		menu->btnLogo.setAlignment(ALIGN_H::RIGHT, ALIGN_V::BOTTOM);
-		menu->btnLogo.setPosition(-50, -40);
+		menu->btnLogo.setPosition(-50, -30);
 		menu->bgTopImg.setEffect(EFFECT::SLIDE_TOP | EFFECT::SLIDE_IN, 35);
 		menu->bgBottomImg.setEffect(EFFECT::SLIDE_BOTTOM | EFFECT::SLIDE_IN, 35);
 		menu->btnLogo.setEffect(EFFECT::SLIDE_BOTTOM | EFFECT::SLIDE_IN, 35);
@@ -1795,7 +1795,7 @@ static int MenuGame()
 	w.append(&closeBtn);
 
 	menu->btnLogo.setAlignment(ALIGN_H::RIGHT, ALIGN_V::BOTTOM);
-	menu->btnLogo.setPosition(-50, -40);
+	menu->btnLogo.setPosition(-50, -30);
 	menu->mainWindow.appendWithAutoRemove(&w);
 
 	if(lastMenu == MENU_NONE)
