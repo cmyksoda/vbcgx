@@ -8,7 +8,7 @@ static uint32_t joypad;
 static bool optionsChanged = true;
 unsigned vbWidth = 384, vbHeight = 224;
 float vbAspect = 384.0f / 224.0f;
-static unsigned audioPhase;
+extern "C" void beetle_set_sample_rate(long rate);
 static bool Environment(unsigned command, void *data)
 {
     static const char *colors[] = {"game", "auto", "multicolor", "gradient", "tint"};
@@ -63,15 +63,9 @@ static void Video(const void *data, unsigned w, unsigned h, size_t pitch)
 static size_t Audio(const int16_t *data, size_t frames)
 {
     static std::vector<int32_t> stereo;
-    stereo.clear();
-    // Persistent rational resampling keeps the 44.1 kHz core in step with Wii's 48 kHz DMA.
-    for (size_t i = 0; i < frames; ++i) {
-        audioPhase += 160;
-        while (audioPhase >= 147) {
-            audioPhase -= 147;
-            stereo.push_back((uint32_t)(uint16_t)data[i * 2] << 16 | (uint16_t)data[i * 2 + 1]);
-        }
-    }
+    stereo.resize(frames);
+    for (size_t i = 0; i < frames; ++i)
+        stereo[i] = (uint32_t)(uint16_t)data[i * 2] << 16 | (uint16_t)data[i * 2 + 1];
     platform->getAudio()->getEmulatorAudio()->playSound(stereo.data(), stereo.size());
     return frames;
 }
@@ -93,12 +87,17 @@ void InitVBCore()
 }
 void SetPalette() { optionsChanged = true; }
 void RunVBFrame() { retro_run(); }
-void PowerNES() { retro_reset(); audioPhase = 0; }
-void ResetNES() { audioPhase = 0; }
+void PowerNES() { retro_reset(); }
+void SetVBAudioRate()
+{
+    // The audio DMA paces the game. On a 50 Hz screen frames can only show at
+    // 50, so each carries the samples 48 kHz needs then (VB: 50.27 Hz).
+    const long frameClocks = 397824, cpuHz = 20000000; // one VB frame: 4 regions of 384 columns of 259 clocks
+    beetle_set_sample_rate(platform->getVideo()->getRefreshRate() == 50 ? 48000LL * cpuHz / (frameClocks * 50) : 48000);
+}
 void CloseVBGame()
 {
     platform->getVideo()->getEmulatorVideo()->forgetFrame();
     if (romLoaded) retro_unload_game();
     romLoaded = false;
-    audioPhase = 0;
 }

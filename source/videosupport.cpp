@@ -4,21 +4,8 @@
 #include "fileop.h"
 #include "utils/pngcodec.h"
 #include "drivers/Platform.h"
-#include "drivers/Time.h"
 #include <cstdlib>
 GameScreenPng gameScreenPng = {};
-static Ticks lastFrame;
-void setFrameTimer() { lastFrame = SystemTime::now(); }
-void SyncSpeed()
-{
-    const unsigned period = 19891;
-    unsigned elapsed = SystemTime::diffMicrosecs(lastFrame, SystemTime::now());
-    if (elapsed < period) usleep(period - elapsed);
-    // Keep the emulation deadline steady when a video frame misses a retrace.
-    lastFrame += microsecs_to_ticks(period);
-    if (elapsed > period * 5)
-        lastFrame = SystemTime::now();
-}
 void ClearScreenshot()
 {
     free(gameScreenPng.buffer);

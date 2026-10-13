@@ -74,8 +74,8 @@ int main(int argc, char **argv)
         SetPalette();
         platform->getVideo()->getEmulatorVideo()->resetVideo();
         platform->getAudio()->getEmulatorAudio()->resetAudio();
+        SetVBAudioRate();
         platform->getAudio()->startEmulatorAudio();
-        setFrameTimer();
         while (appRequest == AppRequest::NONE && !platform->shouldExit()) {
             SystemEvent event = platform->getSystemEvent();
             if (event == SystemEvent::ShutdownRequested) break;
@@ -83,7 +83,6 @@ int main(int argc, char **argv)
             GetJoy();
             if (appRequest != AppRequest::NONE) break;
             RunVBFrame();
-            SyncSpeed();
         }
         platform->getAudio()->stopEmulatorAudio();
         TakeScreenshot();

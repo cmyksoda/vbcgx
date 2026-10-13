@@ -4,8 +4,6 @@
 #define IMAGE_DECODE_SCRATCH_SIZE (IMAGE_BUFFER_SIZE + (480 * sizeof(void*)))
 #define PNG_FILE_BUFFER_SIZE (512 * 1024)
 #define MAXPAL 8
-void setFrameTimer();
-void SyncSpeed();
 void SetPalette();
 void ClearScreenshot();
 void TakeScreenshot();

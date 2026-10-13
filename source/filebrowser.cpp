@@ -631,7 +631,6 @@ int BrowserLoadFile()
 			else if (EmuSettings.autoLoad == AUTOLOAD_STATE)
 				LoadStateAuto(SILENT);
 
-			ResetNES();
 			ResetBrowser();
 		}
 	}

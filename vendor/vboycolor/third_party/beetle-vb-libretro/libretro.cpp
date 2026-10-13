@@ -2501,6 +2501,18 @@ bool retro_load_game(const struct retro_game_info *info)
    return true;
 }
 
+/* The rate samples come out at - the frontend's own, so it needn't resample. */
+extern "C" void beetle_set_sample_rate(long rate)
+{
+   int y;
+   for(y = 0; y < 2; y++)
+   {
+      Blip_Buffer_set_sample_rate(&sbuf[y], rate, 50);
+      Blip_Buffer_set_clock_rate(&sbuf[y], (long)(VB_MASTER_CLOCK / 4));
+      Blip_Buffer_bass_freq(&sbuf[y], 20);
+   }
+}
+
 void retro_unload_game(void)
 {
    MDFN_FlushGameCheats(0);
