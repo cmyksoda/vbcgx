@@ -21,6 +21,7 @@
 
 #include "vb.h"
 #include "vip.h"
+#include "vbgo_tiletrack.h"
 
 #include "../math_ops.h"
 #include "../masmem.h"
@@ -289,8 +290,12 @@ void VIP_Set3DMode(uint32 mode, bool reverse, uint32 prescale, uint32 sbs_separa
    }
 }
 
+static void ForgetPasses(void);
+
 void VIP_SetParallaxDisable(bool disabled)
 {
+   if(ParallaxDisabled != disabled)
+      ForgetPasses();
    ParallaxDisabled = disabled;
 }
 
@@ -372,6 +377,51 @@ static uint32 DrawingBlock;
 static int32 SB_Latch;
 static int32 SBOUT_InactiveTime;
 
+/* A pass whose inputs haven't changed since the other buffer's last pass
+ * started draws exactly what that one drew, so its blocks are copied. */
+static uint32 DrawSerial;    /* bumped by every change to what drawing reads */
+static uint32 PassSerial[2]; /* DrawSerial as each buffer's last pass started */
+static bool PassClean[2];    /* that pass drew with unchanged inputs, and the CPU hasn't written into the buffer since */
+static bool PassTouched[2];  /* the CPU wrote into the buffer during its pass */
+static bool PassRepeats;     /* the pass in progress copies the other buffer's */
+static bool PassAlreadyCopied; /* ... whose blocks this buffer already holds */
+
+static void ForgetPasses(void)
+{
+   DrawSerial++;
+   PassClean[0] = PassClean[1] = false;
+   PassRepeats = false;
+}
+
+static void BeginPass(void)
+{
+   const int src = !DrawingFB;
+   PassRepeats = PassClean[src] && PassSerial[src] == DrawSerial && vbgo_tiletrack_pass_reusable(src);
+   PassAlreadyCopied = PassRepeats && PassClean[DrawingFB] && PassSerial[DrawingFB] == PassSerial[src];
+   PassSerial[DrawingFB] = DrawSerial;
+   PassClean[DrawingFB] = false;
+   PassTouched[DrawingFB] = false;
+   if(PassRepeats)
+      vbgo_tiletrack_share_pass(DrawingFB, src);
+}
+
+static void CopyRepeatedBlock(void)
+{
+   int lr, x;
+   if(PassAlreadyCopied && !PassTouched[DrawingFB])
+      return;
+   for(lr = 0; lr < 2; lr++)
+   {
+      const uint8 *from = FB[!DrawingFB][lr] + DrawingBlock * 2;
+      uint8 *to = FB[DrawingFB][lr] + DrawingBlock * 2;
+      for(x = 0; x < 384; x++)
+      {
+         to[64 * x + 0] = from[64 * x + 0];
+         to[64 * x + 1] = from[64 * x + 1];
+      }
+   }
+}
+
 static void CheckIRQ(void)
 {
    VBIRQ_Assert(VBIRQ_SOURCE_VIP, (bool)(InterruptEnable & InterruptPending));
@@ -451,6 +501,7 @@ void VIP_Power(void)
    }
 
    BKCOL = 0;
+   ForgetPasses();
 }
 
 static INLINE uint16 ReadRegister(int32 timestamp, uint32 A)
@@ -615,6 +666,9 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
 
          if(V & 1)
          {
+            if(PassRepeats)
+               vbgo_tiletrack_resume_pass(DrawingFB, DrawingBlock);
+            PassRepeats = false;
             DrawingFB         = DisplayFB;
             DisplayFB        ^= 1;
             DrawingActive     = 0;
@@ -631,6 +685,8 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
       case 0x4a:
       case 0x4c:
       case 0x4e:
+         if(SPT[(A >> 1) & 3] != (V & 0x3FF))
+            DrawSerial++;
          SPT[(A >> 1) & 3] = V & 0x3FF;
          break;
 
@@ -638,6 +694,8 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
       case 0x62: 
       case 0x64:
       case 0x66:
+         if(GPLT[(A >> 1) & 3] != (V & 0xFC))
+            DrawSerial++;
          GPLT[(A >> 1) & 3] = V & 0xFC;
          Recalc_GPLT_Cache((A >> 1) & 3);
          break;
@@ -646,11 +704,15 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
       case 0x6a:
       case 0x6c:
       case 0x6e:
+         if(JPLT[(A >> 1) & 3] != (V & 0xFC))
+            DrawSerial++;
          JPLT[(A >> 1) & 3] = V & 0xFC;
          Recalc_JPLT_Cache((A >> 1) & 3);
          break;
 
       case 0x70:
+         if(BKCOL != (V & 0x3))
+            DrawSerial++;
          BKCOL = V & 0x3;
          break;
    }
@@ -729,13 +791,24 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
       case 0x0:
       case 0x1:
          if((A & 0x7FFF) >= 0x6000)
-            VIP_MA16W8(CHR_RAM, (A & 0x1FFF) | ((A >> 2) & 0x6000), V);
+         {
+            const uint32 a = (A & 0x1FFF) | ((A >> 2) & 0x6000);
+            if(VIP_MA16R8(CHR_RAM, a) != V)
+               DrawSerial++;
+            VIP_MA16W8(CHR_RAM, a, V);
+         }
          else
+         {
+            PassClean[(A >> 15) & 1] = false;
+            PassTouched[(A >> 15) & 1] = true;
             FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF] = V;
+         }
          break;
 
       case 0x2:
       case 0x3:
+         if(VIP_MA16R8(DRAM, A & 0x1FFFF) != V)
+            DrawSerial++;
          VIP_MA16W8(DRAM, A & 0x1FFFF, V);
          break;
 
@@ -750,7 +823,11 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
 
       case 0x7:
          if(A >= 0x8000)
+         {
+            if(VIP_MA16R8(CHR_RAM, A & 0x7FFF) != V)
+               DrawSerial++;
             VIP_MA16W8(CHR_RAM, A & 0x7FFF, V);
+         }
          break;
    }
 }
@@ -762,13 +839,24 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
       case 0x0:
       case 0x1:
          if((A & 0x7FFF) >= 0x6000)
-            VIP_MA16W16(CHR_RAM, (A & 0x1FFF) | ((A >> 2) & 0x6000), V);
+         {
+            const uint32 a = (A & 0x1FFF) | ((A >> 2) & 0x6000);
+            if(VIP_MA16R16(CHR_RAM, a) != V)
+               DrawSerial++;
+            VIP_MA16W16(CHR_RAM, a, V);
+         }
          else
+         {
+            PassClean[(A >> 15) & 1] = false;
+            PassTouched[(A >> 15) & 1] = true;
             StoreU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF], V);
+         }
          break;
 
       case 0x2:
       case 0x3:
+         if(VIP_MA16R16(DRAM, A & 0x1FFFF) != V)
+            DrawSerial++;
          VIP_MA16W16(DRAM, A & 0x1FFFF, V);
          break;
       case 0x4:
@@ -780,7 +868,11 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
          break;
       case 0x7:
          if(A >= 0x8000)
+         {
+            if(VIP_MA16R16(CHR_RAM, A & 0x7FFF) != V)
+               DrawSerial++;
             VIP_MA16W16(CHR_RAM, A & 0x7FFF, V);
+         }
          break;
    }
 }
@@ -1306,10 +1398,20 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
          {
             MDFN_ALIGN(8) uint8 DrawingBuffers[2][512 * 8];	/* Don't decrease this from 512 unless you adjust vip_draw.inc(including areas that draw off-visible >= 384 and >= -7 for speed reasons) */
 
-            if(skip && InstantDisplayHack && AllowDrawSkip) { }
+            if(skip && InstantDisplayHack && AllowDrawSkip)
+               PassTouched[DrawingFB] = true;
+            else if(PassRepeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB])
+               CopyRepeatedBlock();
             else
             {
                int lr;
+               if(PassRepeats)
+               {
+                  /* (its inputs changed: the rest is drawn) */
+                  vbgo_tiletrack_resume_pass(DrawingFB, DrawingBlock);
+                  PassRepeats = false;
+                  PassAlreadyCopied = false;
+               }
                VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
 
                for(lr = 0; lr < 2; lr++)
@@ -1340,6 +1442,8 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
             if(DrawingBlock == 28)
             {
                DrawingActive = false;
+               PassRepeats = false;
+               PassClean[DrawingFB] = DrawSerial == PassSerial[DrawingFB] && !PassTouched[DrawingFB];
 
                InterruptPending |= INT_XP_END;
                CheckIRQ();
@@ -1412,6 +1516,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      DrawingBlock   = 0;
                      DrawingActive  = true;
                      DrawingCounter = 1120 * 4;
+                     BeginPass();
                   }
 
                   GameFrameCounter = 0;
@@ -1524,6 +1629,7 @@ int VIP_StateAction(StateMem *sm, int load, int data_only)
          Recalc_GPLT_Cache(i);
          Recalc_JPLT_Cache(i);
       }
+      ForgetPasses();
    }
 
    return(ret);

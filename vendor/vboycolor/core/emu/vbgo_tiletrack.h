@@ -276,6 +276,13 @@ void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *
                                 unsigned block_no, unsigned fb, const uint8_t *jplt);
 void vbgo_tiletrack_display_column(unsigned fb, unsigned lr, unsigned dest_lr, unsigned column, bool display_active);
 void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsigned bytes);
+/* A drawing pass that repeats the other buffer's last one (nothing it reads
+ * changed since that pass started): whether src_fb's tags can stand for it,
+ * sharing them for the pass into fb, and - if its inputs change partway -
+ * fb's own tags from block_no on (the blocks before as src_fb's). */
+bool vbgo_tiletrack_pass_reusable(unsigned src_fb);
+void vbgo_tiletrack_share_pass(unsigned fb, unsigned src_fb);
+void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no);
 
 #ifdef __cplusplus
 }

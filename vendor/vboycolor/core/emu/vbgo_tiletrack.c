@@ -13,27 +13,36 @@ static const uint8_t s_no_blank[2048];
 const uint8_t *vbgo_tt_blank = s_no_blank;
 uint8_t vbgo_tt_fill_cells[8192];
 
-/* Tags in the VB's own frame buffer layout - [fb][eye][column * 256 + row],
- * double-buffered like the core's FB, so they're displayed by the same
- * buffer swap logic as the pixels themselves. */
-static uint64_t s_fb[2][2][VBGO_TT_WIDTH * VBGO_TT_COLUMN];
+/* Tags in the VB's own frame buffer layout - [slot][eye][column * 256 + row].
+ * Each frame buffer shows one slot's; a pass that repeats the other buffer's
+ * (vbgo_tiletrack_share_pass) shares that buffer's slot, so a third slot is
+ * always free for a pass of its own. */
+#define VBGO_TT_SLOTS 3
+static uint64_t s_tags[VBGO_TT_SLOTS][2][VBGO_TT_WIDTH * VBGO_TT_COLUMN];
 
-/* Per frame buffer: its last drawing pass's stamp, and the character
- * memory / tile hashes / blank flags as that pass started. */
-static uint16_t s_stamp[2];
+/* Per slot: its drawing pass's stamp, the tracking settings it was drawn
+ * with, and the character memory / tile hashes / blank flags as that pass
+ * started. */
+static uint16_t s_stamp[VBGO_TT_SLOTS];
 static uint16_t s_next_stamp;
-static uint16_t s_chr[2][2048 * 8];
-static uint32_t s_hash[2][2048];
-static uint8_t s_blank[2][2048];
-/* The world attribute blocks and OBJ attributes as each buffer's pass started. */
+static unsigned s_settings[VBGO_TT_SLOTS];
+static unsigned s_settings_serial = 1;
+static uint16_t s_chr[VBGO_TT_SLOTS][2048 * 8];
+static uint32_t s_hash[VBGO_TT_SLOTS][2048];
+static uint8_t s_blank[VBGO_TT_SLOTS][2048];
+/* The world attribute blocks and OBJ attributes as each slot's pass started. */
 #define VBGO_WORLD_HALFWORDS (32 * 16)
 #define VBGO_OAM_HALFWORDS (1024 * 4)
-static uint16_t s_worlds[2][VBGO_WORLD_HALFWORDS];
-static uint16_t s_oam[2][VBGO_OAM_HALFWORDS];
-static int s_have_attrs[2];
-static unsigned s_flat[2]; /* per buffer: flat sprite palettes as its pass started (see the view) */
+static uint16_t s_worlds[VBGO_TT_SLOTS][VBGO_WORLD_HALFWORDS];
+static uint16_t s_oam[VBGO_TT_SLOTS][VBGO_OAM_HALFWORDS];
+static int s_have_attrs[VBGO_TT_SLOTS];
+static unsigned s_flat[VBGO_TT_SLOTS]; /* flat sprite palettes as its pass started (see the view) */
+
+/* Per frame buffer: its slot, whether it has tags, and whether the CPU wrote
+ * into it since its pass (or a reset since). */
+static int s_slot[2] = {0, 1};
 static int s_have[2];
-static int s_cpu[2]; /* per buffer: the CPU wrote into it since its pass (or a reset since) */
+static int s_cpu[2];
 static int s_pass_open; /* a drawing pass has started (block 0 seen, or tracking switched on mid-pass) */
 static int s_last_fb = -1;
 
@@ -54,31 +63,77 @@ static uint32_t HashChar(const uint16_t *rows)
    return h;
 }
 
-static void StartPass(unsigned fb, const uint16_t *chr_ram, const uint16_t *dram)
+static int FreeSlot(void)
 {
-   int c;
-   /* A new stamp; on wrap-around forget every old tag, so a pixel left
-    * untouched for 65535 passes can't come back to life. */
+   int k = 0;
+   while (k == s_slot[0] || k == s_slot[1])
+      k++;
+   return k;
+}
+
+/* A new stamp; on wrap-around forget every old tag (but keep's), so a pixel
+ * left untouched for 65535 passes can't come back to life. */
+static void NextStamp(int keep)
+{
    if (++s_next_stamp == 0)
    {
-      memset(s_fb, 0, sizeof(s_fb));
+      int k;
+      for (k = 0; k < VBGO_TT_SLOTS; k++)
+         if (k != keep)
+            memset(s_tags[k], 0, sizeof(s_tags[k]));
       memset(s_have, 0, sizeof(s_have));
       s_next_stamp = 1;
    }
-   s_stamp[fb] = s_next_stamp;
    vbgo_tt_stamp_bits = (uint64_t)s_next_stamp << 48;
-   memcpy(s_chr[fb], chr_ram, sizeof(s_chr[fb]));
-   s_have_attrs[fb] = dram != NULL;
+}
+
+static void CopySlotInfo(int to, int from)
+{
+   memcpy(s_chr[to], s_chr[from], sizeof(s_chr[to]));
+   memcpy(s_hash[to], s_hash[from], sizeof(s_hash[to]));
+   memcpy(s_blank[to], s_blank[from], sizeof(s_blank[to]));
+   memcpy(s_worlds[to], s_worlds[from], sizeof(s_worlds[to]));
+   memcpy(s_oam[to], s_oam[from], sizeof(s_oam[to]));
+   s_have_attrs[to] = s_have_attrs[from];
+   s_flat[to] = s_flat[from];
+   s_settings[to] = s_settings[from];
+   s_stamp[to] = s_stamp[from];
+}
+
+/* Before fb's tags change: a slot of its own (with the same tags). */
+static void Unshare(unsigned fb)
+{
+   int from, to;
+   if (s_slot[fb] != s_slot[fb ^ 1])
+      return;
+   from = s_slot[fb];
+   to = FreeSlot();
+   memcpy(s_tags[to], s_tags[from], sizeof(s_tags[to]));
+   CopySlotInfo(to, from);
+   s_slot[fb] = to;
+}
+
+static void StartPass(unsigned fb, const uint16_t *chr_ram, const uint16_t *dram)
+{
+   int c, slot;
+   if (s_slot[fb] == s_slot[fb ^ 1])
+      s_slot[fb] = FreeSlot();
+   slot = s_slot[fb];
+   NextStamp(-1);
+   s_stamp[slot] = s_next_stamp;
+   s_settings[slot] = s_settings_serial;
+   memcpy(s_chr[slot], chr_ram, sizeof(s_chr[slot]));
+   s_have_attrs[slot] = dram != NULL;
    if (dram)
    {
-      memcpy(s_worlds[fb], &dram[0x1D800 >> 1], sizeof(s_worlds[fb]));
-      memcpy(s_oam[fb], &dram[0x1E000 >> 1], sizeof(s_oam[fb]));
+      memcpy(s_worlds[slot], &dram[0x1D800 >> 1], sizeof(s_worlds[slot]));
+      memcpy(s_oam[slot], &dram[0x1E000 >> 1], sizeof(s_oam[slot]));
    }
    for (c = 0; c < 2048; c++)
    {
-      const uint16_t *rows = &s_chr[fb][c * 8];
-      s_hash[fb][c] = HashChar(rows);
-      s_blank[fb][c] = (rows[0] | rows[1] | rows[2] | rows[3] | rows[4] | rows[5] | rows[6] | rows[7]) == 0;
+      const uint16_t *rows = &s_chr[slot][c * 8];
+      s_hash[slot][c] = HashChar(rows);
+      s_blank[slot][c] = (rows[0] | rows[1] | rows[2] | rows[3] | rows[4] | rows[5] | rows[6] | rows[7]) == 0;
    }
    /* (Tracking switched on mid-pass: the blocks before this one simply have
     * no tags with this stamp.) */
@@ -98,6 +153,8 @@ void vbgo_tiletrack_set_enabled(bool enabled)
       s_have[0] = s_have[1] = 0;
       memset(s_disp, 0, sizeof(s_disp));
    }
+   if (vbgo_tt_on != (enabled ? 1 : 0))
+      s_settings_serial++;
    vbgo_tt_on = enabled ? 1 : 0;
 }
 
@@ -105,8 +162,10 @@ bool vbgo_tiletrack_is_enabled(void) { return vbgo_tt_on != 0; }
 
 void vbgo_tiletrack_reset(void)
 {
-   memset(s_fb, 0, sizeof(s_fb));
+   memset(s_tags, 0, sizeof(s_tags));
    memset(s_have, 0, sizeof(s_have));
+   s_slot[0] = 0;
+   s_slot[1] = 1;
    memset(s_disp, 0, sizeof(s_disp));
    s_pass_open = 0;
    s_last_fb = -1;
@@ -115,16 +174,23 @@ void vbgo_tiletrack_reset(void)
 
 void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr)
 {
-   memset(s_fb[fb & 1][lr & 1], 0, sizeof(s_fb[0][0]));
+   Unshare(fb & 1);
+   memset(s_tags[s_slot[fb & 1]][lr & 1], 0, sizeof(s_tags[0][0]));
    s_cpu[fb & 1] = 1;
 }
 
-void vbgo_tiletrack_set_fill_mode(int mode) { vbgo_tt_fill = mode; }
+void vbgo_tiletrack_set_fill_mode(int mode)
+{
+   if (vbgo_tt_fill != mode)
+      s_settings_serial++;
+   vbgo_tt_fill = mode;
+}
 
 int vbgo_tiletrack_fill_mode(void) { return vbgo_tt_fill; }
 
 void vbgo_tiletrack_set_fill_cells(const uint8_t *bits)
 {
+   s_settings_serial++;
    if (bits)
       memcpy(vbgo_tt_fill_cells, bits, sizeof(vbgo_tt_fill_cells));
    else
@@ -143,18 +209,69 @@ void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *
    {
       unsigned p;
       StartPass(fb, chr_ram, dram);
-      s_flat[fb] = 0;
+      s_flat[s_slot[fb]] = 0;
       if (jplt)
          for (p = 0; p < 4; p++)
             if (jplt[p * 4 + 1] == jplt[p * 4 + 2] && jplt[p * 4 + 2] == jplt[p * 4 + 3])
-               s_flat[fb] |= 1u << p;
+               s_flat[s_slot[fb]] |= 1u << p;
    }
    s_last_fb = (int)fb;
    vbgo_tt_block_base = drawing_buffers;
-   vbgo_tt_blank = s_blank[fb];
-   vbgo_tt_dst[0] = &s_fb[fb][0][block_no * 8];
-   vbgo_tt_dst[1] = &s_fb[fb][1][block_no * 8];
+   vbgo_tt_blank = s_blank[s_slot[fb]];
+   vbgo_tt_dst[0] = &s_tags[s_slot[fb]][0][block_no * 8];
+   vbgo_tt_dst[1] = &s_tags[s_slot[fb]][1][block_no * 8];
    vbgo_tt_world = 0;
+}
+
+bool vbgo_tiletrack_pass_reusable(unsigned src_fb)
+{
+   src_fb &= 1;
+   return !vbgo_tt_on || (s_have[src_fb] && !s_cpu[src_fb] && s_settings[s_slot[src_fb]] == s_settings_serial);
+}
+
+void vbgo_tiletrack_share_pass(unsigned fb, unsigned src_fb)
+{
+   fb &= 1;
+   src_fb &= 1;
+   if (!vbgo_tt_on)
+      return;
+   s_slot[fb] = s_slot[src_fb];
+   s_have[fb] = 1;
+   s_cpu[fb] = 0;
+   s_pass_open = 0;
+}
+
+void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
+{
+   unsigned e, x, y;
+   int from, to;
+   uint16_t old_stamp;
+   fb &= 1;
+   if (!vbgo_tt_on)
+      return;
+   from = s_slot[fb];
+   to = s_slot[fb ^ 1] == from ? FreeSlot() : from;
+   old_stamp = s_stamp[from];
+   NextStamp(from);
+   if (to != from)
+   {
+      CopySlotInfo(to, from);
+      s_slot[fb] = to;
+   }
+   s_stamp[to] = s_next_stamp;
+   /* (the blocks it repeated: the other buffer's tags, as this pass's) */
+   for (e = 0; e < 2; e++)
+      for (x = 0; x < VBGO_TT_WIDTH; x++)
+      {
+         const uint64_t *src = &s_tags[from][e][x * VBGO_TT_COLUMN];
+         uint64_t *dst = &s_tags[to][e][x * VBGO_TT_COLUMN];
+         for (y = 0; y < block_no * 8; y++)
+            dst[y] = (src[y] >> 48) == old_stamp ? (src[y] & 0xFFFFFFFFFFFFull) | vbgo_tt_stamp_bits : src[y];
+      }
+   s_have[fb] = 1;
+   s_cpu[fb] = 0;
+   s_pass_open = 1;
+   s_last_fb = (int)fb;
 }
 
 void vbgo_tiletrack_display_column(unsigned fb, unsigned lr, unsigned dest_lr, unsigned column, bool display_active)
@@ -173,6 +290,7 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
    if (!vbgo_tt_on)
       return;
    s_cpu[fb & 1] = 1;
+   Unshare(fb & 1);
    for (b = 0; b < bytes; b++)
    {
       const unsigned o = offset + b;
@@ -180,7 +298,7 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
       if (column >= VBGO_TT_WIDTH)
          continue;
       for (p = 0; p < 4; p++)
-         s_fb[fb & 1][lr & 1][column * VBGO_TT_COLUMN + row + p] = 0;
+         s_tags[s_slot[fb & 1]][lr & 1][column * VBGO_TT_COLUMN + row + p] = 0;
    }
 }
 
@@ -198,20 +316,22 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view)
 {
    unsigned x;
    const int fb = ShownBuffer(eye);
+   int slot;
    if (fb < 0 || !s_have[fb])
       return false;
-   view->stamp = s_stamp[fb];
-   view->hashes = s_hash[fb];
-   view->blank = s_blank[fb];
-   view->chr = s_chr[fb];
-   view->worlds = s_have_attrs[fb] ? s_worlds[fb] : NULL;
-   view->oam = s_have_attrs[fb] ? s_oam[fb] : NULL;
+   slot = s_slot[fb];
+   view->stamp = s_stamp[slot];
+   view->hashes = s_hash[slot];
+   view->blank = s_blank[slot];
+   view->chr = s_chr[slot];
+   view->worlds = s_have_attrs[slot] ? s_worlds[slot] : NULL;
+   view->oam = s_have_attrs[slot] ? s_oam[slot] : NULL;
    view->cpu_drawn = s_cpu[fb];
-   view->flat_obj_palettes = s_flat[fb];
+   view->flat_obj_palettes = s_flat[slot];
    for (x = 0; x < VBGO_TT_WIDTH; x++)
    {
       const uint8_t d = s_disp[eye & 1][x];
-      view->columns[x] = (d & 4) && (d & 1) == (unsigned)fb ? &s_fb[fb][(d >> 1) & 1][x * VBGO_TT_COLUMN] : NULL;
+      view->columns[x] = (d & 4) && (d & 1) == (unsigned)fb ? &s_tags[slot][(d >> 1) & 1][x * VBGO_TT_COLUMN] : NULL;
    }
    return true;
 }
@@ -251,7 +371,7 @@ bool vbgo_tiletrack_records(unsigned eye, uint64_t *records, uint32_t *cells, bo
 const uint16_t *vbgo_tiletrack_chr_ram(void)
 {
    const int fb = s_last_fb;
-   return fb >= 0 && s_have[fb] ? s_chr[fb] : NULL;
+   return fb >= 0 && s_have[fb] ? s_chr[s_slot[fb]] : NULL;
 }
 
 uint32_t vbgo_tiletrack_hash_rows(const uint16_t rows[8]) { return HashChar(rows); }
