@@ -20,7 +20,7 @@ void OgcEmulatorVideo::init(VideoDriver *driver)
 }
 void OgcEmulatorVideo::resetVideo()
 {
-    videoDriver->startMenuVideo();
+    videoDriver->startGameVideo();
     platform->getAudio()->getEmulatorAudio()->updateSampleRate(48000);
 }
 void OgcEmulatorVideo::presentFrame(const uint8_t *buffer)

@@ -168,12 +168,16 @@ void OgcVideoDriver::setupVideoMode(GXRModeObj * mode)
  * Finds the optimal video mode, or uses the user-specified one
  * Also configures original video modes
  ***************************************************************************/
-GXRModeObj* OgcVideoDriver::findVideoMode()
+GXRModeObj* OgcVideoDriver::findVideoMode(bool menu)
 {
 	GXRModeObj * mode;
+	int selectedMode = EmuSettings.videoMode;
+	// Low-resolution output is for games; menus use the system's normal mode.
+	if(menu && (selectedMode == VIDEOMODE_ORIGINAL_240P || selectedMode == VIDEOMODE_240P_PAL))
+		selectedMode = VIDEOMODE_AUTO;
 
 	// choose the desired video mode
-	switch(EmuSettings.videoMode)
+	switch(selectedMode)
 	{
 		case VIDEOMODE_240P_PAL:
             mode = &PAL_240p;
@@ -239,10 +243,20 @@ GXRModeObj* OgcVideoDriver::findVideoMode()
 
 void OgcVideoDriver::startMenuVideo()
 {
+	startVideo(true);
+}
+
+void OgcVideoDriver::startGameVideo()
+{
+	startVideo(false);
+}
+
+void OgcVideoDriver::startVideo(bool menu)
+{
 	Mtx44 p;
 	f32 yscale;
 	u32 xfbHeight;
-	GXRModeObj * rmode = findVideoMode();
+	GXRModeObj * rmode = findVideoMode(menu);
 
 	setupVideoMode(rmode); // reconfigure VI
 

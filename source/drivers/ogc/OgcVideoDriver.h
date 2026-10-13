@@ -19,6 +19,7 @@ class OgcVideoDriver : public VideoDriver
 		void shutdown() override;
 		void renderMenu() override;
 		void startMenuVideo() override;
+		void startGameVideo();
 		void clearScreen(const PixelColor& color) override;
 
 		int getScreenWidth() const override { return screenWidth; }
@@ -32,12 +33,13 @@ class OgcVideoDriver : public VideoDriver
 		OgcEmulatorVideo* getEmulatorVideo() override { return emulatorVideo; }
 
 		GXRModeObj* getVideoMode() const { return videoMode; };
-		GXRModeObj* findVideoMode();
+		GXRModeObj* findVideoMode(bool menu = false);
 		void setupVideoMode(GXRModeObj* mode);
 		void waitForBufferReady();
 		void presentBuffer();
 
 	private:
+		void startVideo(bool menu);
 		int screenWidth = 0;
 		int screenHeight = 0;
 		GXRModeObj *videoMode = nullptr; // Current video mode
