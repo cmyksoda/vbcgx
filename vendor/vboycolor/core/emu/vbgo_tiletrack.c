@@ -144,6 +144,12 @@ static void ForgetBlocks(void)
    memset(s_block_version, 0, sizeof(s_block_version));
 }
 
+/* The tiles as last hashed, with their hashes and blank flags. */
+static uint16_t s_hashed_chr[2048 * 8];
+static uint32_t s_hashed[2048];
+static uint8_t s_hashed_blank[2048];
+static int s_hashed_any;
+
 static void StartPass(unsigned fb, const uint16_t *chr_ram, const uint16_t *dram)
 {
    int c, slot;
@@ -163,10 +169,18 @@ static void StartPass(unsigned fb, const uint16_t *chr_ram, const uint16_t *dram
    }
    for (c = 0; c < 2048; c++)
    {
+      /* (only tiles that changed since the last pass are hashed again) */
       const uint16_t *rows = &s_chr[slot][c * 8];
-      s_hash[slot][c] = HashChar(rows);
-      s_blank[slot][c] = (rows[0] | rows[1] | rows[2] | rows[3] | rows[4] | rows[5] | rows[6] | rows[7]) == 0;
+      if (!s_hashed_any || memcmp(rows, &s_hashed_chr[c * 8], 16))
+      {
+         memcpy(&s_hashed_chr[c * 8], rows, 16);
+         s_hashed[c] = HashChar(rows);
+         s_hashed_blank[c] = (rows[0] | rows[1] | rows[2] | rows[3] | rows[4] | rows[5] | rows[6] | rows[7]) == 0;
+      }
    }
+   s_hashed_any = 1;
+   memcpy(s_hash[slot], s_hashed, sizeof(s_hash[slot]));
+   memcpy(s_blank[slot], s_hashed_blank, sizeof(s_blank[slot]));
    /* (Tracking switched on mid-pass: the blocks before this one simply have
     * no tags with this stamp.) */
    s_have[fb] = 1;
