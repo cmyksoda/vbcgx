@@ -93,6 +93,7 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
     m_contextRange.clear();
     for (Slot &slot : m_slots)
         slot = Slot{};
+    std::fill(std::begin(m_slotsResolved), std::end(m_slotsResolved), 0);
     m_slotLayer.fill(SlotLayer{});
     for (auto &grid : m_markerGrid)
         grid.clear();
@@ -216,9 +217,9 @@ void ColorPackRenderer::ResolveSlots(const uint32_t *hashes)
     // usually a handful a frame (streamed animation tiles).
     for (unsigned c = 0; c < 2048; ++c)
     {
-        Slot &slot = m_slots[c];
-        if (slot.resolved && slot.hash == hashes[c])
+        if ((m_slotsResolved[c >> 5] >> (c & 31) & 1) && m_slotHashes[c] == hashes[c])
             continue;
+        Slot &slot = m_slots[c];
         slot.hash = hashes[c];
         slot.resolved = true;
         slot.base = m_pack->Find(slot.hash);
@@ -242,6 +243,13 @@ void ColorPackRenderer::ResolveSlots(const uint32_t *hashes)
             if (range != m_contextRange.end())
                 slot.contextFirst = range->second.first, slot.contextCount = range->second.second;
         }
+        const uint32_t bit = 1u << (c & 31);
+        m_slotHashes[c] = slot.hash;
+        m_slotsResolved[c >> 5] |= bit;
+        m_ambiguousSlots[c >> 5] = slot.ambiguous ? m_ambiguousSlots[c >> 5] | bit : m_ambiguousSlots[c >> 5] & ~bit;
+        m_slotMarkers[c] = slot.markerBits;
+        m_slotHasMarkers[c] = slot.markerBits.Any();
+        m_markerSlots[c >> 5] = m_slotHasMarkers[c] ? m_markerSlots[c >> 5] | bit : m_markerSlots[c >> 5] & ~bit;
     }
 }
 
@@ -666,13 +674,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
     uint8_t keptCell[kBands][kGridW] = {}, keptRightCell[kBands][kGridW] = {}; // (the same, a byte each - 64-bit shifts cost PowerPC)
     if (have[0] && !depth && view[0].clut && view[0].cell_version && view[0].band_chr)
     {
-        uint32_t ambiguous[2048 / 32] = {};
+        static const uint32_t kNoSlots[2048 / 32] = {};
         if (pack)
-        {
             ResolveSlots(view[0].hashes);
-            for (unsigned c = 0; c < 2048; ++c)
-                ambiguous[c >> 5] |= static_cast<uint32_t>(m_slots[c].ambiguous) << (c & 31);
-        }
+        const uint32_t *ambiguous = pack ? m_ambiguousSlots : kNoSlots;
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
         {
             const Band &band = bands[b];
@@ -725,15 +730,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         {
             const vbgo_tt_eye_view &v = view[0];
             ResolveSlots(v.hashes);
-            bool any = false;
-            uint32_t markerSlots[2048 / 32] = {};
-            for (unsigned c = 0; c < 2048; ++c)
-            {
-                m_slotMarkers[c] = m_slots[c].markerBits;
-                m_slotHasMarkers[c] = m_slotMarkers[c].Any();
-                any |= m_slotHasMarkers[c];
-                markerSlots[c >> 5] |= static_cast<uint32_t>(m_slotHasMarkers[c]) << (c & 31);
-            }
+            const uint32_t *markerSlots = m_markerSlots;
+            uint32_t anyBits = 0;
+            for (unsigned i = 0; i < 2048 / 32; ++i)
+                anyBits |= markerSlots[i];
+            const bool any = anyBits != 0;
             // Band by band, where the drawing used a marker's tile (a grid cell's pixels still in column
             // order); kept cells as they came out when they were last painted.
             for (uint32_t band = 0; band < static_cast<uint32_t>(kBands); ++band)
@@ -797,45 +798,85 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             }
         }
         // Sprites' groups: this frame's and the last two frames' markers
-        // within reach of each cell, once (rows, then columns), so a lookup
-        // is one read.
-        // (Close: within one cell - see contextTile.)
+        // within reach of each cell (Close: within one cell - see contextTile).
+        // Usually a few cells have any: those spread their bits; else rows,
+        // then columns, so a lookup is one read.
         ContextGroupBits *rows = m_gridRows.data(), *closeRows = m_gridCloseRows.data(), *here = m_gridHere.data();
         const ContextGroupBits *a = m_markerGrid[(m_gridCurrent + 1) % 3].data(), *b = m_markerGrid[(m_gridCurrent + 2) % 3].data();
         const ContextGroupBits free = ~m_layerBound;
+        uint16_t sources[kGridW * kGridH];
+        int sourceCount = 0;
         for (int i = 0; i < kGridW * kGridH; ++i)
+        {
             here[i] = (a[i] | b[i] | markers[i]) & free;
-        for (int gy = 0; gy < kGridH; ++gy)
-            for (int gx = 0; gx < kGridW; ++gx)
-            {
-                const int row = gy * kGridW;
-                closeRows[row + gx] = here[row + std::max(0, gx - 1)] |
-                                      here[row + gx] | here[row + std::min(kGridW - 1, gx + 1)];
-            }
-        // Three adjacent 3-cell windows cover the same 9-cell neighborhood.
-        static_assert(kContextReach == 4);
-        for (int gy = 0; gy < kGridH; ++gy)
-            for (int gx = 0; gx < kGridW; ++gx)
-            {
-                const int row = gy * kGridW;
-                rows[row + gx] = closeRows[row + std::max(0, gx - 3)] |
-                                 closeRows[row + gx] | closeRows[row + std::min(kGridW - 1, gx + 3)];
-            }
+            if (here[i].Any())
+                sources[sourceCount++] = static_cast<uint16_t>(i);
+        }
         m_nearSprites.resize(kGridW * kGridH);
         m_closeSprites.resize(kGridW * kGridH);
-        for (int gy = 0; gy < kGridH; ++gy)
-            for (int gx = 0; gx < kGridW; ++gx)
+        if (sourceCount <= 64)
+        {
+            if (m_spreadAll)
             {
-                const int at = gy * kGridW + gx;
-                const int before = std::max(0, gy - 1) * kGridW + gx;
-                const int after = std::min(kGridH - 1, gy + 1) * kGridW + gx;
-                m_closeSprites[at] = closeRows[before] | closeRows[at] | closeRows[after];
-                here[at] = rows[before] | rows[at] | rows[after];
+                std::fill(m_nearSprites.begin(), m_nearSprites.end(), ContextGroupBits{});
+                std::fill(m_closeSprites.begin(), m_closeSprites.end(), ContextGroupBits{});
             }
-        for (int gy = 0; gy < kGridH; ++gy)
-            for (int gx = 0; gx < kGridW; ++gx)
-                m_nearSprites[gy * kGridW + gx] = here[std::max(0, gy - 3) * kGridW + gx] |
-                    here[gy * kGridW + gx] | here[std::min(kGridH - 1, gy + 3) * kGridW + gx];
+            else
+                for (const uint16_t i : m_spreadCells)
+                    m_nearSprites[i] = m_closeSprites[i] = ContextGroupBits{};
+            m_spreadAll = false;
+            m_spreadCells.clear();
+            for (int k = 0; k < sourceCount; ++k)
+            {
+                const int i = sources[k], gx = i % kGridW, gy = i / kGridW;
+                const ContextGroupBits &bits = here[i];
+                for (int y = std::max(0, gy - kContextReach); y <= std::min(kGridH - 1, gy + kContextReach); ++y)
+                    for (int x = std::max(0, gx - kContextReach); x <= std::min(kGridW - 1, gx + kContextReach); ++x)
+                    {
+                        const int t = y * kGridW + x;
+                        if (!m_spreadMark[t])
+                            m_spreadMark[t] = 1, m_spreadCells.push_back(static_cast<uint16_t>(t));
+                        m_nearSprites[t] |= bits;
+                        if (std::abs(x - gx) <= 1 && std::abs(y - gy) <= 1)
+                            m_closeSprites[t] |= bits;
+                    }
+            }
+            for (const uint16_t i : m_spreadCells)
+                m_spreadMark[i] = 0;
+        }
+        else
+        {
+            m_spreadAll = true;
+            for (int gy = 0; gy < kGridH; ++gy)
+                for (int gx = 0; gx < kGridW; ++gx)
+                {
+                    const int row = gy * kGridW;
+                    closeRows[row + gx] = here[row + std::max(0, gx - 1)] |
+                                          here[row + gx] | here[row + std::min(kGridW - 1, gx + 1)];
+                }
+            // Three adjacent 3-cell windows cover the same 9-cell neighborhood.
+            static_assert(kContextReach == 4);
+            for (int gy = 0; gy < kGridH; ++gy)
+                for (int gx = 0; gx < kGridW; ++gx)
+                {
+                    const int row = gy * kGridW;
+                    rows[row + gx] = closeRows[row + std::max(0, gx - 3)] |
+                                     closeRows[row + gx] | closeRows[row + std::min(kGridW - 1, gx + 3)];
+                }
+            for (int gy = 0; gy < kGridH; ++gy)
+                for (int gx = 0; gx < kGridW; ++gx)
+                {
+                    const int at = gy * kGridW + gx;
+                    const int before = std::max(0, gy - 1) * kGridW + gx;
+                    const int after = std::min(kGridH - 1, gy + 1) * kGridW + gx;
+                    m_closeSprites[at] = closeRows[before] | closeRows[at] | closeRows[after];
+                    here[at] = rows[before] | rows[at] | rows[after];
+                }
+            for (int gy = 0; gy < kGridH; ++gy)
+                for (int gx = 0; gx < kGridW; ++gx)
+                    m_nearSprites[gy * kGridW + gx] = here[std::max(0, gy - 3) * kGridW + gx] |
+                        here[gy * kGridW + gx] | here[std::min(kGridH - 1, gy + 3) * kGridW + gx];
+        }
     }
     // Pairs: the left pictures' colors per block and shade, the tiles they
     // use, their pixels of tiles colored per map cell.

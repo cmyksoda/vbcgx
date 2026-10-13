@@ -303,6 +303,9 @@ private:
     std::vector<ContextGroupBits> m_markerGrid[3];
     std::array<ContextGroupBits, 2048> m_slotMarkers{}; // per slot: its markerBits (compact, for gathering this frame's markers)
     std::array<bool, 2048> m_slotHasMarkers{};
+    // (ResolveSlots' compact copies of the slots' hashes and flags, bit per slot: a frame's checks stay in cache)
+    std::array<uint32_t, 2048> m_slotHashes{};
+    uint32_t m_slotsResolved[2048 / 32] = {}, m_ambiguousSlots[2048 / 32] = {}, m_markerSlots[2048 / 32] = {};
     std::vector<uint8_t> m_markerLayer[3];
     ContextGroupBits m_layerBound;
     unsigned m_gridCurrent = 0;
@@ -316,6 +319,9 @@ private:
     std::array<std::vector<NearCell>, 32> m_nearCache; // (Near's, per layer and grid cell)
     std::vector<ContextGroupBits> m_nearSprites;  // per grid cell: sprites' groups with a marker within reach (this frame and the last two)
     std::array<ContextGroupBits, kGridW * kGridH> m_gridRows, m_gridCloseRows, m_gridHere; // (Paint's scratch for those)
+    std::vector<uint16_t> m_spreadCells; // (the cells those reached last frame; all of them if m_spreadAll)
+    bool m_spreadAll = true;
+    std::array<uint8_t, kGridW * kGridH> m_spreadMark{};
     std::vector<ContextGroupBits> m_closeSprites; // (the same, within one cell)
 
     // Auto mode, what no tile drew (the game's CPU wrote it into the frame
