@@ -116,7 +116,6 @@ private:
         uint32_t contextFirst = 0, contextCount = 0; // its context variants in the pack's ContextTiles()
         bool ambiguous = false;                      // painted two ways in a frame: takes its surroundings' colors
         bool cellColored = false;                    // some map cell has colors of its own for it
-        uint64_t rightPainted = 0;                   // its pixels painted in right-eye captures (right-eye sprites)
     };
     struct SlotLayer // (a layered slot's last layer looked up, and its colors - see LayerTile)
     {
@@ -157,11 +156,6 @@ private:
 
     // Per-eye pairs (at most kMaxPairs a frame).
     static constexpr int kMaxPairs = 16;
-    struct Block
-    {
-        uint32_t frame = 0;   // when worked out
-        uint32_t bgr[3] = {}; // per shade 1-3: the left picture's most common color there (bit 24 set), as shown; 0 none
-    };
     struct Pair
     {
         uint8_t left = 0, right = 0;
@@ -174,7 +168,6 @@ private:
         std::array<int16_t, kBands> disparity{}; // right x -> left x, per band
         std::vector<int16_t> blockDisparity;     // the same per 8x8 block of the right picture
         std::vector<uint8_t> blockExact;         // per block: 1 where nearly all its pixels line up (the left drawing, shifted)
-        std::vector<Block> blocks; // per 8x8 block of the right eye: its region colors this frame (see RegionColor)
     };
     std::array<Pair, kMaxPairs> m_pairs{};
     int m_pairCount = 0;
@@ -193,42 +186,7 @@ private:
     uint32_t m_leftPairHashZero = 0;
     std::array<uint32_t, 2048> m_slotSharedAt{}, m_slotShared{}; // per slot: the frame last checked, and the pairs then
     bool SharedWithLeftPicture(unsigned chr, uint32_t hash, int pair);
-    // The left pictures' pixels of tiles some map cell colors, by row - and
-    // per right-picture cell, the left one it goes by (see MappedCell).
-    struct LeftPixel
-    {
-        int16_t x;
-        uint8_t index, palette, world;
-        uint16_t cell;
-        uint32_t hash;
-    };
-    std::array<std::vector<LeftPixel>, VBGO_TT_HEIGHT> m_pairRows;
-    struct MapEntry
-    {
-        uint32_t key = 0, frame = 0;
-        const TileColorPack::CellTile *cell = nullptr;
-    };
-    std::vector<MapEntry> m_mapCache;
-    // Per tile, palette and pair: the first cell of the pair's left picture
-    // showing it this frame (see MappedCell).
-    struct LeftTileCell
-    {
-        uint64_t key = 0;
-        uint32_t frame = 0;
-        uint16_t cell = 0;
-    };
-    std::vector<LeftTileCell> m_leftTileCells;
-    LeftTileCell *FindLeftTileCell(uint32_t hash, unsigned palette, unsigned pair, bool add);
-    static constexpr int kMapClose = 4, kMapReach = 16; // how far from the band's disparity a left tile is looked for (see MappedCell)
-    // The left eye's pixels of pairs' left pictures this frame: that pair + 1
-    // (bits 0-4), the shade (bits 5-6) - 0 elsewhere (and in a guard band
-    // all round, see the .cpp).
-    std::vector<uint8_t> m_leftPicture;
     int EyeOnly(uint64_t tag) const; // a sprite only the left (1) or right (2) eye shows, else 0
-    bool InPicture(const Pair &pair, uint64_t tag, unsigned eye) const;
-    // A pair's right picture, a tile of its own: its color from the left picture (see the .cpp).
-    bool RegionColor(int pair, int x, int y, unsigned shade, const uint8_t *frame, uint32_t fbWidth, uint32_t leftOffset, uint8_t *out);
-    const TileColorPack::CellTile *MappedCell(int pair, uint64_t tag, int x, int y, uint32_t hash);
     const TileColorPack::CellTile *FindCell(unsigned cell, unsigned palette, uint32_t hash) const;
     std::unordered_set<uint32_t> m_cellHashes; // tiles some map cell has colors for
 
@@ -242,18 +200,12 @@ private:
         const TileColorPack::CellTile *cell = nullptr; // its map cell's colors (or the left partner's)
         const TileColorPack::Tile *tile = nullptr;     // the tile's colors (palette, layer, context or its own) - never null
         const AutoColors::Ramp *ramp = nullptr;        // automatic colors, if on
-        int ownPair = -1;                              // a pair's right picture's own tile: region colors
+        int ownPair = -1;                              // a pair's right picture's own tile
         int copyPair = -1;                             // a pair's right picture, a tile its left picture draws too
-        const int16_t *blockDisparity = nullptr;       // (own or copy: the pair's per 8x8 block, if estimated)
-        const uint8_t *blockExact = nullptr;           // (and whether the block is the left drawing shifted)
-        uint8_t leftPicture = 0;                       // a pair's left picture: that pair + 1
-        uint64_t rightPainted = 0;                     // (own tile: its pixels painted in right-eye captures)
-        bool record = false;                           // (a left picture's tile colored per map cell: remember where)
         bool slow = false;                             // context, ambiguous or a marker: per 8 rows (see Paint)
         bool flash = false;                            // a sprite in a palette showing all its shades alike
-        bool extra = false;                            // any of the four above: more to do per pixel than color it
+        bool plain = false;                            // none of the above and no map cell colors: just the tile's or automatic colors
         int band = -1;                                 // (slow: the row of grid cells its markers and tile are for)
-        int copyBand = -1, copyDx = 0;                 // (copy: the row of blocks, and its shift there or kNoDisparity)
     };
     struct CachedRun
     {
