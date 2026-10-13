@@ -652,7 +652,9 @@ namespace
             g_renderer.ForgetBands();
         g_repaint = false;
         const unsigned w = g_frameW, h = std::min<unsigned>(g_frameH, VBGO_TT_HEIGHT);
-        const size_t pixels = static_cast<size_t>(w) * h, rowBytes = static_cast<size_t>(w) * 4;
+        // (rows keep the core's pitch, padding and all - see FB_PITCH)
+        const size_t rowBytes = g_framePitch >= static_cast<size_t>(w) * 4 && !(g_framePitch & 3) ? g_framePitch : static_cast<size_t>(w) * 4;
+        const size_t pixels = rowBytes / 4 * h;
         const bool painting = g_shadeColors && g_renderer.Active() && vbgo_tiletrack_is_enabled();
         std::vector<uint8_t> &colored = g_colored[painting ? ColorPackRenderer::ShownBuffer() : 0];
         if (colored.size() != pixels * 4)
@@ -688,7 +690,8 @@ namespace
                     for (unsigned y = first; y < first + count && y < h; ++y)
                         g_colorizer.Colorize(raw + y * rowBytes + x * 4, &colored[y * rowBytes + x * 4], 1);
                 };
-                g_renderer.Paint(colored.data(), raw, w, eyeOffset, g_background, {shadeCells, shadeColumn, g_colorizer.Version()});
+                g_renderer.Paint(colored.data(), raw, static_cast<uint32_t>(rowBytes / 4), eyeOffset, g_background,
+                                 {shadeCells, shadeColumn, g_colorizer.Version()});
             }
             else
                 shadeRows(0, h);

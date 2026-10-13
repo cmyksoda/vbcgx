@@ -2123,6 +2123,8 @@ extern "C" int StateAction(StateMem *sm, int load, int data_only)
 // The color frontend always requests side-by-side eyes with zero separation.
 #define FB_WIDTH (384 * 2)
 #define FB_HEIGHT 224 * 2
+/* A cache line more than a row: a 3072-byte pitch puts a whole column in 4 of the Wii's 128 L1 sets. */
+#define FB_PITCH (FB_WIDTH + 8)
 
 
 #define FB_MAX_HEIGHT FB_HEIGHT
@@ -2473,7 +2475,7 @@ bool retro_load_game(const struct retro_game_info *info)
    surf.pixels16                = NULL;
    surf.pixels                  = NULL;
 
-   if(!(rpix = calloc(1, FB_WIDTH * FB_HEIGHT * (pix_fmt.bpp / 8))))
+   if(!(rpix = calloc(1, FB_PITCH * FB_HEIGHT * (pix_fmt.bpp / 8))))
       return false;
 
 #if defined(WANT_16BPP)
@@ -2483,7 +2485,7 @@ bool retro_load_game(const struct retro_game_info *info)
 #endif
    surf.w                       = FB_WIDTH;
    surf.h                       = FB_HEIGHT;
-   surf.pitchinpix              = FB_WIDTH;
+   surf.pitchinpix              = FB_PITCH;
 
    /* Possible endian bug ... */
    VBINPUT_SetInput(0, "gamepad", &input_buf[0]);
@@ -2665,11 +2667,11 @@ void retro_run(void)
 
 #if defined(WANT_32BPP)
    /* (each frame buffer's side-by-side picture is a half of the surface - see vip.c) */
-   const uint32_t *pix = surf.pixels + (vbgo_vip_shown_fb() ? 224 * FB_WIDTH : 0);
-   video_cb(pix, width, height, FB_WIDTH << 2);
+   const uint32_t *pix = surf.pixels + (vbgo_vip_shown_fb() ? 224 * FB_PITCH : 0);
+   video_cb(pix, width, height, FB_PITCH << 2);
 #elif defined(WANT_16BPP)
    const uint16_t *pix = surf.pixels16;
-   video_cb(pix, width, height, FB_WIDTH << 1);
+   video_cb(pix, width, height, FB_PITCH << 1);
 #endif
 
    audio_batch_cb(sound_buf, spec.SoundBufSize);
