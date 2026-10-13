@@ -41,7 +41,9 @@ extern "C" {
 #define VBGO_TT_WIDTH  384
 #define VBGO_TT_HEIGHT 224
 #define VBGO_TT_EYE_PIXELS (VBGO_TT_WIDTH * VBGO_TT_HEIGHT)
-#define VBGO_TT_COLUMN 256 /* tags per column in the tag buffer (rows 0-223 used) */
+/* Tags per column in the tag buffer (rows 0-223 used). Not 256: a 2 KB stride
+ * puts a block's tags across all columns in 4 of the Wii's 128 L1 sets. */
+#define VBGO_TT_COLUMN 260
 
 /* ---- Tags (the tracker's own per-pixel format) -------------------------- */
 

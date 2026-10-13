@@ -14,7 +14,7 @@ const uint8_t *vbgo_tt_blank = s_no_blank;
 uint8_t vbgo_tt_fill_cells[8192];
 uint32_t vbgo_tt_clut_serial = 1;
 
-/* Tags in the VB's own frame buffer layout - [slot][eye][column * 256 + row].
+/* Tags in the VB's own frame buffer layout - [slot][eye][column * VBGO_TT_COLUMN + row].
  * Each frame buffer shows one slot's; a pass that repeats the other buffer's
  * (vbgo_tiletrack_share_pass) shares that buffer's slot, so a third slot is
  * always free for a pass of its own. */
