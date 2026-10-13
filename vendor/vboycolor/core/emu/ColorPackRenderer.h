@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -71,12 +72,23 @@ public:
     // vbgo_tiletrack_set_fill_cells takes; empty if there are none.
     const std::vector<uint8_t> &FillCells() const { return m_fillCells; }
 
-    // frame: B,G,R,A bytes as the shade colorizer left them; raw: the core's
-    // frame (B,G,R,tag); both fbWidth pixels per row, the eyes side by side
-    // starting at eyeOffset[0/1]. background: the Multicolor palette's
-    // background, which painted colors fade toward with the game's
-    // brightness (same as the palette itself - see ShadeColorizer).
-    void Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWidth, const uint32_t eyeOffset[2], const ShadeRgb &background);
+    // The shade colorizer's colors, which the picture starts from: rows, or pixels down one column;
+    // version changes whenever they would come out differently.
+    struct Shade
+    {
+        std::function<void(unsigned first, unsigned count)> rows;
+        std::function<void(unsigned x, unsigned first, unsigned count)> column;
+        uint32_t version = 0;
+    };
+    // frame: B,G,R,A bytes, ShownBuffer's picture as its last Paint left it (bands not kept are
+    // shaded and painted again); raw: the core's frame (B,G,R,tag); both fbWidth pixels per row,
+    // the eyes side by side at eyeOffset[0/1]. background: what painted colors fade toward.
+    void Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWidth, const uint32_t eyeOffset[2], const ShadeRgb &background,
+               const Shade &shade);
+    // The frame buffer the left eye shows (0 or 1): each keeps a colored picture of its own.
+    static int ShownBuffer();
+    // Forget what the colored pictures hold (something else drew in them).
+    void ForgetBands();
     // Instead of painting the same frame again after a Paint that left
     // everything carried over to the next frame as it found it: false if it
     // still needs painting.
@@ -100,6 +112,43 @@ public:
     int PairBlockDisparity(unsigned rightWorld, unsigned bx, unsigned by, bool sprites = false) const;
 
 private:
+    // Left-eye bands kept from the buffer's last Paint: same drawing version and paint state, no
+    // ambiguous tiles. Slow runs' columns are painted again (their surroundings move); the band's
+    // bookkeeping is kept, except each column's first run start, which depends on the band above.
+    static constexpr uint64_t kNoKey = ~0ull;
+    static constexpr uint64_t kSlowColumn = 1ull << 58;
+    struct BandColumn
+    {
+        // first pixel counted: run key | row in band << 48 | fade level << 52 | kSlowColumn
+        uint64_t first = kNoKey;
+        uint64_t last = kNoKey; // the last one's run key
+    };
+    struct Band
+    {
+        uint32_t version = 0, clut = 0, state = 0;
+        uint32_t worlds = 0; // (as worldsDrawn, with these extents)
+        unsigned brightest = 0;
+        std::array<int16_t, 32> left{}, right{}, top{}, bottom{};
+        std::vector<uint32_t> pairSlots; // chr | pairs << 11
+    };
+    std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2> m_bands;
+    std::array<std::vector<BandColumn>, 2> m_bandColumns;
+    // What painting a band depends on beyond its drawing (bumps m_paintState when it changes).
+    struct PaintState
+    {
+        const TileColorPack *pack = nullptr;
+        bool automatic = false, pairs = false;
+        uint32_t autoWorlds = 0, figures = 0, shade = 0, fbWidth = 0, eyeOffset = 0;
+        unsigned fadeReference = 0, flat = 0;
+        int bg[3] = {};
+        std::array<uint8_t, 32 * 4> worlds{};
+        std::array<int8_t, 32> pairOfLeft{}, spritePairOf{};
+        bool operator==(const PaintState &o) const;
+    };
+    PaintState m_paintStateWas;
+    uint32_t m_paintState = 1;
+    unsigned m_fadeReference = 0;
+
     uint8_t m_fadeLut[64][3][256];
     bool m_fadeLutValid = false;
     int m_fadeBackground[3] = {};

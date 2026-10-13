@@ -19,6 +19,7 @@ namespace
 
 void ShadeColorizer::SetPalette(const std::array<ShadeRgb, 4> &palette)
 {
+    ++m_version;
     m_gradient = false;
     m_palette = palette;
     const ShadeRgb &background = palette[0];
@@ -65,6 +66,7 @@ void ShadeColorizer::SetGradient(const std::array<ShadeRgb, 5> &stops, int refer
 
 void ShadeColorizer::BuildGradient()
 {
+    ++m_version;
     const float reference = static_cast<float>(m_referenceLevel > 0 ? m_referenceLevel : 63);
     // The brightest shade sits where the game's full brightness does.
     m_palette[0] = m_stops[0];

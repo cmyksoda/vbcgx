@@ -58,8 +58,30 @@ constexpr int kMaxDisparity = 64;
 const TileColorPack::Tile kNoTile{}; // (no tile colors: nothing painted)
 } // namespace
 
+bool ColorPackRenderer::PaintState::operator==(const PaintState &o) const
+{
+    return pack == o.pack && automatic == o.automatic && pairs == o.pairs && autoWorlds == o.autoWorlds && figures == o.figures &&
+           shade == o.shade && fbWidth == o.fbWidth && eyeOffset == o.eyeOffset && fadeReference == o.fadeReference &&
+           flat == o.flat && std::equal(bg, bg + 3, o.bg) && worlds == o.worlds && pairOfLeft == o.pairOfLeft &&
+           spritePairOf == o.spritePairOf;
+}
+
+int ColorPackRenderer::ShownBuffer()
+{
+    vbgo_tt_eye_view view;
+    return vbgo_tiletrack_eye_view(0, &view) ? (view.fb & 1) : 0;
+}
+
+void ColorPackRenderer::ForgetBands()
+{
+    for (auto &bands : m_bands)
+        for (Band &band : bands)
+            band.version = 0;
+}
+
 void ColorPackRenderer::SetPack(const TileColorPack *pack)
 {
+    ForgetBands();
     m_depth.Reset();
     m_pack = pack && !pack->Empty() ? pack : nullptr;
     m_cellStart.clear();
@@ -137,6 +159,7 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
 
 void ColorPackRenderer::SetFadeReference(unsigned level)
 {
+    m_fadeReference = level;
     m_fadeLutValid = false;
     // Same fade as the Multicolor palette (see ShadeColorizer): the brightest
     // shade's level from the core's tag byte, through the core's gamma -
@@ -547,12 +570,16 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, int
 }
 
 void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWidth, const uint32_t eyeOffset[2],
-                              const ShadeRgb &background)
+                              const ShadeRgb &background, const Shade &shade)
 {
     const TileColorPack *pack = m_packShown ? m_pack : nullptr;
     m_settled = false;
     if (!pack && !m_auto)
+    {
+        shade.rows(0, VBGO_TT_HEIGHT);
+        ForgetBands();
         return;
+    }
     // (what carries over to later frames, to tell whether this one changed it)
     const uint32_t autoWorldsBefore = m_autoWorlds, figuresBefore = m_figureWorlds;
     const unsigned maxLevelBefore = m_autoMaxLevel;
@@ -564,6 +591,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
     if (!have[0] && !have[1])
     {
         // (nothing drawn from tiles at all - but the game's CPU may have drawn)
+        shade.rows(0, VBGO_TT_HEIGHT);
+        ForgetBands();
         if (m_auto)
             PaintDepth(frame, raw, fbWidth, eyeOffset, view, have, bg);
         return;
@@ -793,6 +822,119 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
 
     RunSetUp setUp{pack, haveCells, markers != nullptr, haveContexts, pairs, leftPairSlot.data(), 0};
     bool reestimated = false;
+
+    // (only where the game's CPU drew - else every pixel shown came from tiles)
+    const bool depth = m_auto && ((have[0] && view[0].cpu_drawn) || (have[1] && view[1].cpu_drawn) || !have[0] || !have[1]);
+    // The bands kept from this frame buffer's picture as it was last painted (see m_bands).
+    const int buffer = have[0] ? (view[0].fb & 1) : 0;
+    std::array<Band, kBands> &bands = m_bands[buffer];
+    std::vector<BandColumn> &bandColumns = m_bandColumns[buffer];
+    bandColumns.resize(static_cast<size_t>(kBands) * VBGO_TT_WIDTH);
+    {
+        PaintState state;
+        state.pack = pack;
+        state.automatic = m_auto;
+        state.pairs = pairs;
+        state.autoWorlds = m_autoWorldsUsed;
+        state.figures = m_figuresUsed;
+        state.shade = shade.version;
+        state.fbWidth = fbWidth;
+        state.eyeOffset = eyeOffset[0];
+        state.fadeReference = m_fadeReference;
+        state.flat = have[0] ? view[0].flat_obj_palettes : 0;
+        std::copy(bg, bg + 3, state.bg);
+        for (unsigned w = 0; w < 32; ++w)
+        {
+            state.worlds[w * 4] = m_worlds[w].eyes;
+            state.worlds[w * 4 + 1] = m_worlds[w].type;
+            state.worlds[w * 4 + 2] = static_cast<uint8_t>(m_worlds[w].partner);
+            state.worlds[w * 4 + 3] = m_worlds[w].colors;
+        }
+        state.pairOfLeft = m_pairOfLeft;
+        state.spritePairOf = m_spritePairOf;
+        if (!(state == m_paintStateWas))
+        {
+            m_paintStateWas = state;
+            ++m_paintState;
+        }
+    }
+    uint32_t keep = 0;
+    if (have[0] && !depth && view[0].clut && view[0].band_version && view[0].band_chr)
+    {
+        uint32_t ambiguous[2048 / 32] = {};
+        if (pack)
+        {
+            ResolveSlots(view[0].hashes);
+            for (unsigned c = 0; c < 2048; ++c)
+                ambiguous[c >> 5] |= static_cast<uint32_t>(m_slots[c].ambiguous) << (c & 31);
+        }
+        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+        {
+            const Band &band = bands[b];
+            const uint32_t version = view[0].band_version[b];
+            if (!version || band.version != version || band.clut != view[0].clut || band.state != m_paintState)
+                continue;
+            uint32_t ambiguousHere = 0;
+            for (unsigned i = 0; i < 2048 / 32; ++i)
+                ambiguousHere |= view[0].band_chr[b * (2048 / 32) + i] & ambiguous[i];
+            if (!ambiguousHere)
+                keep |= 1u << b;
+        }
+    }
+    for (unsigned b = 0; b < static_cast<unsigned>(kBands);)
+    {
+        unsigned end = b;
+        while (end < static_cast<unsigned>(kBands) && !(keep >> end & 1))
+            ++end;
+        if (end > b)
+            shade.rows(b * 8, (end - b) * 8);
+        b = end + 1;
+    }
+    // A run starting: the layers' extents, the brightness (a band's own, or the frame's).
+    auto countRun = [&](uint64_t key, unsigned x, unsigned y, unsigned level, Band *band) {
+        if (!VBGO_TAG_IS_OBJ(key))
+        {
+            const unsigned colors = m_worlds[VBGO_TAG_WORLD(key)].colors;
+            if (!band)
+            {
+                worldsDrawn |= 1u << colors;
+                left[colors] = std::min<int16_t>(left[colors], static_cast<int16_t>(x));
+                right[colors] = std::max<int16_t>(right[colors], static_cast<int16_t>(x));
+                top[colors] = std::min<int16_t>(top[colors], static_cast<int16_t>(y));
+                bottom[colors] = std::max<int16_t>(bottom[colors], static_cast<int16_t>(y));
+            }
+            else if (!(band->worlds >> colors & 1))
+            {
+                band->worlds |= 1u << colors;
+                band->left[colors] = band->right[colors] = static_cast<int16_t>(x);
+                band->top[colors] = band->bottom[colors] = static_cast<int16_t>(y);
+            }
+            else
+            {
+                band->left[colors] = std::min<int16_t>(band->left[colors], static_cast<int16_t>(x));
+                band->right[colors] = std::max<int16_t>(band->right[colors], static_cast<int16_t>(x));
+                band->top[colors] = std::min<int16_t>(band->top[colors], static_cast<int16_t>(y));
+                band->bottom[colors] = std::max<int16_t>(band->bottom[colors], static_cast<int16_t>(y));
+            }
+        }
+        if (band)
+            band->brightest = std::max(band->brightest, level);
+        else
+            brightest = std::max(brightest, level);
+    };
+    // The slots a left-eye run marks as its pair's left picture's (as SetUpRun does).
+    auto pairSlot = [&](uint64_t t) -> uint32_t {
+        const unsigned world = VBGO_TAG_WORLD(t);
+        uint32_t pairsOf = 0;
+        if (VBGO_TAG_IS_OBJ(t))
+        {
+            if (m_spritePairOf[world] >= 0 && EyeOnly(t) == 1)
+                pairsOf = 1u << m_spritePairOf[world];
+        }
+        else if (m_pairOfLeft[world] >= 0)
+            pairsOf = 1u << m_pairOfLeft[world];
+        return pairsOf ? VBGO_TAG_CHAR(t) | pairsOf << 11 : 0;
+    };
     for (unsigned eye = 0; eye < 2; ++eye)
     {
         if (!have[eye])
@@ -904,8 +1046,33 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             }
             continue;
         }
-        // The left eye: every pixel colored, down each column.
+        // The left eye: every pixel colored, down each column, band by band
+        // (the bands kept: only what their runs add to the bookkeeping).
+        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+            if (!(keep >> b & 1))
+            {
+                Band &band = bands[b];
+                band.version = v.band_version ? v.band_version[b] : 0;
+                band.clut = v.clut;
+                band.state = m_paintState;
+                band.worlds = 0;
+                band.brightest = 0;
+                band.pairSlots.clear();
+            }
+        // (as the last run with this key in this eye, if any)
+        auto setUpRun = [&](uint64_t t, uint64_t key, uint32_t x, uint32_t y) -> Run {
+            const uint32_t runHash = (static_cast<uint32_t>(key) ^ static_cast<uint32_t>(key >> 32)) * 2654435761u;
+            CachedRun &cached = m_runCache[runHash >> (32 - kRunCacheBits)];
+            if (cached.at != runAt || cached.key != key)
+            {
+                cached.run = SetUpRun(t, eye, static_cast<int>(x), static_cast<int>(y), setUp);
+                cached.at = runAt;
+                cached.key = key;
+            }
+            return cached.run;
+        };
         const size_t rowBytes = static_cast<size_t>(fbWidth) * 4;
+        Band unkept; // (a kept band's columns painted again: their bookkeeping goes nowhere)
         for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
         {
             const uint64_t *column = v.columns[x];
@@ -915,9 +1082,34 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             uint64_t runKey = ~0ull;
             uint32_t runHi = 0, runLo = ~0u;
             Run run;
+            bool runSetUp = true; // (false: a kept band's last run - run isn't it)
             int nearCell = -1; // (context: the last pixel's markers nearby, by cell and layer)
             NearBits nearBits{};
-            for (uint32_t y = 0; y < VBGO_TT_HEIGHT; ++y)
+            for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
+            {
+            BandColumn &here = bandColumns[b * VBGO_TT_WIDTH + x];
+            const bool kept = keep >> b & 1;
+            if (kept)
+            {
+                if (here.first == kNoKey)
+                    continue;
+                if (!(here.first & kSlowColumn))
+                {
+                    const uint64_t first = here.first & 0xFFFFFFFFFFFFull;
+                    if (first != runKey)
+                        countRun(first, x, b * 8 + (here.first >> 48 & 7), static_cast<unsigned>(here.first >> 52 & 63), nullptr);
+                    runKey = here.last;
+                    runHi = static_cast<uint32_t>(here.last >> 32) | static_cast<uint32_t>(stamp << 16);
+                    runLo = static_cast<uint32_t>(here.last) & kRunMaskLo;
+                    runSetUp = false;
+                    continue;
+                }
+                shade.column(x, b * 8, 8); // (painted again; its bookkeeping is kept)
+            }
+            Band &band = kept ? unkept : bands[b];
+            bool counted = false, slowHere = false; // (a pixel of this band counted in this column yet, a slow run's)
+            const uint32_t end = b * 8 + 8;
+            for (uint32_t y = b * 8; y < end; ++y)
             {
                 uint64_t t = column[y];
                 if ((t >> 48) != stamp)
@@ -927,34 +1119,37 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                 unsigned pixel = VBGO_TAG_PIXEL(t);
                 if (pixel && !(rawPixel & 0xFFFFFFu))
                     continue; // drawn in a shade the game switched off - stays background
+                const bool firstHere = !counted;
+                if (firstHere)
+                {
+                    counted = true;
+                    if (!kept)
+                        here.first = (t & kRunMask) | static_cast<uint64_t>(y & 7) << 48 | static_cast<uint64_t>(rawPixel >> 26) << 52;
+                }
                 if ((t & kRunMask) != runKey)
                 {
-                    // A new run (see Run): the layers' extents, the brightness...
+                    // A new run (see Run): the layers' extents, the brightness, and the rest.
                     runKey = t & kRunMask;
                     runHi = static_cast<uint32_t>(t >> 32), runLo = static_cast<uint32_t>(t) & kRunMaskLo;
-                    if (!VBGO_TAG_IS_OBJ(t))
-                    {
-                        const unsigned colors = m_worlds[VBGO_TAG_WORLD(t)].colors;
-                        worldsDrawn |= 1u << colors;
-                        left[colors] = std::min<int16_t>(left[colors], static_cast<int16_t>(x));
-                        right[colors] = std::max<int16_t>(right[colors], static_cast<int16_t>(x));
-                        top[colors] = std::min<int16_t>(top[colors], static_cast<int16_t>(y));
-                        bottom[colors] = std::max<int16_t>(bottom[colors], static_cast<int16_t>(y));
-                    }
-                    brightest = std::max<unsigned>(brightest, rawPixel >> 26);
-                    // ... and the rest: as the last run with this key in this eye, if any.
-                    const uint32_t runHash = (static_cast<uint32_t>(runKey) ^ static_cast<uint32_t>(runKey >> 32)) * 2654435761u;
-                    CachedRun &cached = m_runCache[runHash >> (32 - kRunCacheBits)];
-                    if (cached.at == runAt && cached.key == runKey)
-                        run = cached.run;
-                    else
-                    {
-                        run = SetUpRun(t, eye, static_cast<int>(x), static_cast<int>(y), setUp);
-                        cached.at = runAt;
-                        cached.key = runKey;
-                        cached.run = run;
-                    }
+                    countRun(runKey, x, y, rawPixel >> 26, firstHere ? nullptr : &band);
+                    run = setUpRun(t, runKey, x, y);
+                    runSetUp = true;
+                    if (pairs && !kept)
+                        if (const uint32_t slot = pairSlot(t); slot && (band.pairSlots.empty() || band.pairSlots.back() != slot))
+                            band.pairSlots.push_back(slot);
                 }
+                else
+                {
+                    if (!runSetUp)
+                    {
+                        run = setUpRun(t, runKey, x, y);
+                        runSetUp = true;
+                    }
+                    if (firstHere && pairs && !kept)
+                        if (const uint32_t slot = pairSlot(t); slot && (band.pairSlots.empty() || band.pairSlots.back() != slot))
+                            band.pairSlots.push_back(slot);
+                }
+                slowHere |= run.slow;
                 if (run.plain)
                 {
                     // Most runs: the tile's colors, else the automatic ones - pixel
@@ -971,7 +1166,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                                 write(&frame[i], rgb, rawPixel >> 26);
                         }
                         bool more = false;
-                        while (y + 1 < VBGO_TT_HEIGHT)
+                        while (y + 1 < end)
                         {
                             const uint64_t next = column[y + 1];
                             if (static_cast<uint32_t>(next >> 32) != runHi || (static_cast<uint32_t>(next) & kRunMaskLo) != runLo)
@@ -1058,14 +1253,44 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                 }
                 write(&frame[i], rgb, rawPixel >> 26);
             }
+            if (!kept)
+            {
+                if (counted)
+                    here.last = runKey, here.first |= slowHere ? kSlowColumn : 0;
+                else
+                    here.first = kNoKey;
+            }
+            }
+        }
+        // The bands' own bookkeeping, kept or just made; the kept ones' pair slots.
+        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+        {
+            const Band &band = bands[b];
+            brightest = std::max(brightest, band.brightest);
+            worldsDrawn |= band.worlds;
+            for (uint32_t w = band.worlds; w; w &= w - 1)
+            {
+                const int colors = __builtin_ctz(w);
+                left[colors] = std::min(left[colors], band.left[colors]);
+                right[colors] = std::max(right[colors], band.right[colors]);
+                top[colors] = std::min(top[colors], band.top[colors]);
+                bottom[colors] = std::max(bottom[colors], band.bottom[colors]);
+            }
+            if (keep >> b & 1)
+                for (const uint32_t slot : band.pairSlots)
+                    leftPairSlot[slot & 0x7FF] |= slot >> 11;
         }
         if (!m_ambiguousPixels.empty())
             PaintAmbiguous(frame, fbWidth, eyeOffset[eye], v);
     }
-    // (only where the game's CPU drew - else every pixel shown came from tiles)
-    const bool depth = m_auto && ((have[0] && view[0].cpu_drawn) || (have[1] && view[1].cpu_drawn) || !have[0] || !have[1]);
     if (depth)
+    {
         brightest = std::max(brightest, PaintDepth(frame, raw, fbWidth, eyeOffset, view, have, bg));
+        for (Band &band : bands)
+            band.version = 0; // (depth colors aren't the band's own)
+    }
+    if (!have[0])
+        ForgetBands();
     // Automatic colors: the layers this game draws, its brightness (without
     // a pack, they fade relative to the brightest it has shown).
     m_autoWorlds |= worldsDrawn;

@@ -129,6 +129,13 @@ typedef struct
    /* Per 8-row band (28 of 64 words): the characters the drawing used there
     * - every character a tag of the band can name (a bit each). */
    const uint32_t *band_chr;
+   /* ... and its drawing's version (28): equal nonzero versions mean the same tags (but stamps),
+    * pixels and per-pass copies of what they read. */
+   const uint32_t *band_version;
+   int fb; /* the frame buffer shown */
+   /* vbgo_tt_clut_serial as every column was shown, or 0 if they differed (or
+    * a column showed nothing, or the other eye): the core's shades to colors. */
+   uint32_t clut;
 } vbgo_tt_eye_view;
 
 /* World attribute fields (w = 16 halfwords of one world). */
@@ -169,6 +176,8 @@ extern uint64_t *vbgo_tt_dst[2];
 extern uint64_t vbgo_tt_stamp_bits;
 extern const uint8_t *vbgo_tt_blank;
 extern uint8_t vbgo_tt_fill_cells[8192];
+/* Bumped by the core whenever its shades-to-colors table changes. */
+extern uint32_t vbgo_tt_clut_serial;
 
 #define VBGO_TT_CELL_BITS(cell) (((uint64_t)1 << 27) | ((uint64_t)(cell) << 28))
 /* Sprites: no cell, but which OBJ drew the pixel (the same in both eyes). */
@@ -263,8 +272,10 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
  * it): keeps that pass's tags for it as this pass's. False if they're gone
  * (the block must be drawn after all). */
 bool vbgo_tiletrack_keep_block(void);
-/* After drawing the block begun last: the characters it used (2048 bits). */
-void vbgo_tiletrack_block_drawn(const uint32_t *chr);
+/* After drawing the block begun last: the characters it used (2048 bits), and
+ * whether nothing it read had changed since its pass started (else its
+ * drawing gets no version - see band_version). */
+void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled);
 bool vbgo_tiletrack_pass_reusable(unsigned src_fb);
 void vbgo_tiletrack_share_pass(unsigned fb, unsigned src_fb);
 void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no);

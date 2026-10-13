@@ -168,11 +168,14 @@ static void MakeColorLUT(void)
          AnaSlowColorLUT[l_b][r_b] = MAKECOLOR(((int)(r_prime * 255)), ((int)(g_prime * 255)), ((int)(b_prime * 255)), 0);
       }
    }
+   vbgo_tt_clut_serial++;
 }
 
 static void RecalcBrightnessCache(void)
 {
+   uint32 before[2][4];
    unsigned i, lr;
+   memcpy(before, BrightCLUT, sizeof(before));
    int32 CumulativeTime = (BRTA + 1 + BRTB + 1 + BRTC + 1 + REST + 1) + 1;
    int32 MaxTime = 128;
 
@@ -221,6 +224,8 @@ static void RecalcBrightnessCache(void)
    for(lr = 0; lr < 2; lr++)
       for(i = 0; i < 4; i++)
          BrightCLUT[lr][i] = ColorLUT[lr][BrightnessCache[i]];
+   if(memcmp(before, BrightCLUT, sizeof(before)))
+      vbgo_tt_clut_serial++;
 }
 
 static void Recalc3DModeStuff(bool non_rgb_output)
@@ -519,6 +524,23 @@ static bool BlockUnchanged(const BlockInputs *block)
       uint32 m;
       for(m = block->chr[i]; m; m &= m - 1)
          if(ChrChangedAt[i * 32 + __builtin_ctz(m)] > block->passAt)
+            return false;
+   }
+   return true;
+}
+
+/* Whether nothing the block just drawn read had changed since its pass
+ * started (what the tile tracker's per-pass copies show matches it). */
+static bool BlockSettled(const BlockInputs *block)
+{
+   int i;
+   if(GlobalChangedAt > PassStartedAt || ObjChangedAt[DrawingBlock] > PassStartedAt)
+      return false;
+   for(i = 0; i < 2048 / 32; i++)
+   {
+      uint32 m;
+      for(m = block->chr[i]; m; m &= m - 1)
+         if(ChrChangedAt[i * 32 + __builtin_ctz(m)] > PassStartedAt)
             return false;
    }
    return true;
@@ -1613,7 +1635,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   block->drawnAt = DrawSerial;
                   block->passAt = PassStartedAt;
                   UsedChr = UsedRows = UnusedInputs;
-                  vbgo_tiletrack_block_drawn(block->chr);
+                  vbgo_tiletrack_block_drawn(block->chr, BlockSettled(block));
                }
             }
 

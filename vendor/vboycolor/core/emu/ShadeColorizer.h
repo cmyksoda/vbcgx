@@ -69,6 +69,8 @@ public:
     // 0-1 shade index, 2-7 fade level). dst: B,G,R,A bytes ready for the
     // B8G8R8A8 screen texture, A forced opaque. src and dst may not overlap.
     void Colorize(const uint8_t *src, uint8_t *dst, size_t pixelCount) const;
+    // Changes whenever Colorize would color some pixel differently.
+    uint32_t Version() const { return m_version; }
 
 private:
     void BuildGradient();
@@ -82,4 +84,5 @@ private:
     std::array<ShadeRgb, 5> m_stops{};
     int m_referenceLevel = -1, m_fixedReference = -1; // 1-63
     std::array<float, 4> m_shadeLuma{0.0f, 0.5f, 0.75f, 1.0f}; // each shade's brightness at the reference level, 0-1
+    uint32_t m_version = 0;
 };

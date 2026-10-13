@@ -401,7 +401,8 @@ namespace
     const uint8_t *g_frame = nullptr;
     unsigned g_frameW = 0, g_frameH = 0;
     size_t g_framePitch = 0;
-    std::vector<uint8_t> g_raw, g_colored;
+    std::vector<uint8_t> g_raw;
+    std::vector<uint8_t> g_colored[2]; // per frame buffer (see ColorPackRenderer::Paint)
     uint32_t g_lastPicture; // (the VIP's id for the last frame's picture)
     bool g_repaint = true;  // the next frame is colored in full regardless
 
@@ -647,10 +648,18 @@ namespace
             g_video(nullptr, VBGO_TT_WIDTH, VBGO_TT_HEIGHT, 0);
             return;
         }
+        if (g_repaint)
+            g_renderer.ForgetBands();
         g_repaint = false;
         const unsigned w = g_frameW, h = std::min<unsigned>(g_frameH, VBGO_TT_HEIGHT);
         const size_t pixels = static_cast<size_t>(w) * h, rowBytes = static_cast<size_t>(w) * 4;
-        g_colored.resize(pixels * 4);
+        const bool painting = g_shadeColors && g_renderer.Active() && vbgo_tiletrack_is_enabled();
+        std::vector<uint8_t> &colored = g_colored[painting ? ColorPackRenderer::ShownBuffer() : 0];
+        if (colored.size() != pixels * 4)
+        {
+            colored.resize(pixels * 4);
+            g_renderer.ForgetBands();
+        }
         const uint8_t *raw = g_frame;
         if (g_framePitch != rowBytes) {
             g_raw.resize(pixels * 4);
@@ -663,14 +672,22 @@ namespace
         {
             if (g_colorizer.IsGradient())
                 g_colorizer.Observe(raw, w, h, rowBytes);
-            for (unsigned y = 0; y < h; ++y)
-                g_colorizer.Colorize(raw + y * rowBytes, &g_colored[y * rowBytes], VBGO_TT_WIDTH);
-            if (g_renderer.Active() && vbgo_tiletrack_is_enabled())
+            auto shadeRows = [&](unsigned first, unsigned count) {
+                for (unsigned y = first; y < first + count && y < h; ++y)
+                    g_colorizer.Colorize(raw + y * rowBytes, &colored[y * rowBytes], VBGO_TT_WIDTH);
+            };
+            if (painting)
             {
                 const uint32_t eyeOffset[2] = {0, w - VBGO_TT_WIDTH};
                 g_renderer.SetPackShown(true);
-                g_renderer.Paint(g_colored.data(), raw, w, eyeOffset, g_background);
+                auto shadeColumn = [&](unsigned x, unsigned first, unsigned count) {
+                    for (unsigned y = first; y < first + count && y < h; ++y)
+                        g_colorizer.Colorize(raw + y * rowBytes + x * 4, &colored[y * rowBytes + x * 4], 1);
+                };
+                g_renderer.Paint(colored.data(), raw, w, eyeOffset, g_background, {shadeRows, shadeColumn, g_colorizer.Version()});
             }
+            else
+                shadeRows(0, h);
         }
         else
         {
@@ -678,12 +695,12 @@ namespace
             for (unsigned y = 0; y < h; ++y)
             {
                 const uint8_t *in = raw + y * rowBytes;
-                uint32_t *out = reinterpret_cast<uint32_t *>(&g_colored[y * rowBytes]);
+                uint32_t *out = reinterpret_cast<uint32_t *>(&colored[y * rowBytes]);
                 for (unsigned x = 0; x < VBGO_TT_WIDTH; ++x)
                     out[x] = g_brightness[in[x * 4 + 2]];
             }
         }
-        g_video(g_colored.data(), VBGO_TT_WIDTH, h, rowBytes);
+        g_video(colored.data(), VBGO_TT_WIDTH, h, rowBytes);
     }
 } // namespace
 
@@ -857,7 +874,8 @@ extern "C"
         g_pack.~TileColorPack();
         new (&g_pack) TileColorPack();
         std::vector<uint8_t>().swap(g_raw);
-        std::vector<uint8_t>().swap(g_colored);
+        for (auto &colored : g_colored)
+            std::vector<uint8_t>().swap(colored);
         g_loaded = false;
     }
 
