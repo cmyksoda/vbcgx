@@ -400,6 +400,7 @@ static uint32 RowChangedAt[1024]; /* DRAM, per 64 halfwords */
 static uint32 ChrChangedAt[2048];
 static uint32 ObjChangedAt[32];   /* sprite attributes, per 8 rows the sprite was or is on */
 static uint32 ObjEntryChangedAt[1024];
+static uint32 WorldChangedAt[28]; /* a background world's attributes, per block its window covers (or did) */
 #define MAX_BLOCK_SPRITES 96
 typedef struct
 {
@@ -553,9 +554,24 @@ static void RestartSerials(void)
    memset(ChrChangedAt, 0, sizeof(ChrChangedAt));
    memset(ObjChangedAt, 0, sizeof(ObjChangedAt));
    memset(ObjEntryChangedAt, 0, sizeof(ObjEntryChangedAt));
+   memset(WorldChangedAt, 0, sizeof(WorldChangedAt));
    GlobalChangedAt = SptChangedAt = 0;
    DrawSerial = 0;
    ForgetPasses();
+}
+
+/* The blocks a background world's window covers with these attributes: the
+ * rows DrawBG and DrawAffine draw. */
+static void WorldRowsChanged(const uint16 *attr, uint32 at)
+{
+   const uint16 gy = sign_11_to_s16(attr[3]), height = attr[8] & 0x3FF;
+   int y;
+   for(y = 0; y < 224; y++)
+      if((uint16)(y - gy) <= height)
+      {
+         WorldChangedAt[y >> 3] = at;
+         y |= 7;
+      }
 }
 
 static void ObjRowsChanged(uint32 jy, uint32 at)
@@ -571,7 +587,26 @@ static void DramChanging(uint32 a, uint16 v)
    const uint32 at = ++DrawSerial;
    RowChangedAt[h >> 6] = at;
    if(h >= (0x1D800 >> 1) && h < (0x1DC00 >> 1))
-      GlobalChangedAt = at;
+   {
+      /* (a world's: its window's blocks, old and new - unless it changes which
+       * worlds draw, or what a sprite world shows) */
+      uint16 *attr = &DRAM[h & ~15u];
+      const uint16 control = attr[0];
+      const bool objWorld = ((control >> 12) & 3) == 3;
+      if(objWorld || ((h & 15) == 0 && ((control ^ v) & 0x3040)))
+      {
+         if((h & 15) == 0 && ((control ^ v) & 0xF040))
+            GlobalChangedAt = at;
+      }
+      else
+      {
+         const uint16 was = attr[h & 15];
+         WorldRowsChanged(attr, at);
+         attr[h & 15] = v;
+         WorldRowsChanged(attr, at);
+         attr[h & 15] = was;
+      }
+   }
    else if(h >= (0x1E000 >> 1))
    {
       ObjEntryChangedAt[(h - (0x1E000 >> 1)) >> 2] = at;
@@ -587,7 +622,7 @@ static void DramChanging(uint32 a, uint16 v)
 static int BlockChange(const BlockInputs *block)
 {
    int i, change = 0;
-   if(!block->valid || GlobalChangedAt > block->drawnAt)
+   if(!block->valid || GlobalChangedAt > block->drawnAt || WorldChangedAt[DrawingBlock] > block->drawnAt)
       return 2;
    for(i = 0; i < 1024 / 32; i++)
    {
@@ -668,7 +703,7 @@ static uint64 SpriteChangedCells(const BlockInputs *was, int wasCount, uint32 dr
 static bool BlockSettled(const BlockInputs *block)
 {
    int i;
-   if(GlobalChangedAt > PassStartedAt || ObjChangedAt[DrawingBlock] > PassStartedAt)
+   if(GlobalChangedAt > PassStartedAt || WorldChangedAt[DrawingBlock] > PassStartedAt || ObjChangedAt[DrawingBlock] > PassStartedAt)
       return false;
    for(i = 0; i < 2048 / 32; i++)
    {
