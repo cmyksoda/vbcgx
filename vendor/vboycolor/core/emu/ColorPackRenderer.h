@@ -301,6 +301,16 @@ private:
     std::unordered_map<uint32_t, ContextGroupBits> m_markerBits;
     std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> m_contextRange; // hash -> (first, count)
     std::vector<ContextGroupBits> m_markerGrid[3];
+    // (per grid: the cells with markers - all others are clear - so a frame's work is the few in use)
+    std::vector<uint16_t> m_markerCells[3];
+    std::array<uint8_t, kGridW * kGridH> m_markerIn[3]{};
+    void NoteMarkerCell(unsigned cell)
+    {
+        uint8_t &in = m_markerIn[m_gridCurrent][cell];
+        if (!in)
+            in = 1, m_markerCells[m_gridCurrent].push_back(static_cast<uint16_t>(cell));
+    }
+    void ClearMarkerCells();
     std::array<ContextGroupBits, 2048> m_slotMarkers{}; // per slot: its markerBits (compact, for gathering this frame's markers)
     std::array<bool, 2048> m_slotHasMarkers{};
     // (ResolveSlots' compact copies of the slots' hashes and flags, bit per slot: a frame's checks stay in cache)

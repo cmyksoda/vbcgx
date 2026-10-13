@@ -97,6 +97,7 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
     m_slotLayer.fill(SlotLayer{});
     for (auto &grid : m_markerGrid)
         grid.clear();
+    ClearMarkerCells();
     for (auto &grid : m_markerLayer)
         grid.clear();
     m_layerBound = ContextGroupBits{};
@@ -131,6 +132,7 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
     {
         for (auto &grid : m_markerGrid)
             grid.assign(kGridW * kGridH, ContextGroupBits{});
+        ClearMarkerCells();
         m_layerBound = m_pack->LayerBoundGroups();
         if (m_layerBound.Any())
             for (auto &grid : m_markerLayer)
@@ -714,12 +716,16 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
     {
         m_gridCurrent = (m_gridCurrent + 1) % 3;
         markers = m_markerGrid[m_gridCurrent].data();
-        std::fill(markers, markers + kGridW * kGridH, ContextGroupBits{});
         if (m_layerBound.Any())
-        {
             markerLayers = m_markerLayer[m_gridCurrent].data();
-            std::fill(markerLayers, markerLayers + kGridW * kGridH, 0xFF);
+        for (const uint16_t c : m_markerCells[m_gridCurrent])
+        {
+            markers[c] = ContextGroupBits{};
+            if (markerLayers)
+                markerLayers[c] = 0xFF;
+            m_markerIn[m_gridCurrent][c] = 0;
         }
+        m_markerCells[m_gridCurrent].clear();
         // This frame's own markers, before anything is colored (the left
         // picture's - markers count at their left-eye spot): a figure's
         // colors are on from the first frame it shows its markers, rather
@@ -749,6 +755,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                         markers[row + gx] |= cell.markers;
                         if (markerLayers && cell.markerLayer != 0xFF)
                             markerLayers[row + gx] = cell.markerLayer;
+                        if (cell.markers.Any() || (markerLayers && cell.markerLayer != 0xFF))
+                            NoteMarkerCell(row + gx);
                     }
                     else
                         cell.markers = ContextGroupBits{}, cell.markerLayer = 0xFF;
@@ -790,6 +798,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                             continue;
                         const unsigned cell = (y >> 3) * kGridW + (x >> 3);
                         markers[cell] |= bits;
+                        NoteMarkerCell(cell);
                         cache.cells[x >> 3].markers |= bits;
                         if (!sprite && markerLayers)
                             markerLayers[cell] = cache.cells[x >> 3].markerLayer = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
@@ -806,12 +815,21 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         const ContextGroupBits free = ~m_layerBound;
         uint16_t sources[kGridW * kGridH];
         int sourceCount = 0;
-        for (int i = 0; i < kGridW * kGridH; ++i)
         {
-            here[i] = (a[i] | b[i] | markers[i]) & free;
-            if (here[i].Any())
-                sources[sourceCount++] = static_cast<uint16_t>(i);
+            uint8_t seen[kGridW * kGridH] = {};
+            for (unsigned k = 0; k < 3; ++k)
+                for (const uint16_t i : m_markerCells[(m_gridCurrent + k) % 3])
+                    if (!seen[i])
+                    {
+                        seen[i] = 1;
+                        here[i] = (a[i] | b[i] | markers[i]) & free;
+                        if (here[i].Any())
+                            sources[sourceCount++] = i;
+                    }
         }
+        if (sourceCount > 64)
+            for (int i = 0; i < kGridW * kGridH; ++i)
+                here[i] = (a[i] | b[i] | markers[i]) & free;
         m_nearSprites.resize(kGridW * kGridH);
         m_closeSprites.resize(kGridW * kGridH);
         if (sourceCount <= 64)
@@ -1202,6 +1220,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                         {
                             const unsigned cell = (y >> 3) * kGridW + (lx >> 3);
                             markers[cell] |= bits;
+                            NoteMarkerCell(cell);
                             if (!sprite && markerLayers)
                                 markerLayers[cell] = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
                         }
@@ -1388,6 +1407,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                         {
                             const unsigned cell = (y >> 3) * kGridW + (x >> 3);
                             markers[cell] |= bits;
+                            NoteMarkerCell(cell);
                             if (!sprite && markerLayers)
                                 markerLayers[cell] = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
                         }
@@ -1521,18 +1541,29 @@ bool ColorPackRenderer::Coast()
     return true;
 }
 
+void ColorPackRenderer::ClearMarkerCells()
+{
+    for (unsigned g = 0; g < 3; ++g)
+    {
+        m_markerCells[g].clear();
+        m_markerIn[g].fill(0);
+    }
+}
+
 bool ColorPackRenderer::MarkersSettled() const
 {
     // Paint reads the last three frames' markers together: settled once all three agree.
+    // (outside its cells a grid is clear, so the same cells with the same markers means the same grid)
     if (m_markerGrid[0].empty())
         return true;
-    const size_t cells = kGridW * kGridH;
     for (unsigned g = 1; g < 3; ++g)
     {
-        if (std::memcmp(m_markerGrid[g].data(), m_markerGrid[0].data(), cells * sizeof(ContextGroupBits)) != 0)
+        if (m_markerCells[g].size() != m_markerCells[0].size())
             return false;
-        if (!m_markerLayer[0].empty() && std::memcmp(m_markerLayer[g].data(), m_markerLayer[0].data(), cells) != 0)
-            return false;
+        for (const uint16_t c : m_markerCells[0])
+            if (!m_markerIn[g][c] || !(m_markerGrid[g][c] == m_markerGrid[0][c]) ||
+                (!m_markerLayer[0].empty() && m_markerLayer[g][c] != m_markerLayer[0][c]))
+                return false;
     }
     return true;
 }
