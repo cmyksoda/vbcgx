@@ -408,6 +408,22 @@ typedef struct
    uint64 objs;    /* its sprite lists, hashed (see ObjListsHash) */
 } BlockInputs;
 static BlockInputs Blocks[2][28];
+/* Each buffer's side-by-side picture has a half of the surface of its own,
+ * where a column's block is converted again only if the buffer's block or the
+ * brightness table changed since. */
+static uint32 BlockContent[2][28]; /* a version per drawing in the buffer, 0: unknown */
+static uint32 Contents;
+static uint32 ShownContent[2][2][384][28]; /* [fb][output eye][column][block]: BlockContent as converted */
+static uint32 ShownClut[2][2][384];        /* ... vbgo_tt_clut_serial as converted */
+static int ShownFB;
+int vbgo_vip_shown_fb(void) { return ShownFB; }
+
+static uint32 NewContent(void)
+{
+   if(++Contents == 0)
+      Contents = 1;
+   return Contents;
+}
 static uint32 UnusedInputs[2048 / 32];
 static uint32 *UsedChr = UnusedInputs, *UsedRows = UnusedInputs; /* the block being drawn's */
 static uint64 UnusedObjs, *UsedObjs = &UnusedObjs;
@@ -485,7 +501,7 @@ static void ForgetBlocks(void)
    int fb, b;
    for(fb = 0; fb < 2; fb++)
       for(b = 0; b < 28; b++)
-         Blocks[fb][b].valid = false;
+         Blocks[fb][b].valid = false, BlockContent[fb][b] = 0;
 }
 
 /* The serial runs for hours, but not forever. */
@@ -993,7 +1009,7 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
             PassTouched[(A >> 15) & 1] = true;
             NewContents((A >> 15) & 1);
             if((A & 63) < 56)
-               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false;
+               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false, BlockContent[(A >> 15) & 1][(A & 63) >> 1] = 0;
             FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF] = V;
          }
          break;
@@ -1049,7 +1065,7 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
             PassTouched[(A >> 15) & 1] = true;
             NewContents((A >> 15) & 1);
             if((A & 63) < 56)
-               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false;
+               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false, BlockContent[(A >> 15) & 1][(A & 63) >> 1] = 0;
             StoreU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF], V);
          }
          break;
@@ -1129,6 +1145,7 @@ void VIP_StartFrame(EmulateSpecStruct *espec)
    
    if(VidSettingsDirty)
    {
+      memset(ShownClut, 0, sizeof(ShownClut));
 #if defined(WANT_32BPP)
 	  memset(surface->pixels, 0, surface->pitch32 * surface->h * 4);
 #elif defined(WANT_16BPP)
@@ -1432,38 +1449,40 @@ static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, c
    uint32 *target = surface->pixels + Column + (dest_lr ? (384 + VBSBS_Separation) : 0);
    const int32 pitch32 = surface->pitch32;
    const uint8 *fb_source = &FB[fb][lr][64 * Column];
+   uint32 *shown = ShownContent[fb][dest_lr & 1][Column];
+   int block;
 
+   if(fb)
+      target += 224 * pitch32;
+   ShownFB = fb;
    if(DisplayActive_arg)
    {
-      int y;
-      for(y = 56; y; y--)
+      const bool sameClut = ShownClut[fb][dest_lr & 1][Column] == vbgo_tt_clut_serial;
+      ShownClut[fb][dest_lr & 1][Column] = vbgo_tt_clut_serial;
+      for(block = 0; block < 28; block++, fb_source += 2, target += 8 * pitch32)
       {
-         int y_sub;
-         uint32 source_bits = *fb_source;
-
-         for(y_sub = 4; y_sub; y_sub--)
+         int byte;
+         if(sameClut && BlockContent[fb][block] && shown[block] == BlockContent[fb][block])
+            continue;
+         shown[block] = BlockContent[fb][block];
+         for(byte = 0; byte < 2; byte++)
          {
-            *target       = BrightCLUT[lr][source_bits & 3];
-            source_bits >>= 2;
-            target       += pitch32;
+            uint32 source_bits = fb_source[byte];
+            uint32 *row = target + byte * 4 * pitch32;
+            row[0]           = BrightCLUT[lr][source_bits & 3];
+            row[pitch32]     = BrightCLUT[lr][(source_bits >> 2) & 3];
+            row[2 * pitch32] = BrightCLUT[lr][(source_bits >> 4) & 3];
+            row[3 * pitch32] = BrightCLUT[lr][source_bits >> 6];
          }
-         fb_source++;
       }
    }
    else
    {
       int y;
-      for(y = 56; y; y--)
-      {
-         int y_sub;
-
-         for(y_sub = 4; y_sub; y_sub--)
-         {
-            *target       = 0;
-            target       += pitch32;
-         }
-         fb_source++;
-      }
+      for(y = 0; y < 224; y++)
+         target[y * pitch32] = 0;
+      for(block = 0; block < 28; block++)
+         shown[block] = 0;
    }
 }
 
@@ -1627,9 +1646,13 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
 
             BlockInputs *block = &Blocks[DrawingFB][DrawingBlock];
             if(skip && InstantDisplayHack && AllowDrawSkip)
-               PassTouched[DrawingFB] = true, NewContents(DrawingFB), block->valid = false;
+               PassTouched[DrawingFB] = true, NewContents(DrawingFB), block->valid = false, BlockContent[DrawingFB][DrawingBlock] = 0;
             else if(PassRepeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB])
-               CopyRepeatedBlock(), block->valid = false;
+            {
+               CopyRepeatedBlock();
+               block->valid = false;
+               BlockContent[DrawingFB][DrawingBlock] = BlockContent[!DrawingFB][DrawingBlock];
+            }
             else
             {
                int lr;
@@ -1675,6 +1698,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   block->valid = true;
                   block->drawnAt = DrawSerial;
                   block->passAt = PassStartedAt;
+                  BlockContent[DrawingFB][DrawingBlock] = NewContent();
                   UsedChr = UsedRows = UnusedInputs;
                   UsedObjs = &UnusedObjs;
                   vbgo_tiletrack_block_drawn(block->chr, BlockSettled(block));

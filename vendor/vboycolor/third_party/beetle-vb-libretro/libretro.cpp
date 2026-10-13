@@ -29,6 +29,7 @@ static bool overscan;
 static struct MDFN_PixelFormat last_pixel_format;
 
 static struct MDFN_Surface surf;
+extern "C" int vbgo_vip_shown_fb(void);
 
 /* Mednafen - Multi-system Emulator
  *
@@ -2661,7 +2662,8 @@ void retro_run(void)
    height = spec.DisplayRect.h;
 
 #if defined(WANT_32BPP)
-   const uint32_t *pix = surf.pixels;
+   /* (each frame buffer's side-by-side picture is a half of the surface - see vip.c) */
+   const uint32_t *pix = surf.pixels + (vbgo_vip_shown_fb() ? 224 * FB_WIDTH : 0);
    video_cb(pix, width, height, FB_WIDTH << 2);
 #elif defined(WANT_16BPP)
    const uint16_t *pix = surf.pixels16;
