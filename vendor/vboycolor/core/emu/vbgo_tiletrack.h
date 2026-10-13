@@ -126,6 +126,9 @@ typedef struct
     * one shade as the pass started - a silhouette: games flash a hit enemy
     * by switching it to such a palette. */
    unsigned flat_obj_palettes;
+   /* Per 8-row band (28 of 64 words): the characters the drawing used there
+    * - every character a tag of the band can name (a bit each). */
+   const uint32_t *band_chr;
 } vbgo_tt_eye_view;
 
 /* World attribute fields (w = 16 halfwords of one world). */
@@ -260,6 +263,8 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
  * it): keeps that pass's tags for it as this pass's. False if they're gone
  * (the block must be drawn after all). */
 bool vbgo_tiletrack_keep_block(void);
+/* After drawing the block begun last: the characters it used (2048 bits). */
+void vbgo_tiletrack_block_drawn(const uint32_t *chr);
 bool vbgo_tiletrack_pass_reusable(unsigned src_fb);
 void vbgo_tiletrack_share_pass(unsigned fb, unsigned src_fb);
 void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no);

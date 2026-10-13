@@ -1613,6 +1613,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   block->drawnAt = DrawSerial;
                   block->passAt = PassStartedAt;
                   UsedChr = UsedRows = UnusedInputs;
+                  vbgo_tiletrack_block_drawn(block->chr);
                }
             }
 

@@ -604,41 +604,55 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             const vbgo_tt_eye_view &v = view[0];
             ResolveSlots(v.hashes);
             bool any = false;
+            uint32_t markerSlots[2048 / 32] = {};
             for (unsigned c = 0; c < 2048; ++c)
             {
                 m_slotMarkers[c] = m_slots[c].markerBits;
                 m_slotHasMarkers[c] = m_slotMarkers[c].Any();
                 any |= m_slotHasMarkers[c];
+                markerSlots[c >> 5] |= static_cast<uint32_t>(m_slotHasMarkers[c]) << (c & 31);
             }
-            for (uint32_t x = 0; any && x < VBGO_TT_WIDTH; ++x)
+            // Band by band, where the drawing used a marker's tile (a grid cell's pixels still in column order).
+            for (uint32_t band = 0; any && band < static_cast<uint32_t>(kBands); ++band)
             {
-                const uint64_t *column = v.columns[x];
-                if (!column)
-                    continue;
-                const uint8_t *r = &raw[(static_cast<size_t>(eyeOffset[0]) + x) * 4];
-                unsigned lastChr = ~0u, lastBand = ~0u; // (a cell's marker counted once per tile and band)
-                for (uint32_t y = 0; y < VBGO_TT_HEIGHT; ++y)
+                if (v.band_chr)
                 {
-                    const uint64_t t = column[y];
-                    if ((t >> 48) != v.stamp)
+                    uint32_t used = 0;
+                    for (unsigned i = 0; i < 2048 / 32; ++i)
+                        used |= v.band_chr[band * (2048 / 32) + i] & markerSlots[i];
+                    if (!used)
                         continue;
-                    const unsigned chr = VBGO_TAG_CHAR(t);
-                    const ContextGroupBits &slotBits = m_slotMarkers[chr];
-                    if (!m_slotHasMarkers[chr] || !VBGO_TAG_PIXEL(t) || (chr == lastChr && (y >> 3) == lastBand))
+                }
+                for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
+                {
+                    const uint64_t *column = v.columns[x];
+                    if (!column)
                         continue;
-                    uint32_t rawPixel;
-                    rawPixel = ReadTaggedPixel(r + static_cast<size_t>(y) * fbWidth * 4);
-                    if (!(rawPixel & 0xFFFFFFu))
-                        continue; // (a shade the game switched off)
-                    lastChr = chr, lastBand = y >> 3;
-                    const bool sprite = VBGO_TAG_IS_OBJ(t) != 0;
-                    const ContextGroupBits bits = slotBits & (sprite ? ~m_layerBound : m_layerBound);
-                    if (!bits.Any())
-                        continue;
-                    const unsigned cell = (y >> 3) * kGridW + (x >> 3);
-                    markers[cell] |= bits;
-                    if (!sprite && markerLayers)
-                        markerLayers[cell] = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
+                    const uint8_t *r = &raw[(static_cast<size_t>(eyeOffset[0]) + x) * 4];
+                    unsigned lastChr = ~0u, lastBand = ~0u; // (a cell's marker counted once per tile and band)
+                    for (uint32_t y = band * 8; y < band * 8 + 8; ++y)
+                    {
+                        const uint64_t t = column[y];
+                        if ((t >> 48) != v.stamp)
+                            continue;
+                        const unsigned chr = VBGO_TAG_CHAR(t);
+                        const ContextGroupBits &slotBits = m_slotMarkers[chr];
+                        if (!m_slotHasMarkers[chr] || !VBGO_TAG_PIXEL(t) || (chr == lastChr && (y >> 3) == lastBand))
+                            continue;
+                        uint32_t rawPixel;
+                        rawPixel = ReadTaggedPixel(r + static_cast<size_t>(y) * fbWidth * 4);
+                        if (!(rawPixel & 0xFFFFFFu))
+                            continue; // (a shade the game switched off)
+                        lastChr = chr, lastBand = y >> 3;
+                        const bool sprite = VBGO_TAG_IS_OBJ(t) != 0;
+                        const ContextGroupBits bits = slotBits & (sprite ? ~m_layerBound : m_layerBound);
+                        if (!bits.Any())
+                            continue;
+                        const unsigned cell = (y >> 3) * kGridW + (x >> 3);
+                        markers[cell] |= bits;
+                        if (!sprite && markerLayers)
+                            markerLayers[cell] = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
+                    }
                 }
             }
         }
