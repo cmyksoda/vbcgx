@@ -214,7 +214,7 @@ struct SEmuSettings
 	int		videoXshift;
 	int		videoYshift;
 	int		currentPalette;
-    int colorMode, stereoMode, gradient, tint;
+    int colorMode, gradient, tint;
     bool colorPacks;
 	int		hideOverscan; // 0 = off, 1 = vertical, 2 = horizontal, 3 = both
 

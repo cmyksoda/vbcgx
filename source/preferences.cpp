@@ -169,7 +169,6 @@ preparePrefsData ()
     createXMLSetting("colorPacks", "Color Packs", BtoStr(EmuSettings.colorPacks));
     createXMLSetting("tint", "tint", toStr(EmuSettings.tint));
     createXMLSetting("gradient", "gradient", toStr(EmuSettings.gradient));
-    createXMLSetting("stereoMode", "stereoMode", toStr(EmuSettings.stereoMode));
     createXMLSetting("colorMode", "colorMode", toStr(EmuSettings.colorMode));
 	createXMLSetting("videoBilinearFilter", "Bilinear Filtering", BtoStr(EmuSettings.videoBilinearFilter));
 	createXMLSetting("videoHardwareSoften", "Hardware Soften", toStr(EmuSettings.videoHardwareSoften));
@@ -352,7 +351,6 @@ decodePrefsData ()
     loadXMLSetting(&EmuSettings.colorPacks, "colorPacks");
     loadXMLSetting(&EmuSettings.tint, "tint");
     loadXMLSetting(&EmuSettings.gradient, "gradient");
-    loadXMLSetting(&EmuSettings.stereoMode, "stereoMode");
     loadXMLSetting(&EmuSettings.colorMode, "colorMode");
 	loadXMLSetting(&EmuSettings.videoBilinearFilter, "videoBilinearFilter");
 	loadXMLSetting(&EmuSettings.videoHardwareSoften, "videoHardwareSoften");
@@ -420,7 +418,6 @@ void FixInvalidSettings()
 	}
 
     if (EmuSettings.colorMode < 0 || EmuSettings.colorMode >= 5) EmuSettings.colorMode = 0;
-    if (EmuSettings.stereoMode < 0 || EmuSettings.stereoMode >= 9) EmuSettings.stereoMode = 0;
     if (EmuSettings.gradient < 0 || EmuSettings.gradient >= ColorSchemes::kGradientCount) EmuSettings.gradient = 0;
     if (EmuSettings.tint < 0 || EmuSettings.tint >= ColorSchemes::kTintCount) EmuSettings.tint = 0;
 	if(!(EmuSettings.currentPalette >= 0 && EmuSettings.currentPalette < ColorSchemes::kMulticolorCount))
@@ -533,7 +530,7 @@ void DefaultSettings()
 		EmuSettings.videoAspectRatioCorrection = VIDEO_ASPECT_RATIO_CORRECTION_NONE;
 #endif
 
-	EmuSettings.colorMode = EmuSettings.stereoMode = EmuSettings.gradient = EmuSettings.tint = 0;
+	EmuSettings.colorMode = EmuSettings.gradient = EmuSettings.tint = 0;
     EmuSettings.colorPacks = true;
     EmuSettings.timing = TIMING_AUTOMATIC;
 	EmuSettings.controller = CTRL_PAD;

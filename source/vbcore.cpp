@@ -12,8 +12,6 @@ static unsigned audioPhase;
 static bool Environment(unsigned command, void *data)
 {
     static const char *colors[] = {"game", "auto", "multicolor", "gradient", "tint"};
-    static const char *stereo[] = {"off", "side-by-side", "side-by-side-3dtv", "cross-eyed",
-        "top-bottom", "top-bottom-3dtv", "red-cyan", "green-magenta", "amber-blue"};
     switch (command) {
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
         return *(retro_pixel_format *)data == RETRO_PIXEL_FORMAT_XRGB8888;
@@ -29,7 +27,6 @@ static bool Environment(unsigned command, void *data)
         auto *var = (retro_variable *)data;
         var->value = nullptr;
         if (!strcmp(var->key, "vboycolor_colors")) var->value = colors[EmuSettings.colorMode];
-        else if (!strcmp(var->key, "vboycolor_3d")) var->value = stereo[EmuSettings.stereoMode];
         else if (!strcmp(var->key, "vboycolor_multicolor")) var->value = ColorSchemes::kMulticolorNames[EmuSettings.currentPalette];
         else if (!strcmp(var->key, "vboycolor_gradient")) var->value = ColorSchemes::kGradientNames[EmuSettings.gradient];
         else if (!strcmp(var->key, "vboycolor_tint")) var->value = ColorSchemes::kTintNames[EmuSettings.tint];

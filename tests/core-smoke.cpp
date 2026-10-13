@@ -3,8 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
-#include <string>
-static const char *layout = "off", *colors = "auto";
+static const char *colors = "auto";
 static bool changed = true;
 static unsigned width, height, nonblack, videos, audios;
 static void check(bool ok, const char *why) { if (!ok) { std::fprintf(stderr, "FAIL: %s\n", why); std::exit(1); } }
@@ -15,7 +14,6 @@ static bool environment(unsigned cmd, void *data) {
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
         auto *v = (retro_variable *)data;
         v->value = nullptr;
-        if (!std::strcmp(v->key, "vboycolor_3d")) v->value = layout;
         if (!std::strcmp(v->key, "vboycolor_colors")) v->value = colors;
         if (!std::strcmp(v->key, "vb_cpu_emulation")) v->value = "fast";
         return v->value != nullptr;
@@ -67,14 +65,11 @@ int main(int argc, char **argv) {
     ram[0] = 0;
     check(retro_unserialize(state.data(), state.size()), "unserialize");
     check(ram[0] == 0x58, "SRAM restored with state");
-    const char *layouts[] = {"off", "side-by-side", "side-by-side-3dtv", "cross-eyed", "top-bottom", "top-bottom-3dtv", "red-cyan", "green-magenta", "amber-blue"};
     const char *modes[] = {"game", "auto", "multicolor", "gradient", "tint"};
-    for (auto mode : modes) for (auto l : layouts) {
-        colors = mode; layout = l; changed = true; retro_run();
-        unsigned expectedW = (std::string(l).find("side-by-side") == 0 || !std::strcmp(l, "cross-eyed")) ? 768 : 384;
-        unsigned expectedH = std::string(l).find("top-bottom") == 0 ? 448 : 224;
-        check(width == expectedW && height == expectedH && nonblack, "all color/stereo layouts render");
+    for (auto mode : modes) {
+        colors = mode; changed = true; retro_run();
+        check(width == 384 && height == 224 && nonblack, "all color modes render");
     }
     retro_unload_game(); retro_deinit();
-    std::printf("PASS: 45 color/stereo combinations, CPU/VIP/audio callbacks, SRAM, state restore (%zu bytes)\n", state.size());
+    std::printf("PASS: 5 color modes, CPU/VIP/audio callbacks, SRAM, state restore (%zu bytes)\n", state.size());
 }

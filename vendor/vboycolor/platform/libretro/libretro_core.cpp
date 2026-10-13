@@ -3,9 +3,9 @@
 // see beetle_rename.h); this file is the core's face to the frontend: it
 // colors every frame as the app does - the game's color pack, Auto,
 // Multicolor palettes, gradients, tints (core/emu: ShadeColorizer,
-// ColorPackRenderer, TileColorPack; the schemes in ColorSchemes.h) - and lays
-// out both eyes for a normal screen: the left eye alone, side by side, top
-// and bottom, or mixed for colored 3D glasses.
+// ColorPackRenderer, TileColorPack; the schemes in ColorSchemes.h) - and shows
+// the left eye. (The Wii port has no 3D layouts; the right eye is still drawn,
+// since the left eye's automatic colors read it.)
 //
 // The color packs are built in (zipped - cmake/EmbedColorPacks.cmake); a
 // .vbcp beside the ROM, or in the frontend's system folder under vboycolor/,
@@ -112,46 +112,16 @@ namespace
         Gradient,   // the screen's brightness along a gradient
         Tint        // brightness times one color (Red: the original look)
     };
-    enum class Output
-    {
-        LeftEye,
-        SideBySide,
-        SideBySideTv, // squeezed for a 3D TV's side-by-side mode
-        CrossEyed,
-        TopBottom,
-        TopBottomTv,
-        RedCyan,
-        GreenMagenta,
-        AmberBlue
-    };
     struct Options
     {
         ColorMode colors = ColorMode::Game;
         int multicolor = 0, gradient = 0, tint = 0;
         bool packs = true;
-        Output output = Output::LeftEye;
     } g_options;
 
     const char *const kColorsKey = "vboycolor_colors", *const kMulticolorKey = "vboycolor_multicolor",
                       *const kGradientKey = "vboycolor_gradient", *const kTintKey = "vboycolor_tint",
-                      *const kPacksKey = "vboycolor_packs", *const kOutputKey = "vboycolor_3d";
-
-    struct OutputChoice
-    {
-        const char *value, *label;
-        Output output;
-    };
-    const OutputChoice kOutputs[] = {
-        {"off", "Off", Output::LeftEye},
-        {"side-by-side", "Side by side", Output::SideBySide},
-        {"side-by-side-3dtv", "Side by side, half width (3D TV)", Output::SideBySideTv},
-        {"cross-eyed", "Cross-eyed", Output::CrossEyed},
-        {"top-bottom", "Top and bottom", Output::TopBottom},
-        {"top-bottom-3dtv", "Top and bottom, half height (3D TV)", Output::TopBottomTv},
-        {"red-cyan", "Red / cyan glasses", Output::RedCyan},
-        {"green-magenta", "Green / magenta glasses", Output::GreenMagenta},
-        {"amber-blue", "Amber / blue glasses", Output::AmberBlue},
-    };
+                      *const kPacksKey = "vboycolor_packs";
 
     // The option definitions handed to the frontend: ours, then the Beetle
     // VB options that still mean something here (3D and its palette are ours).
@@ -220,19 +190,6 @@ namespace
             d.info = "The hand-painted colors of the games that have a pack (Auto and Multicolor). A .vbcp file "
                      "beside the ROM, or in the system folder under vboycolor, takes the built-in one's place.";
             d.default_value = "enabled";
-            g_definitions.push_back(d);
-        }
-        {
-            retro_core_option_definition d{};
-            size_t i = 0;
-            for (const OutputChoice &c : kOutputs)
-                d.values[i++] = {c.value, c.label};
-            d.key = kOutputKey;
-            d.desc = "3D";
-            d.info = "Both eyes' pictures on a normal screen: side by side (parallel viewing, or a 3D TV or "
-                     "monitor - half width for a TV's side-by-side mode), cross-eyed, top and bottom, or mixed "
-                     "for colored 3D glasses. Off shows the left eye.";
-            d.default_value = "off";
             g_definitions.push_back(d);
         }
         {
@@ -325,17 +282,13 @@ namespace
         o.tint = IndexOf(Variable(kTintKey), ColorSchemes::kTintNames, ColorSchemes::kTintCount);
         if (const char *v = Variable(kPacksKey))
             o.packs = std::strcmp(v, "disabled") != 0;
-        if (const char *v = Variable(kOutputKey))
-            for (const OutputChoice &c : kOutputs)
-                if (!std::strcmp(v, c.value))
-                    o.output = c.output;
         g_options = o;
     }
 
     // Beetle VB asks the frontend through this. The 3D layout and the screen
-    // color are ours to set (side by side, unseparated: both eyes' pictures;
-    // red, as the app has it); its option definitions and geometry are
-    // replaced by ours.
+    // color are ours to set (side by side, unseparated: both eyes' pictures,
+    // which the coloring reads; red, as the app has it); its option
+    // definitions and geometry are replaced by ours.
     bool BeetleEnvironment(unsigned cmd, void *data)
     {
         switch (cmd)
@@ -445,8 +398,7 @@ namespace
     const uint8_t *g_frame = nullptr;
     unsigned g_frameW = 0, g_frameH = 0;
     size_t g_framePitch = 0;
-    std::vector<uint8_t> g_raw, g_colored, g_out;
-    unsigned g_outW = 384, g_outH = 224;
+    std::vector<uint8_t> g_raw, g_colored;
 
     void OnVideo(const void *data, unsigned width, unsigned height, size_t pitch)
     {
@@ -673,101 +625,26 @@ namespace
     }
 
     // ---- Output ----
-    struct Geometry
-    {
-        unsigned w, h;
-        float aspect;
-    };
-    Geometry GeometryOf(Output output)
-    {
-        constexpr unsigned W = VBGO_TT_WIDTH, H = VBGO_TT_HEIGHT; // one eye: 384 x 224
-        switch (output)
-        {
-        case Output::SideBySide:
-        case Output::CrossEyed:
-            return {W * 2, H, 2.0f * W / H};
-        case Output::SideBySideTv:
-            return {W * 2, H, static_cast<float>(W) / H};
-        case Output::TopBottom:
-            return {W, H * 2, static_cast<float>(W) / (2.0f * H)};
-        case Output::TopBottomTv:
-            return {W, H * 2, static_cast<float>(W) / H};
-        default:
-            return {W, H, static_cast<float>(W) / H};
-        }
-    }
-
-    // Colored glasses: both eyes mixed by Dubois' least-squares matrices (in
-    // linear light), as the app's shaders/anaglyph.frag does.
-    struct Dubois
-    {
-        float left[3][3], right[3][3];
-    };
-    const Dubois kRedCyan = {{{0.4561f, 0.500484f, 0.176381f}, {-0.0400822f, -0.0378246f, -0.0157589f}, {-0.0152161f, -0.0205971f, -0.00546856f}},
-                             {{-0.0434706f, -0.0879388f, -0.00155529f}, {0.378476f, 0.73364f, -0.0184503f}, {-0.0721527f, -0.112961f, 1.2264f}}};
-    const Dubois kGreenMagenta = {{{-0.062f, -0.158f, -0.039f}, {0.284f, 0.668f, 0.143f}, {-0.015f, -0.027f, 0.021f}},
-                                  {{0.529f, 0.705f, 0.024f}, {-0.016f, -0.015f, -0.065f}, {0.009f, 0.075f, 0.937f}}};
-    const Dubois kAmberBlue = {{{1.062f, -0.205f, 0.299f}, {-0.026f, 0.908f, 0.068f}, {-0.038f, -0.173f, 0.022f}},
-                               {{-0.016f, -0.123f, -0.017f}, {0.006f, 0.062f, -0.017f}, {0.094f, 0.185f, 0.911f}}};
-
-    float g_toLinear[256];
-    uint8_t g_toSrgb[4096];
-    void BuildGammaTables()
-    {
-        for (int i = 0; i < 256; ++i)
-        {
-            const float c = i / 255.0f;
-            g_toLinear[i] = c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
-        }
-        for (int i = 0; i < 4096; ++i)
-        {
-            const float c = i / 4095.0f;
-            const float s = c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
-            g_toSrgb[i] = static_cast<uint8_t>(std::lround(std::clamp(s, 0.0f, 1.0f) * 255.0f));
-        }
-    }
-
-    void Anaglyph(const Dubois &m, const uint8_t *frame, unsigned stride, unsigned rightX, uint8_t *out)
-    {
-        for (unsigned y = 0; y < VBGO_TT_HEIGHT; ++y)
-            for (unsigned x = 0; x < VBGO_TT_WIDTH; ++x)
-            {
-                const uint8_t *l = frame + (static_cast<size_t>(y) * stride + x) * 4;
-                const uint8_t *r = frame + (static_cast<size_t>(y) * stride + rightX + x) * 4;
-                // (frames are B, G, R, X)
-                const float lc[3] = {g_toLinear[l[2]], g_toLinear[l[1]], g_toLinear[l[0]]};
-                const float rc[3] = {g_toLinear[r[2]], g_toLinear[r[1]], g_toLinear[r[0]]};
-                uint8_t *o = out + (static_cast<size_t>(y) * VBGO_TT_WIDTH + x) * 4;
-                for (int c = 0; c < 3; ++c)
-                {
-                    const float v = m.left[c][0] * lc[0] + m.left[c][1] * lc[1] + m.left[c][2] * lc[2] +
-                                    m.right[c][0] * rc[0] + m.right[c][1] * rc[1] + m.right[c][2] * rc[2];
-                    o[2 - c] = g_toSrgb[static_cast<int>(std::clamp(v, 0.0f, 1.0f) * 4095.0f + 0.5f)];
-                }
-                o[3] = 0xFF;
-            }
-    }
-
-    // Colors the frame Beetle drew and sends it to the frontend, laid out
-    // for the 3D option.
+    // Colors the frame Beetle drew and sends the frontend the left eye.
     void Present()
     {
         const unsigned w = g_frameW, h = std::min<unsigned>(g_frameH, VBGO_TT_HEIGHT);
-        const size_t pixels = static_cast<size_t>(w) * h;
+        const size_t pixels = static_cast<size_t>(w) * h, rowBytes = static_cast<size_t>(w) * 4;
         g_colored.resize(pixels * 4);
         const uint8_t *raw = g_frame;
-        if (g_framePitch != static_cast<size_t>(w) * 4) {
+        if (g_framePitch != rowBytes) {
             g_raw.resize(pixels * 4);
             for (unsigned y = 0; y < h; ++y)
-                std::memcpy(&g_raw[static_cast<size_t>(y) * w * 4], g_frame + y * g_framePitch, static_cast<size_t>(w) * 4);
+                std::memcpy(&g_raw[y * rowBytes], g_frame + y * g_framePitch, rowBytes);
             raw = g_raw.data();
         }
 
         if (g_shadeColors)
         {
             if (g_colorizer.IsGradient())
-                g_colorizer.Observe(raw, w, h, static_cast<size_t>(w) * 4);
-            g_colorizer.Colorize(raw, g_colored.data(), pixels);
+                g_colorizer.Observe(raw, w, h, rowBytes);
+            for (unsigned y = 0; y < h; ++y)
+                g_colorizer.Colorize(raw + y * rowBytes, &g_colored[y * rowBytes], VBGO_TT_WIDTH);
             if (g_renderer.Active() && vbgo_tiletrack_is_enabled())
             {
                 const uint32_t eyeOffset[2] = {0, w - VBGO_TT_WIDTH};
@@ -778,58 +655,15 @@ namespace
         else
         {
             // By brightness (the core draws red: its red is the brightness).
-            uint32_t *out = reinterpret_cast<uint32_t *>(g_colored.data());
-            for (size_t i = 0; i < pixels; ++i)
-                out[i] = g_brightness[raw[i * 4 + 2]];
-        }
-
-        // Lay the eyes out.
-        const Geometry g = GeometryOf(g_options.output);
-        if (g.w != g_outW || g.h != g_outH)
-        {
-            retro_game_geometry geometry{g.w, g.h, 384 * 2, 224 * 2, g.aspect};
-            g_env(RETRO_ENVIRONMENT_SET_GEOMETRY, &geometry);
-            g_outW = g.w;
-            g_outH = g.h;
-        }
-        g_out.resize(static_cast<size_t>(g.w) * g.h * 4);
-        const unsigned rightX = w >= 2 * VBGO_TT_WIDTH ? w - VBGO_TT_WIDTH : 0;
-        auto copyEye = [&](unsigned fromX, unsigned toX, unsigned toY)
-        {
             for (unsigned y = 0; y < h; ++y)
-                std::memcpy(&g_out[(static_cast<size_t>(toY + y) * g.w + toX) * 4],
-                            &g_colored[(static_cast<size_t>(y) * w + fromX) * 4], VBGO_TT_WIDTH * 4);
-        };
-        switch (g_options.output)
-        {
-        case Output::SideBySide:
-        case Output::SideBySideTv:
-            copyEye(0, 0, 0);
-            copyEye(rightX, VBGO_TT_WIDTH, 0);
-            break;
-        case Output::CrossEyed:
-            copyEye(rightX, 0, 0);
-            copyEye(0, VBGO_TT_WIDTH, 0);
-            break;
-        case Output::TopBottom:
-        case Output::TopBottomTv:
-            copyEye(0, 0, 0);
-            copyEye(rightX, 0, VBGO_TT_HEIGHT);
-            break;
-        case Output::RedCyan:
-            Anaglyph(kRedCyan, g_colored.data(), w, rightX, g_out.data());
-            break;
-        case Output::GreenMagenta:
-            Anaglyph(kGreenMagenta, g_colored.data(), w, rightX, g_out.data());
-            break;
-        case Output::AmberBlue:
-            Anaglyph(kAmberBlue, g_colored.data(), w, rightX, g_out.data());
-            break;
-        default:
-            copyEye(0, 0, 0);
-            break;
+            {
+                const uint8_t *in = raw + y * rowBytes;
+                uint32_t *out = reinterpret_cast<uint32_t *>(&g_colored[y * rowBytes]);
+                for (unsigned x = 0; x < VBGO_TT_WIDTH; ++x)
+                    out[x] = g_brightness[in[x * 4 + 2]];
+            }
         }
-        g_video(g_out.data(), g.w, g.h, static_cast<size_t>(g.w) * 4);
+        g_video(g_colored.data(), VBGO_TT_WIDTH, h, rowBytes);
     }
 } // namespace
 
@@ -860,11 +694,7 @@ extern "C"
     RETRO_API void retro_set_input_poll(retro_input_poll_t cb) { beetle_retro_set_input_poll(cb); }
     RETRO_API void retro_set_input_state(retro_input_state_t cb) { beetle_retro_set_input_state(cb); }
 
-    RETRO_API void retro_init(void)
-    {
-        BuildGammaTables();
-        beetle_retro_init();
-    }
+    RETRO_API void retro_init(void) { beetle_retro_init(); }
 
     RETRO_API void retro_deinit(void)
     {
@@ -886,14 +716,9 @@ extern "C"
     RETRO_API void retro_get_system_av_info(struct retro_system_av_info *info)
     {
         beetle_retro_get_system_av_info(info); // (its timing: 50.27 fps, 44.1 kHz)
-        const Geometry g = GeometryOf(g_options.output);
-        info->geometry.base_width = g.w;
-        info->geometry.base_height = g.h;
-        info->geometry.max_width = VBGO_TT_WIDTH * 2;
-        info->geometry.max_height = VBGO_TT_HEIGHT * 2;
-        info->geometry.aspect_ratio = g.aspect;
-        g_outW = g.w;
-        g_outH = g.h;
+        info->geometry.base_width = info->geometry.max_width = VBGO_TT_WIDTH;
+        info->geometry.base_height = info->geometry.max_height = VBGO_TT_HEIGHT;
+        info->geometry.aspect_ratio = static_cast<float>(VBGO_TT_WIDTH) / VBGO_TT_HEIGHT;
     }
 
     RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device)
@@ -924,7 +749,7 @@ extern "C"
         if (shown && g_frame && g_frameW >= VBGO_TT_WIDTH && g_frameH >= VBGO_TT_HEIGHT)
             Present();
         else
-            g_video(nullptr, g_outW, g_outH, 0); // (nothing new drawn)
+            g_video(nullptr, VBGO_TT_WIDTH, VBGO_TT_HEIGHT, 0); // (nothing new drawn)
     }
 
     RETRO_API size_t retro_serialize_size(void) { return beetle_retro_serialize_size(); }
@@ -1006,7 +831,6 @@ extern "C"
         new (&g_pack) TileColorPack();
         std::vector<uint8_t>().swap(g_raw);
         std::vector<uint8_t>().swap(g_colored);
-        std::vector<uint8_t>().swap(g_out);
         g_loaded = false;
     }
 

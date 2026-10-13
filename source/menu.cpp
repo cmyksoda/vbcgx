@@ -2420,7 +2420,7 @@ static int MenuGameSettings()
 	mappingBtn.setTrigger(trigA);
 	mappingBtn.setEffectGrow();
 
-	GuiText emulationBtnTxt("Colors & 3D", 22, MenuPaletteCurrent().text);
+	GuiText emulationBtnTxt("Colors", 22, MenuPaletteCurrent().text);
 	emulationBtnTxt.setWrap(true, MENU_BTN_LARGE_W-20);
 	MenuButtonShape emulationBtnImg(MenuButtonShape::LARGE);
 	GuiImage emulationBtnIcon(&iconEmulation);
@@ -3436,13 +3436,13 @@ static int MenuVBOptions(bool colors)
     OptionList options;
     bool firstRun = true;
     const char *videoNames[] = {"Output Mode", "Aspect Correction", "Bilinear Filtering", "Screen Zoom", "Screen Position"};
-    const char *colorNames[] = {"Colors", "3D Layout", "Color Packs", "Multicolor Palette", "Gradient", "Tint"};
-    options.length = colors ? 6 : 5;
+    const char *colorNames[] = {"Colors", "Color Packs", "Multicolor Palette", "Gradient", "Tint"};
+    options.length = 5;
     for (int i = 0; i < options.length; ++i) {
         snprintf(options.name[i], 100, "%s", colors ? colorNames[i] : videoNames[i]);
         options.value[i][0] = 0;
     }
-	GuiText titleTxt(colors ? "Game Settings - Colors & 3D" : "Game Settings - Video", 26, MenuPaletteCurrent().text);
+	GuiText titleTxt(colors ? "Game Settings - Colors" : "Game Settings - Video", 26, MenuPaletteCurrent().text);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,50);
 
@@ -3484,11 +3484,10 @@ static int MenuVBOptions(bool colors)
             if (colors) {
                 switch (ret) {
                 case 0: EmuSettings.colorMode = (EmuSettings.colorMode + 1) % 5; break;
-                case 1: EmuSettings.stereoMode = (EmuSettings.stereoMode + 1) % 9; break;
-                case 2: EmuSettings.colorPacks = !EmuSettings.colorPacks; break;
-                case 3: EmuSettings.currentPalette = (EmuSettings.currentPalette + 1) % ColorSchemes::kMulticolorCount; break;
-                case 4: EmuSettings.gradient = (EmuSettings.gradient + 1) % ColorSchemes::kGradientCount; break;
-                case 5: EmuSettings.tint = (EmuSettings.tint + 1) % ColorSchemes::kTintCount; break;
+                case 1: EmuSettings.colorPacks = !EmuSettings.colorPacks; break;
+                case 2: EmuSettings.currentPalette = (EmuSettings.currentPalette + 1) % ColorSchemes::kMulticolorCount; break;
+                case 3: EmuSettings.gradient = (EmuSettings.gradient + 1) % ColorSchemes::kGradientCount; break;
+                case 4: EmuSettings.tint = (EmuSettings.tint + 1) % ColorSchemes::kTintCount; break;
                 }
                 SetPalette();
             } else {
@@ -3508,14 +3507,11 @@ static int MenuVBOptions(bool colors)
             firstRun = false;
             if (colors) {
                 const char *modes[] = {"Game's Own", "Auto", "Multicolor", "Gradient", "Tint"};
-                const char *stereo[] = {"Mono", "Side by Side", "Side by Side (TV)", "Cross Eyed",
-                    "Top and Bottom", "Top and Bottom (TV)", "Red / Cyan", "Green / Magenta", "Amber / Blue"};
                 snprintf(options.value[0], 100, "%s", modes[EmuSettings.colorMode]);
-                snprintf(options.value[1], 100, "%s", stereo[EmuSettings.stereoMode]);
-                snprintf(options.value[2], 100, "%s", EmuSettings.colorPacks ? "On" : "Off");
-                snprintf(options.value[3], 100, "%s", ColorSchemes::kMulticolorNames[EmuSettings.currentPalette]);
-                snprintf(options.value[4], 100, "%s", ColorSchemes::kGradientNames[EmuSettings.gradient]);
-                snprintf(options.value[5], 100, "%s", ColorSchemes::kTintNames[EmuSettings.tint]);
+                snprintf(options.value[1], 100, "%s", EmuSettings.colorPacks ? "On" : "Off");
+                snprintf(options.value[2], 100, "%s", ColorSchemes::kMulticolorNames[EmuSettings.currentPalette]);
+                snprintf(options.value[3], 100, "%s", ColorSchemes::kGradientNames[EmuSettings.gradient]);
+                snprintf(options.value[4], 100, "%s", ColorSchemes::kTintNames[EmuSettings.tint]);
             } else {
                 const char *modes[] = {"Automatic", "NTSC (480i)", "Progressive (480p)", "PAL (576i)", "PAL60 (480i)", "240p (60Hz)", "240p (50Hz)"};
                 snprintf(options.value[0], 100, "%s", modes[EmuSettings.videoMode]);
