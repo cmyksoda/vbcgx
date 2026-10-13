@@ -101,29 +101,38 @@ struct MenuPalette {
 	PixelColor glow;			// halo around a focused button; must read on the chrome
 	// the gray secondary: cards, outlines, resting controls
 	PixelColor surface, surfaceRaised, outline, outlineStrong;
-	PixelColor text, textMuted, textOnAccent;
+	// text: lists and options, labels of buttons and dialogs, quiet text, and text on the
+	// chrome or the accent (titles)
+	PixelColor text, label, textMuted, textOnAccent;
+	// washes: over the page while a dialog is open, over the paused game behind the menu
+	PixelColor dim, screenDim;
 };
 
-//!VBoy Color GX: red highlights over black surfaces
+//!VBoy Color GX: red highlights over black surfaces. Each of FCE Ultra GX's colors (in the
+//!comments) has one counterpart here: light surfaces turn dark and dark text turns red. Its
+//!white is both a surface and a text color, which a dark theme has to split.
 static inline MenuPalette MenuPaletteDefault()
 {
 	MenuPalette p;
-	p.chromeLight    = MenuRGBA(56, 6, 12);
-	p.chromeDark     = MenuRGBA(7, 0, 2);
-	p.chromeEdge     = MenuRGBA(164, 20, 34);
-	p.backgroundTop    = MenuRGBA(11, 3, 6);
-	p.backgroundBottom = MenuRGBA(2, 0, 1);
-	p.accent         = MenuRGBA(255, 54, 70);
-	p.accentDark     = MenuRGBA(177, 17, 37);
-	p.accentTint     = MenuRGBA(30, 4, 10);
-	p.glow           = MenuRGBA(255, 54, 70, 100);
-	p.surface        = MenuRGBA(8, 2, 4);
-	p.surfaceRaised  = MenuRGBA(17, 4, 8);
-	p.outline        = MenuRGBA(42, 9, 16);
-	p.outlineStrong  = MenuRGBA(161, 37, 55);
-	p.text           = MenuRGBA(255, 77, 88);
-	p.textMuted      = MenuRGBA(198, 95, 110);
-	p.textOnAccent   = MenuRGBA(13, 4, 8);
+	p.chromeLight      = MenuRGBA(56, 6, 12);       // 152, 30, 30
+	p.chromeDark       = MenuRGBA(7, 0, 2);         // 94, 2, 2
+	p.chromeEdge       = MenuRGBA(164, 20, 34);     // 184, 56, 56
+	p.backgroundTop    = MenuRGBA(11, 3, 6);        // 241, 241, 244
+	p.backgroundBottom = MenuRGBA(2, 0, 1);         // 213, 213, 220
+	p.accent           = MenuRGBA(255, 54, 70);     // 200, 32, 32
+	p.accentDark       = MenuRGBA(177, 17, 37);     // 146, 14, 14
+	p.accentTint       = MenuRGBA(30, 4, 10);       // 252, 232, 232
+	p.glow             = MenuRGBA(255, 104, 116, 100); // 255, 214, 200, 170
+	p.surface          = MenuRGBA(8, 2, 4);         // 246, 246, 249
+	p.surfaceRaised    = MenuRGBA(17, 4, 8);        // 255, 255, 255 as a surface
+	p.outline          = MenuRGBA(42, 9, 16);       // 208, 208, 215
+	p.outlineStrong    = MenuRGBA(161, 37, 55);     // 166, 166, 175
+	p.text             = MenuRGBA(236, 68, 80);     // 30, 30, 34
+	p.label            = MenuRGBA(255, 77, 88);     // 0, 0, 0
+	p.textMuted        = MenuRGBA(198, 95, 110);    // 118, 118, 127
+	p.textOnAccent     = MenuRGBA(255, 138, 146);   // 255, 255, 255 as text
+	p.dim              = MenuRGBA(20, 4, 9, 150);   // 190, 202, 213, 112
+	p.screenDim        = MenuRGBA(6, 1, 3, 232);    // 50, 50, 50, 160
 	return p;
 }
 
@@ -151,6 +160,8 @@ static inline void MenuApplyTheme()
 	t.text = p.text;
 	t.textMuted = p.textMuted;
 	t.textOnAccent = p.textOnAccent;
+	t.label = p.label;
+	t.dim = p.dim;
 	t.highlight = p.accentTint;
 	t.shadow = MenuRGBA(0, 0, 0, 64);
 	t.radius = 14.0f;
@@ -243,7 +254,7 @@ static inline GuiPaint MenuProgressTrackPaint()
 static inline GuiPaint MenuProgressFillPaint()
 {
 	const MenuPalette& p = MenuPaletteCurrent();
-	return GuiPaint().gradient(MenuMix(p.accent, MenuRGBA(255, 255, 255), 0.3f), p.accent);
+	return GuiPaint().gradient(MenuMix(p.accent, p.textOnAccent, 0.3f), p.accent);
 }
 
 //!One dot of the busy spinner. level 0 is the head (bold, accent colored); higher

@@ -79,14 +79,14 @@ GuiSaveBrowser::GuiSaveBrowser(int w, int h, SaveList * s, int a)
 
 	for(int i=0; i<SAVELISTSIZE; i++)
 	{
-		saveDate[i] = new GuiText(nullptr, 18, GuiTheme::current().text);
+		saveDate[i] = new GuiText(nullptr, 18, GuiTheme::current().label);
 		saveDate[i]->setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 		saveDate[i]->setPosition(80,5);
-		saveTime[i] = new GuiText(nullptr, 18, GuiTheme::current().text);
+		saveTime[i] = new GuiText(nullptr, 18, GuiTheme::current().label);
 		saveTime[i]->setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 		saveTime[i]->setPosition(80,27);
 
-		saveType[i] = new GuiText(nullptr, 18, GuiTheme::current().text);
+		saveType[i] = new GuiText(nullptr, 18, GuiTheme::current().label);
 		saveType[i]->setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 		saveType[i]->setPosition(80,50);
 

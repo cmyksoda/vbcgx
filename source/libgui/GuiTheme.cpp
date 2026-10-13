@@ -24,6 +24,8 @@ GuiTheme::GuiTheme() :
 	text(rgb(232, 237, 244)),
 	textMuted(rgb(152, 164, 181)),
 	textOnAccent(rgb(30, 20, 5)),
+	label(rgb(232, 237, 244)),
+	dim(rgb(0, 0, 0, 150)),
 	good(rgb(63, 208, 176)),
 	highlight(rgb(62, 74, 94)),
 	shadow(rgb(0, 0, 0, 150)),

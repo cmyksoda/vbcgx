@@ -155,7 +155,7 @@ GuiOptionBrowser::GuiOptionBrowser(int w, int h, OptionList * l)
 		optionTxt[i] = new GuiText(nullptr, 20, theme.text);
 		optionTxt[i]->setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
 
-		optionVal[i] = new GuiText(nullptr, 20, theme.accent);
+		optionVal[i] = new GuiText(nullptr, 20, theme.accentDark);
 		optionVal[i]->setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
 
 		optionBg[i] = new GuiShape(rowWidth, OB_ROW_HEIGHT - 2);
