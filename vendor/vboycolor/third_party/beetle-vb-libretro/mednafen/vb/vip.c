@@ -394,7 +394,8 @@ static uint32 PassStartedAt; /* DrawSerial as the pass in progress started */
 /* A block whose inputs haven't changed since this buffer last drew it still
  * holds that drawing, so it's kept instead of drawn again. Drawing notes what
  * a block reads (vip_draw.inc); writes note when, in DrawSerial terms. */
-static uint32 GlobalChangedAt;    /* world attributes, palettes, sprite groups, background color */
+static uint32 GlobalChangedAt;    /* world attributes, palettes, background color */
+static uint32 SptChangedAt;       /* sprite groups (some games move them every frame) */
 static uint32 RowChangedAt[1024]; /* DRAM, per 64 halfwords */
 static uint32 ChrChangedAt[2048];
 static uint32 ObjChangedAt[32];   /* sprite attributes, per 8 rows the sprite was or is on */
@@ -404,10 +405,24 @@ typedef struct
    uint32 drawnAt; /* DrawSerial when drawn, or last found unchanged */
    uint32 passAt;  /* ... and as that pass started (the tile tracker's blank tiles are the pass's) */
    uint32 chr[2048 / 32], rows[1024 / 32];
+   uint64 objs;    /* its sprite lists, hashed (see ObjListsHash) */
 } BlockInputs;
 static BlockInputs Blocks[2][28];
 static uint32 UnusedInputs[2048 / 32];
 static uint32 *UsedChr = UnusedInputs, *UsedRows = UnusedInputs; /* the block being drawn's */
+static uint64 UnusedObjs, *UsedObjs = &UnusedObjs;
+#define OBJS_START 1469598103934665603ull
+
+static uint64 HashObjList(uint64 h, int world, const uint16 *list, int count)
+{
+   int i;
+   h = (h ^ (uint64)(world | count << 5)) * 1099511628211ull;
+   for(i = 0; i < count; i++)
+      h = (h ^ list[i]) * 1099511628211ull;
+   return h;
+}
+
+static uint64 ObjListsHash(uint32 block_no);
 /* What each frame shows, to tell a frame that shows the same picture as the
  * last: each buffer's contents get a fresh version when drawn or written, the
  * display's brightness and settings a serial, and a frame that changes either
@@ -479,7 +494,7 @@ static void RestartSerials(void)
    memset(RowChangedAt, 0, sizeof(RowChangedAt));
    memset(ChrChangedAt, 0, sizeof(ChrChangedAt));
    memset(ObjChangedAt, 0, sizeof(ObjChangedAt));
-   GlobalChangedAt = 0;
+   GlobalChangedAt = SptChangedAt = 0;
    DrawSerial = 0;
    ForgetPasses();
 }
@@ -511,6 +526,8 @@ static bool BlockUnchanged(const BlockInputs *block)
 {
    int i;
    if(!block->valid || GlobalChangedAt > block->drawnAt || ObjChangedAt[DrawingBlock] > block->drawnAt)
+      return false;
+   if(SptChangedAt > block->drawnAt && ObjListsHash(DrawingBlock) != block->objs)
       return false;
    for(i = 0; i < 1024 / 32; i++)
    {
@@ -859,7 +876,7 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
       case 0x4c:
       case 0x4e:
          if(SPT[(A >> 1) & 3] != (V & 0x3FF))
-            GlobalChangedAt = ++DrawSerial;
+            SptChangedAt = ++DrawSerial;
          SPT[(A >> 1) & 3] = V & 0x3FF;
          break;
 
@@ -1130,6 +1147,28 @@ void VIP_ResetTS(void)
 }
 
 #include "vip_draw.inc"
+
+/* The sprite lists VIP_DrawBlock would gather for the block now. */
+static uint64 ObjListsHash(uint32 block_no)
+{
+   uint16 list[1024];
+   uint64 h = OBJS_START;
+   int world;
+   obj_search_which = 3;
+   for(world = 31; world >= 0; world--)
+   {
+      const uint16 control = DRAM[(0x1D800 + world * 0x20) >> 1];
+      if(control & 0x40)
+         break;
+      if(((control >> 12) & 3) == BGM_OBJ)
+      {
+         h = HashObjList(h, world, list, GatherOBJ(list, block_no * 8));
+         if(obj_search_which)
+            obj_search_which--;
+      }
+   }
+   return h;
+}
 
 static INLINE void CopyFBColumnToTarget_Anaglyph_BASE(const bool DisplayActive_arg, const int lr)
 {
@@ -1609,8 +1648,10 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                {
                   memset(block->chr, 0, sizeof(block->chr));
                   memset(block->rows, 0, sizeof(block->rows));
+                  block->objs = OBJS_START;
                   UsedChr = block->chr;
                   UsedRows = block->rows;
+                  UsedObjs = &block->objs;
                   VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
 
                   for(lr = 0; lr < 2; lr++)
@@ -1635,6 +1676,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   block->drawnAt = DrawSerial;
                   block->passAt = PassStartedAt;
                   UsedChr = UsedRows = UnusedInputs;
+                  UsedObjs = &UnusedObjs;
                   vbgo_tiletrack_block_drawn(block->chr, BlockSettled(block));
                }
             }

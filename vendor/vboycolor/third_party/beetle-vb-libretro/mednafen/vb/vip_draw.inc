@@ -416,7 +416,10 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
    break;
 
   if(bgm == BGM_OBJ)
+  {
    obj_count = GatherOBJ(obj_list, block_no * 8);
+   *UsedObjs = HashObjList(*UsedObjs, world, obj_list, obj_count);
+  }
 
   for(y = 0; y < 8; y++)
   {
