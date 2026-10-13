@@ -229,7 +229,7 @@ static inline int vbgo_tt_fills_from(unsigned chr, unsigned cell)
  * pixel n in bits 2n); flipped: drawn mirrored (screen pixel k shows tile
  * pixel 7 - k). bits: vbgo_tt_call_bits() | VBGO_TT_BG_BITS(chr, 0, sy, pal,
  * 0, cell). Drawn pixels and fills as one at a time would tag them. */
-static inline void vbgo_tt_tag_row8(uint64_t *d, unsigned pixels, int flipped, uint64_t bits, unsigned chr, unsigned cell)
+static inline int vbgo_tt_tag_row8(uint64_t *d, unsigned pixels, int flipped, uint64_t bits, unsigned chr, unsigned cell)
 {
    /* (a row with every pixel drawn leaves no fills) */
    const int fills = ((pixels | (pixels >> 1)) & 0x5555) != 0x5555 && vbgo_tt_fills_from(chr, cell);
@@ -242,7 +242,7 @@ static inline void vbgo_tt_tag_row8(uint64_t *d, unsigned pixels, int flipped, u
    if ((pixels >> (2 * (n))) & 3)                                                               \
       d[(k) * VBGO_TT_COLUMN] = bits | (uint64_t)(((n) << 11) | (((pixels >> (2 * (n))) & 3) << 20));
       if (!pixels)
-         return;
+         return 0;
       if (flipped)
       {
          VBGO_TT_PUT(0, 7) VBGO_TT_PUT(1, 6) VBGO_TT_PUT(2, 5) VBGO_TT_PUT(3, 4)
@@ -254,7 +254,7 @@ static inline void vbgo_tt_tag_row8(uint64_t *d, unsigned pixels, int flipped, u
          VBGO_TT_PUT(4, 4) VBGO_TT_PUT(5, 5) VBGO_TT_PUT(6, 6) VBGO_TT_PUT(7, 7)
       }
 #undef VBGO_TT_PUT
-      return;
+      return 1;
    }
    if (flipped) /* screen order: reverse the 8 2-bit fields */
    {
@@ -270,6 +270,7 @@ static inline void vbgo_tt_tag_row8(uint64_t *d, unsigned pixels, int flipped, u
       else
          vbgo_tt_fill_at(d, t);
    }
+   return 1;
 }
 
 /* dram: the VIP's DRAM (VIP 0x20000-0x3FFFF as halfwords), for the world and
@@ -298,6 +299,13 @@ void vbgo_tiletrack_block_drawing(bool compare);
  * per cell (bit per 8 columns) whether its pixels came out as this buffer last
  * held them, and whether nothing it shows could have changed. */
 void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same_pixels, uint64_t unchanged);
+/* After drawing some cells of the block: which of them may show something new
+ * when only the changed worlds' attributes changed (a changed world shows
+ * there, as last drawn or now - elsewhere every tag comes out the same). */
+uint64_t vbgo_tiletrack_world_cells(uint32_t changed, uint64_t cells);
+/* Per cell of the block being drawn, the background worlds that tagged a pixel
+ * there (cleared before drawing: more than shows, never less). */
+extern uint32_t vbgo_tt_wcells[48];
 bool vbgo_tiletrack_pass_reusable(unsigned src_fb);
 void vbgo_tiletrack_share_pass(unsigned fb, unsigned src_fb);
 void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no);

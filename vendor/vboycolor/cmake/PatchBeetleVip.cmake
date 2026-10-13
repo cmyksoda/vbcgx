@@ -140,7 +140,8 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
         [=[ uint32 BGMap_Base = bgmap_base_raw << 12;
  unsigned vbgo_cell = 0; /* VirtualBoyGo */
  uint64_t *const vbgo_row = vbgo_tt_row(target); /* VirtualBoyGo: this row's tags (NULL = not tracking) */
- const uint64_t vbgo_bits = vbgo_tt_call_bits(); /* VirtualBoyGo */]=]
+ const uint64_t vbgo_bits = vbgo_tt_call_bits(); /* VirtualBoyGo */
+ const uint32_t vbgo_wbit = 1u << VBGO_TAG_WORLD(vbgo_bits); /* VirtualBoyGo: cells this world tags (vbgo_tt_wcells) */]=]
         "vip_draw.inc (DrawBG locals)")
     _vbgo_replace_once(DRAW
         [=[  bgsc = bgsc_overplane;
@@ -164,9 +165,9 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
     _vbgo_replace_once(DRAW
         [=[   x += 7;
    SourceX += 8;]=]
-        [=[   if(vbgo_row) /* VirtualBoyGo */
-    vbgo_tt_tag_row8(vbgo_row + x * VBGO_TT_COLUMN, pixels, bgsc & 0x2000,
-                     vbgo_bits | VBGO_TT_BG_BITS(char_no, 0, char_sub_y, palette_selector, 0, vbgo_cell), char_no, vbgo_cell);
+        [=[   if(vbgo_row && vbgo_tt_tag_row8(vbgo_row + x * VBGO_TT_COLUMN, pixels, bgsc & 0x2000,
+                     vbgo_bits | VBGO_TT_BG_BITS(char_no, 0, char_sub_y, palette_selector, 0, vbgo_cell), char_no, vbgo_cell)) /* VirtualBoyGo */
+    vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_wcells[(x + 7) >> 3] |= vbgo_wbit;
 
    x += 7;
    SourceX += 8;]=]
@@ -179,10 +180,12 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
    {
     target[x] = GPLT_Cache[palette_selector][pixel];
     if(vbgo_row) /* VirtualBoyGo */
-     vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, pixel, vbgo_cell);
+     vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, pixel, vbgo_cell),
+     vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
    }
    else if(vbgo_row && vbgo_tt_fills_from(char_no, vbgo_cell)) /* VirtualBoyGo */
-    vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, 0, vbgo_cell));
+    vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, 0, vbgo_cell)),
+    vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
    SourceX++;]=]
         "vip_draw.inc (DrawBG per-pixel store)")
     # Affine (scaled/rotated) maps - no-rotation path, where char_sub_x is a
@@ -192,7 +195,8 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
         [=[ const uint16 *param_ptr = &DRAM[(ParamBase + 8 * (RealY - DestY)) & 0xFFFF];
  unsigned vbgo_cell = 0; /* VirtualBoyGo */
  uint64_t *const vbgo_row = vbgo_tt_row(target); /* VirtualBoyGo: this row's tags (NULL = not tracking) */
- const uint64_t vbgo_bits = vbgo_tt_call_bits(); /* VirtualBoyGo */]=]
+ const uint64_t vbgo_bits = vbgo_tt_call_bits(); /* VirtualBoyGo */
+ const uint32_t vbgo_wbit = 1u << VBGO_TAG_WORLD(vbgo_bits); /* VirtualBoyGo: cells this world tags (vbgo_tt_wcells) */]=]
         "vip_draw.inc (DrawAffine locals)")
     _vbgo_replace_once(DRAW
         [=[  bgsc = bgsc_overplane;
@@ -215,10 +219,12 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
   {
    target[x] = GPLT_Cache[bgsc >> 14][pixel];
    if(vbgo_row) /* VirtualBoyGo */
-    vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, char_sub_x >> 1, char_sub_y, bgsc >> 14, pixel, vbgo_cell);
+    vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, char_sub_x >> 1, char_sub_y, bgsc >> 14, pixel, vbgo_cell),
+    vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
   }
   else if(vbgo_row && vbgo_tt_fills_from(bgsc & 0x7FF, vbgo_cell)) /* VirtualBoyGo */
-   vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, char_sub_x >> 1, char_sub_y, bgsc >> 14, 0, vbgo_cell));]=]
+   vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, char_sub_x >> 1, char_sub_y, bgsc >> 14, 0, vbgo_cell)),
+   vbgo_tt_wcells[x >> 3] |= vbgo_wbit;]=]
         "vip_draw.inc (DrawAffine no-rotation store)")
     _vbgo_replace_once(DRAW
         [=[   bgsc = BGMap[(BGMap_Base | m_index | sub_index) & 0xFFFF];
@@ -239,10 +245,12 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
   {
    target[x] = GPLT_Cache[palette_selector][pixel];
    if(vbgo_row) /* VirtualBoyGo */
-    vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, pixel, vbgo_cell);
+    vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, pixel, vbgo_cell),
+    vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
   }
   else if(vbgo_row && vbgo_tt_fills_from(char_no, vbgo_cell)) /* VirtualBoyGo */
-   vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, 0, vbgo_cell));
+   vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, 0, vbgo_cell)),
+   vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
 
   SourceX += dx;
   SourceY += dy;]=]

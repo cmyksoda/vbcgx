@@ -401,6 +401,10 @@ static uint32 ChrChangedAt[2048];
 static uint32 ObjChangedAt[32];   /* sprite attributes, per 8 rows the sprite was or is on */
 static uint32 ObjEntryChangedAt[1024];
 static uint32 WorldChangedAt[28]; /* a background world's attributes, per block its window covers (or did) */
+static uint32 WorldCellChangedAt[28][48]; /* (the same, per cell, for windows narrower than the screen) */
+static uint64 WorldDirty; /* (BlockChange: the cells only a world's change covers) */
+static uint32 WorldBlockChangedAt[32][28]; /* (per world: the blocks its change covers) */
+static uint32 ChangedWorlds; /* (BlockChange: the worlds changed there since it was drawn) */
 #define MAX_BLOCK_SPRITES 96
 typedef struct
 {
@@ -557,6 +561,8 @@ static void RestartSerials(void)
    memset(ObjChangedAt, 0, sizeof(ObjChangedAt));
    memset(ObjEntryChangedAt, 0, sizeof(ObjEntryChangedAt));
    memset(WorldChangedAt, 0, sizeof(WorldChangedAt));
+   memset(WorldCellChangedAt, 0, sizeof(WorldCellChangedAt));
+   memset(WorldBlockChangedAt, 0, sizeof(WorldBlockChangedAt));
    GlobalChangedAt = SptChangedAt = 0;
    DrawSerial = 0;
    ForgetPasses();
@@ -564,14 +570,36 @@ static void RestartSerials(void)
 
 /* The blocks a background world's window covers with these attributes: the
  * rows DrawBG and DrawAffine draw. */
-static void WorldRowsChanged(const uint16 *attr, uint32 at)
+static void WorldRowsChanged(const uint16 *attr, uint32 at, unsigned world)
 {
+   /* (DrawBG and DrawAffine draw from DestX to DestX + width: either eye, or parallax off) */
    const uint16 gy = sign_11_to_s16(attr[3]), height = attr[8] & 0x3FF;
-   int y;
+   const uint16 gx = sign_11_to_s16(attr[1]), gp = sign_9_to_s16(attr[2]), width = sign_11_to_s16(attr[7]);
+   int x0 = 384, x1 = -1, k, y;
+   for(k = 0; k < 3; k++)
+   {
+      const int32 dest = (int16)sign_10_to_s16((uint16)(gx + (k == 0 ? -gp : k == 1 ? gp : 0)));
+      const int32 start = dest < 0 ? 0 : dest, final = dest + width > 383 ? 383 : dest + width;
+      if(start <= final)
+      {
+         x0 = start < x0 ? start : x0;
+         x1 = final > x1 ? final : x1;
+      }
+   }
+   if(x0 > x1)
+      return;
    for(y = 0; y < 224; y++)
       if((uint16)(y - gy) <= height)
       {
-         WorldChangedAt[y >> 3] = at;
+         WorldBlockChangedAt[world][y >> 3] = at;
+         if(x0 == 0 && x1 == 383)
+            WorldChangedAt[y >> 3] = at;
+         else
+         {
+            int c;
+            for(c = x0 >> 3; c <= x1 >> 3; c++)
+               WorldCellChangedAt[y >> 3][c] = at;
+         }
          y |= 7;
       }
 }
@@ -603,9 +631,10 @@ static void DramChanging(uint32 a, uint16 v)
       else
       {
          const uint16 was = attr[h & 15];
-         WorldRowsChanged(attr, at);
+         const unsigned world = (h - (0x1D800 >> 1)) >> 4;
+         WorldRowsChanged(attr, at, world);
          attr[h & 15] = v;
-         WorldRowsChanged(attr, at);
+         WorldRowsChanged(attr, at, world);
          attr[h & 15] = was;
       }
    }
@@ -621,11 +650,16 @@ static void DramChanging(uint32 a, uint16 v)
 
 /* What changed since the block was drawn: 0 nothing, 1 only its sprites
  * (some moved, came or went, or show another tile), 2 more. */
+/* 0: nothing it reads changed; 1: only some cells (sprites, narrow worlds);
+ * 3: only worlds as wide as the screen (drawn again, and worked out after:
+ * see vbgo_tiletrack_world_cells); 2: anything else. */
 static int BlockChange(const BlockInputs *block)
 {
-   int i, change = 0;
-   if(!block->valid || GlobalChangedAt > block->drawnAt || WorldChangedAt[DrawingBlock] > block->drawnAt)
+   int i, change = 0, wholeWorld;
+   WorldDirty = 0;
+   if(!block->valid || GlobalChangedAt > block->drawnAt)
       return 2;
+   wholeWorld = WorldChangedAt[DrawingBlock] > block->drawnAt;
    for(i = 0; i < 1024 / 32; i++)
    {
       uint32 m;
@@ -651,7 +685,15 @@ static int BlockChange(const BlockInputs *block)
       change = 1;
    if(!change && SptChangedAt > block->drawnAt && ObjListsHash(DrawingBlock) != block->objs)
       change = 1;
-   return change;
+   for(i = 0; i < 48; i++)
+      WorldDirty |= (uint64)(WorldCellChangedAt[DrawingBlock][i] > block->drawnAt) << i;
+   ChangedWorlds = 0;
+   if(wholeWorld || WorldDirty)
+      for(i = 0; i < 32; i++)
+         ChangedWorlds |= (uint32)(WorldBlockChangedAt[i][DrawingBlock] > block->drawnAt) << i;
+   if(wholeWorld)
+      return change ? 2 : 3;
+   return change || WorldDirty ? 1 : 0;
 }
 
 static uint64 SpriteCells(const SpriteDrawn *drawn)
@@ -707,6 +749,9 @@ static bool BlockSettled(const BlockInputs *block)
    int i;
    if(GlobalChangedAt > PassStartedAt || WorldChangedAt[DrawingBlock] > PassStartedAt || ObjChangedAt[DrawingBlock] > PassStartedAt)
       return false;
+   for(i = 0; i < 48; i++)
+      if(WorldCellChangedAt[DrawingBlock][i] > PassStartedAt)
+         return false;
    for(i = 0; i < 2048 / 32; i++)
    {
       uint32 m;
@@ -1847,13 +1892,14 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   const uint64 all = (1ull << 48) - 1;
                   uint8 before[2][384 * 2];
                   const bool hadDrawing = block->valid;
-                  uint64 same = 0, unchanged = change == 0 ? all : 0, dirty = all;
+                  uint64 same = 0, unchanged = change == 0 ? all : 0, dirty = all, spriteDirty = all;
                   bool partial = false;
                   int c;
                   if(change == 1)
                   {
                      now.objs = GatherBlockSprites(DrawingBlock, &now);
-                     dirty = SpriteChangedCells(block, block->sprites, block->drawnAt, block->passAt, &now) & all;
+                     spriteDirty = SpriteChangedCells(block, block->sprites, block->drawnAt, block->passAt, &now) & all;
+                     dirty = (spriteDirty | WorldDirty) & all;
                      unchanged = ~dirty & all;
                      /* (the cells it covers drawn again, the rest kept) */
                      partial = hadDrawing && dirty != all && vbgo_tiletrack_keep_cells(unchanged);
@@ -1876,6 +1922,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      UsedChr = block->chr;
                      UsedRows = block->rows;
                      UsedBgChr = block->bgChr;
+                     memset(vbgo_tt_wcells, 0, sizeof(vbgo_tt_wcells));
                      for(c = 0; c < 48;)
                      {
                         int end = c;
@@ -1894,6 +1941,8 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      }
                      ClipX0 = 0;
                      ClipX1 = 383;
+                     /* (cells drawn again only for a world's change: as before unless that world shows there) */
+                     unchanged |= WorldDirty & ~spriteDirty & ~vbgo_tiletrack_world_cells(ChangedWorlds, dirty);
                   }
                   else
                   {
@@ -1908,8 +1957,14 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      UsedBgChr = block->bgChr;
                      UsedObjs = &block->objs;
                      Drawing = block;
+                     memset(vbgo_tt_wcells, 0, sizeof(vbgo_tt_wcells));
                      VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
                      PackBlock(DrawingBuffers, 0, 383);
+                     {
+                        const uint64 maybe = vbgo_tiletrack_world_cells(change == 3 ? ChangedWorlds : 0, all);
+                        if(change == 3)
+                           unchanged = ~maybe & all;
+                     }
                   }
                   if(partial)
                      same = ~dirty & all;

@@ -49,6 +49,8 @@ static uint16_t s_block_stamp[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 #define VBGO_TT_CELLS (VBGO_TT_WIDTH / 8)
 static uint32_t s_block_chr[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][2048 / 32];
 static uint32_t s_cell_version[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
+/* Per cell, the worlds its tags showed as last drawn (bit per world; all: unknown). */
+static uint32_t s_cell_worlds[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
 static uint32_t s_versions;
 /* The block being drawn as it was (this buffer's last pass's, if s_old_valid),
  * and what that pass's copies said about tiles and sprites, to tell which
@@ -114,6 +116,7 @@ static void NextStamp(int keep)
             memset(s_tags[k], 0, sizeof(s_tags[k]));
             memset(s_block_stamp[k], 0, sizeof(s_block_stamp[k]));
             memset(s_cell_version[k], 0, sizeof(s_cell_version[k]));
+            memset(s_cell_worlds[k], 0xFF, sizeof(s_cell_worlds[k]));
          }
       memset(s_have, 0, sizeof(s_have));
       s_next_stamp = 1;
@@ -146,6 +149,7 @@ static void Unshare(unsigned fb)
    memcpy(s_block_stamp[to], s_block_stamp[from], sizeof(s_block_stamp[to]));
    memcpy(s_block_chr[to], s_block_chr[from], sizeof(s_block_chr[to]));
    memcpy(s_cell_version[to], s_cell_version[from], sizeof(s_cell_version[to]));
+   memcpy(s_cell_worlds[to], s_cell_worlds[from], sizeof(s_cell_worlds[to]));
    CopySlotInfo(to, from);
    s_slot[fb] = to;
 }
@@ -156,6 +160,7 @@ static void ForgetBlocks(void)
    s_settings_serial++;
    memset(s_block_stamp, 0, sizeof(s_block_stamp));
    memset(s_cell_version, 0, sizeof(s_cell_version));
+   memset(s_cell_worlds, 0xFF, sizeof(s_cell_worlds));
 }
 
 /* The tiles as last hashed, with their hashes and blank flags. */
@@ -236,6 +241,7 @@ void vbgo_tiletrack_reset(void)
    memset(s_tags, 0, sizeof(s_tags));
    memset(s_block_stamp, 0, sizeof(s_block_stamp));
    memset(s_cell_version, 0, sizeof(s_cell_version));
+   memset(s_cell_worlds, 0xFF, sizeof(s_cell_worlds));
    memset(s_have, 0, sizeof(s_have));
    s_slot[0] = 0;
    s_slot[1] = 1;
@@ -251,6 +257,7 @@ void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr)
    memset(s_tags[s_slot[fb & 1]][lr & 1], 0, sizeof(s_tags[0][0]));
    memset(s_block_stamp[s_slot[fb & 1]], 0, sizeof(s_block_stamp[0]));
    memset(s_cell_version[s_slot[fb & 1]], 0, sizeof(s_cell_version[0]));
+   memset(s_cell_worlds[s_slot[fb & 1]], 0xFF, sizeof(s_cell_worlds[0]));
    s_cpu[fb & 1] = 1;
 }
 
@@ -422,6 +429,26 @@ void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same
    s_old_valid = 0;
 }
 
+uint32_t vbgo_tt_wcells[48];
+
+uint64_t vbgo_tiletrack_world_cells(uint32_t changed, uint64_t cells)
+{
+   uint64_t maybe = 0;
+   uint32_t *worlds;
+   unsigned c;
+   if (!vbgo_tt_on || s_block_slot < 0 || s_block_no >= VBGO_TT_BLOCKS)
+      return cells;
+   worlds = s_cell_worlds[s_block_slot][s_block_no];
+   for (c = 0; c < VBGO_TT_CELLS; c++)
+      if (cells >> c & 1)
+      {
+         if (!s_block_was || ((worlds[c] | vbgo_tt_wcells[c]) & changed))
+            maybe |= 1ull << c;
+         worlds[c] = vbgo_tt_wcells[c];
+      }
+   return maybe;
+}
+
 bool vbgo_tiletrack_pass_reusable(unsigned src_fb)
 {
    src_fb &= 1;
@@ -465,6 +492,7 @@ void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
       {
          memcpy(s_block_chr[to][e], s_block_chr[from][e], sizeof(s_block_chr[to][e]));
          memcpy(s_cell_version[to][e], s_cell_version[from][e], sizeof(s_cell_version[to][e]));
+         memcpy(s_cell_worlds[to][e], s_cell_worlds[from][e], sizeof(s_cell_worlds[to][e]));
       }
    }
    /* (the blocks it repeated: the other buffer's tags, as this pass's) */
@@ -512,6 +540,7 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
       {
          s_block_stamp[s_slot[fb & 1]][row / 8] = 0;
          memset(s_cell_version[s_slot[fb & 1]][row / 8], 0, sizeof(s_cell_version[0][0]));
+         memset(s_cell_worlds[s_slot[fb & 1]][row / 8], 0xFF, sizeof(s_cell_worlds[0][0]));
       }
    }
 }
