@@ -61,6 +61,10 @@ static void Video(const void *data, unsigned w, unsigned h, size_t pitch)
 {
     if (!data || w > 768 || h > 448) return;
     if (vbWidth != w || vbHeight != h) VBSetGeometry(w, h, 0);
+    if (pitch == w * 4) {
+        platform->getVideo()->getEmulatorVideo()->presentFrame((const uint8_t *)data);
+        return;
+    }
     static std::vector<uint8_t> tight;
     tight.resize(w * h * 4);
     for (unsigned y = 0; y < h; ++y)

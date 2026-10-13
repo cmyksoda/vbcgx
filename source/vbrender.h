@@ -7,12 +7,32 @@
 inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned sourceH,
     uint8_t *tiled, unsigned w, unsigned h)
 {
+    if (w == sourceW && h == sourceH) {
+        for (unsigned by = 0; by < h; by += 4) {
+            for (unsigned bx = 0; bx < w; bx += 4) {
+                uint8_t *ar = tiled;
+                uint8_t *gb = tiled + 32;
+                for (unsigned y = 0; y < 4; ++y) {
+                    const uint8_t *src = bgrx + ((by + y) * w + bx) * 4;
+                    for (unsigned x = 0; x < 4; ++x) {
+                        *ar++ = 255;
+                        *ar++ = src[2];
+                        *gb++ = src[1];
+                        *gb++ = src[0];
+                        src += 4;
+                    }
+                }
+                tiled += 64;
+            }
+        }
+        return;
+    }
     for (unsigned y = 0; y < h; ++y) {
+        const unsigned y0 = y * sourceH / h;
+        const unsigned y1 = std::max(y0 + 1, (y + 1) * sourceH / h);
         for (unsigned x = 0; x < w; ++x) {
             unsigned x0 = x * sourceW / w, x1 = (x + 1) * sourceW / w;
-            unsigned y0 = y * sourceH / h, y1 = (y + 1) * sourceH / h;
             x1 = std::max(x0 + 1, x1);
-            y1 = std::max(y0 + 1, y1);
             unsigned r = 0, g = 0, b = 0, count = 0;
             for (unsigned sy = y0; sy < y1; ++sy) {
                 for (unsigned sx = x0; sx < x1; ++sx) {
