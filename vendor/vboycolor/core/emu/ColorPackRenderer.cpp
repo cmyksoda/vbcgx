@@ -532,9 +532,13 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, int
         {
             const int only = EyeOnly(t);
             if (!eye && only == 1)
+            {
                 c.leftPairSlot[chr] |= 1u << m_spritePairOf[world];
+                run.pairSlot = chr | 1u << m_spritePairOf[world] << 11;
+            }
             else if (eye && only == 2)
             {
+                run.pairSlot = chr | static_cast<uint32_t>(m_spritePairOf[world] + 1) << 11;
                 if (!SharedWithLeftPicture(chr, slot.hash, m_spritePairOf[world]))
                 {
                     run.ownPair = m_spritePairOf[world];
@@ -547,10 +551,14 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, int
         if (c.pairs && !sprite)
         {
             if (!eye && m_pairOfLeft[world] >= 0)
+            {
                 c.leftPairSlot[chr] |= 1u << m_pairOfLeft[world];
+                run.pairSlot = chr | 1u << m_pairOfLeft[world] << 11;
+            }
             else if (eye && m_pairOfRight[world] >= 0)
             {
                 const int p = m_pairOfRight[world];
+                run.pairSlot = chr | static_cast<uint32_t>(p + 1) << 11;
                 if (!SharedWithLeftPicture(chr, slot.hash, p))
                 {
                     run.ownPair = p;
@@ -937,32 +945,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         else
             brightest = std::max(brightest, level);
     };
-    // The slots a left-eye run marks as its pair's left picture's (as SetUpRun does).
-    auto pairSlot = [&](uint64_t t) -> uint32_t {
-        const unsigned world = VBGO_TAG_WORLD(t);
-        uint32_t pairsOf = 0;
-        if (VBGO_TAG_IS_OBJ(t))
-        {
-            if (m_spritePairOf[world] >= 0 && EyeOnly(t) == 1)
-                pairsOf = 1u << m_spritePairOf[world];
-        }
-        else if (m_pairOfLeft[world] >= 0)
-            pairsOf = 1u << m_pairOfLeft[world];
-        return pairsOf ? VBGO_TAG_CHAR(t) | pairsOf << 11 : 0;
-    };
-    // ... and the pair whose right picture a right-eye run is in (SetUpRun asks for its estimate).
-    auto rightPair = [&](uint64_t t) -> uint32_t {
-        const unsigned world = VBGO_TAG_WORLD(t);
-        int p = -1;
-        if (VBGO_TAG_IS_OBJ(t))
-        {
-            if (m_spritePairOf[world] >= 0 && EyeOnly(t) == 2)
-                p = m_spritePairOf[world];
-        }
-        else
-            p = m_pairOfRight[world];
-        return p >= 0 ? VBGO_TAG_CHAR(t) | static_cast<uint32_t>(p + 1) << 11 : 0;
-    };
     // A band's kept bookkeeping into the frame's.
     auto addBand = [&](const Band &band) {
         brightest = std::max(brightest, band.brightest);
@@ -1076,11 +1058,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                     }
                     Band &band = kept ? unkept : rightBands[b];
                     bool counted = false, slowHere = false;
+                    uint32_t skipHi = 0; // (runHi once a pixel of the band is counted: until then each one is looked at)
                     for (uint32_t y = b * 8; y < b * 8 + 8; ++y)
                     {
                         const uint64_t t = column[y];
                         const uint32_t hi = static_cast<uint32_t>(t >> 32), lo = static_cast<uint32_t>(t);
-                        if (counted && hi == runHi && (lo & kRunMaskLo) == runLo && !run.slow)
+                        if (hi == skipHi && (lo & kRunMaskLo) == runLo && !run.slow)
                             continue;
                         if ((t >> 48) != stamp)
                             continue;
@@ -1102,9 +1085,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                             countRun(runKey, x, y, rawPixel >> 26, firstHere ? nullptr : &band);
                             run = setUpRun(t, runKey, x, y);
                             runSetUp = true;
-                            if (pairs && !kept)
-                                if (const uint32_t slot = rightPair(t); slot && (band.pairSlots.empty() || band.pairSlots.back() != slot))
-                                    band.pairSlots.push_back(slot);
+                            if (run.pairSlot && !kept && (band.pairSlots.empty() || band.pairSlots.back() != run.pairSlot))
+                                band.pairSlots.push_back(run.pairSlot);
                         }
                         else
                         {
@@ -1113,11 +1095,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                                 run = setUpRun(t, runKey, x, y);
                                 runSetUp = true;
                             }
-                            if (firstHere && pairs && !kept)
-                                if (const uint32_t slot = rightPair(t); slot && (band.pairSlots.empty() || band.pairSlots.back() != slot))
-                                    band.pairSlots.push_back(slot);
+                            if (firstHere && run.pairSlot && !kept && (band.pairSlots.empty() || band.pairSlots.back() != run.pairSlot))
+                                band.pairSlots.push_back(run.pairSlot);
                         }
                         slowHere |= run.slow;
+                        skipHi = runHi;
                         if (!run.slow || !pixel || static_cast<int>(y >> 3) == run.band)
                             continue;
                         run.band = static_cast<int>(y >> 3);
@@ -1235,9 +1217,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                     countRun(runKey, x, y, rawPixel >> 26, firstHere ? nullptr : &band);
                     run = setUpRun(t, runKey, x, y);
                     runSetUp = true;
-                    if (pairs && !kept)
-                        if (const uint32_t slot = pairSlot(t); slot && (band.pairSlots.empty() || band.pairSlots.back() != slot))
-                            band.pairSlots.push_back(slot);
+                    if (run.pairSlot && !kept && (band.pairSlots.empty() || band.pairSlots.back() != run.pairSlot))
+                        band.pairSlots.push_back(run.pairSlot);
                 }
                 else
                 {
@@ -1246,9 +1227,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                         run = setUpRun(t, runKey, x, y);
                         runSetUp = true;
                     }
-                    if (firstHere && pairs && !kept)
-                        if (const uint32_t slot = pairSlot(t); slot && (band.pairSlots.empty() || band.pairSlots.back() != slot))
-                            band.pairSlots.push_back(slot);
+                    if (firstHere && run.pairSlot && !kept && (band.pairSlots.empty() || band.pairSlots.back() != run.pairSlot))
+                        band.pairSlots.push_back(run.pairSlot);
                 }
                 slowHere |= run.slow;
                 if (run.plain)

@@ -255,6 +255,7 @@ private:
         bool flash = false;                            // a sprite in a palette showing all its shades alike
         bool plain = false;                            // none of the above and no map cell colors: just the tile's or automatic colors
         int band = -1;                                 // (slow: the row of grid cells its markers and tile are for)
+        uint32_t pairSlot = 0;                         // (as Band::pairSlots keeps it, 0: none)
     };
     struct CachedRun
     {
