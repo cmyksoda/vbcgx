@@ -39,14 +39,14 @@ class OgcEmulatorAudio : public EmulatorAudioDriver
 	private:
 		int mixerCollect(uint8_t* outbuffer, int len);
 
-		// Each DMA buffer holds one frame's worth of 16-bit stereo samples.
-		static constexpr int DMA_BUFFER_BYTES = 3840;
+		// Fixed DMA blocks are independent of the Virtual Boy frame cadence.
+		static constexpr int DMA_BUFFER_BYTES = 2048;
 
 		// Ring buffer of stereo samples (one u32 == one L/R sample pair).
 		static constexpr int MIX_SAMPLES = 4000;
 
-		// AUDIO_InitDMA requires 32-byte aligned lengths.
-		static constexpr int DMA_ALIGN = 32;
+		// Start with enough audio to absorb variation between rendered frames.
+		static constexpr int PREBUFFER_SAMPLES = 2048;
 
 		uint8_t soundbuffer[2][DMA_BUFFER_BYTES] __attribute__((aligned(32)));
 		uint32_t mixbuffer[MIX_SAMPLES] __attribute__((aligned(32)));

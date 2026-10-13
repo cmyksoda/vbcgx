@@ -61,6 +61,7 @@ void WiiAudioDriver::stopMenuAudio() {
 }
 
 void WiiAudioDriver::startEmulatorAudio() {
+	AUDIO_SetDSPSampleRate(AI_SAMPLERATE_48KHZ);
 	AUDIO_RegisterDMACallback(AudioSwitchBuffers);
 }
 

@@ -10,6 +10,7 @@
  ****************************************************************************/
 
 #include <gccore.h>
+#include <ogc/machine/processor.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -54,7 +55,7 @@ void OgcEmulatorAudio::init()
  * mixerCollect
  *
  * Collects sound samples from mixbuffer and puts them into outbuffer
- * Makes sure to align them to 32 bytes for AUDIO_InitDMA
+ * Pads a short block without dropping any samples from the ring
  ***************************************************************************/
 int OgcEmulatorAudio::mixerCollect(uint8_t* outbuffer, int len)
 {
@@ -87,29 +88,11 @@ int OgcEmulatorAudio::mixerCollect(uint8_t* outbuffer, int len)
 			tail -= MIX_SAMPLES;
 	}
 
-	int bytes = done << 2;
-
-	// Realign down to a 32-byte boundary for DMA, returning the truncated
-	// samples to the ring so they are played next pass.
-	int extra = (bytes & (DMA_ALIGN - 1)) >> 2;
-	if (extra)
-	{
-		tail -= extra;
-		if (tail < 0)
-			tail += MIX_SAMPLES;
-		bytes &= ~(DMA_ALIGN - 1);
-	}
-
 	mixtail = tail;
-
-	// Zero only the unfilled tail of the output buffer (underrun gap).
+	const int bytes = done * sizeof(u32);
 	if (bytes < len)
 		memset(outbuffer + bytes, 0, len - bytes);
-
-	if (!bytes)
-		return len >> 1;
-
-	return bytes;
+	return len;
 }
 
 /****************************************************************************
@@ -138,8 +121,8 @@ void OgcEmulatorAudio::switchBuffers()
  ***************************************************************************/
 void OgcEmulatorAudio::stopAudio()
 {
-	isPlaying = 0;
 	AUDIO_StopDMA();
+	isPlaying = 0;
 	AUDIO_RegisterDMACallback(NULL);
 }
 
@@ -154,34 +137,41 @@ void OgcEmulatorAudio::resetAudio()
 	memset(mixbuffer, 0, sizeof(mixbuffer));
 	mixhead = 0;
 	mixtail = 0;
+	whichab = 0;
+	isPlaying = 0;
 }
 
 /****************************************************************************
  * playSound
  *
- * Puts incoming mono samples into mixbuffer
- * Splits mono samples into two channels (stereo)
+ * Queues packed 16-bit stereo samples for the DMA callback
  ****************************************************************************/
 void OgcEmulatorAudio::playSound(const int32_t* buffer, int count)
 {
-	int head = mixhead;
+	while (count > 0 && appRequest == AppRequest::NONE) {
+		const int head = mixhead;
+		int free = mixtail - head - 1;
+		if (free < 0) free += MIX_SAMPLES;
+		if (!free) { usleep(100); continue; }
+		int batch = count < free ? count : free;
+		if (batch > MIX_SAMPLES - head) batch = MIX_SAMPLES - head;
+		memcpy(mixbuffer + head, buffer, batch * sizeof(u32));
+		int next = head + batch;
+		if (next == MIX_SAMPLES) next = 0;
 
-	for (int i = 0; i < count; i++) {
-		// Duplicate the 16-bit mono sample into both stereo channels.
-        int next = head + 1;
-        if (next == MIX_SAMPLES) next = 0;
-        while (next == mixtail && appRequest == AppRequest::NONE) usleep(100);
-        if (appRequest != AppRequest::NONE) break;
-        mixbuffer[head] = (uint32_t)buffer[i];
-        head = next;
-        mixhead = head;
-	}
-
-	mixhead = head;
-
-	// Restart Sound Processing if stopped
-	if (isPlaying == 0) {
-		AUDIO_StartDMA();
+		// Publish only complete samples, then prime DMA before starting it.
+		u32 level;
+		_CPU_ISR_Disable(level);
+		mixhead = next;
+		int queued = mixhead - mixtail;
+		if (queued < 0) queued += MIX_SAMPLES;
+		if (!isPlaying && queued >= PREBUFFER_SAMPLES && appRequest == AppRequest::NONE) {
+			switchBuffers();
+			AUDIO_StartDMA();
+		}
+		_CPU_ISR_Restore(level);
+		buffer += batch;
+		count -= batch;
 	}
 }
 

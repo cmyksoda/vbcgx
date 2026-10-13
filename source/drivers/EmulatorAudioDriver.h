@@ -21,7 +21,7 @@ class EmulatorAudioDriver
 		//! Halts hardware playback so it cleanly restarts the next time samples arrive
 		virtual void stopAudio() = 0;
 
-		//! Accepts mono 16-bit samples from the emulator core and queues them for playback
+		//! Queues packed 16-bit stereo samples (left in the upper half, right in the lower half)
 		virtual void playSound(const int32_t* buffer, int samples) = 0;
 
 		virtual void updateSampleRate(int rate) = 0;
