@@ -129,10 +129,10 @@ private:
         uint32_t worlds = 0; // (as worldsDrawn, with these extents)
         unsigned brightest = 0;
         std::array<int16_t, 32> left{}, right{}, top{}, bottom{};
-        std::vector<uint32_t> pairSlots; // chr | pairs << 11
+        std::vector<uint32_t> pairSlots; // left eye: chr | pairs << 11; right eye: chr | (pair + 1) << 11
     };
-    std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2> m_bands;
-    std::array<std::vector<BandColumn>, 2> m_bandColumns;
+    std::array<std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2>, 2> m_bands; // [eye][buffer]
+    std::array<std::array<std::vector<BandColumn>, 2>, 2> m_bandColumns;
     // What painting a band depends on beyond its drawing (bumps m_paintState when it changes).
     struct PaintState
     {
@@ -142,7 +142,7 @@ private:
         unsigned fadeReference = 0, flat = 0;
         int bg[3] = {};
         std::array<uint8_t, 32 * 4> worlds{};
-        std::array<int8_t, 32> pairOfLeft{}, spritePairOf{};
+        std::array<int8_t, 32> pairOfLeft{}, pairOfRight{}, spritePairOf{};
         bool operator==(const PaintState &o) const;
     };
     PaintState m_paintStateWas;
