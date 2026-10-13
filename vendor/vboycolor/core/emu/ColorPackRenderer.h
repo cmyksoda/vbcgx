@@ -94,11 +94,6 @@ public:
     // The same for one 8x8 block of the right picture (sprite pairs: pass
     // the sprite world with sprites = true).
     int PairBlockDisparity(unsigned rightWorld, unsigned bx, unsigned by, bool sprites = false) const;
-    // The last frame's right eye (384x224): 1 where a right picture showed a
-    // tile of its own - colored from the left picture, what a right-eye
-    // capture lets the painter paint (see TileColorPack::
-    // AppendSidecarRightPicture). Empty if the frame had no pairs.
-    const std::vector<uint8_t> &RightPictureOwn() const { return m_rightOwn; }
 
 private:
     uint8_t m_fadeLut[64][3][256];
@@ -224,7 +219,6 @@ private:
     // (bits 0-4), the shade (bits 5-6) - 0 elsewhere (and in a guard band
     // all round, see the .cpp).
     std::vector<uint8_t> m_leftPicture;
-    std::vector<uint8_t> m_rightOwn; // see RightPictureOwn
     int EyeOnly(uint64_t tag) const; // a sprite only the left (1) or right (2) eye shows, else 0
     bool InPicture(const Pair &pair, uint64_t tag, unsigned eye) const;
     // A pair's right picture, a tile of its own: its color from the left picture (see the .cpp).
@@ -306,6 +300,7 @@ private:
     };
     std::array<std::vector<NearCell>, 32> m_nearCache; // (Near's, per layer and grid cell)
     std::vector<ContextGroupBits> m_nearSprites;  // per grid cell: sprites' groups with a marker within reach (this frame and the last two)
+    std::array<ContextGroupBits, kGridW * kGridH> m_gridRows, m_gridCloseRows, m_gridHere; // (Paint's scratch for those)
     std::vector<ContextGroupBits> m_closeSprites; // (the same, within one cell)
 
     // Auto mode, what no tile drew (the game's CPU wrote it into the frame
