@@ -1646,35 +1646,48 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8
     const size_t eyeRows = static_cast<size_t>(VBGO_TT_HEIGHT) * 3 * kGuardedRow;
     m_estimateBits.assign(static_cast<size_t>(count) * 2 * eyeRows, 0);
     uint64_t *bits = m_estimateBits.data();
+    typedef uint32_t __attribute__((__may_alias__)) BitHalf; // (one pixel's bit is in one half of its word)
     for (unsigned eye = 0; eye < 2; ++eye)
+    {
+        // A tag's slot by its sprite, pixel and world bits (19-26): -1 none,
+        // bit 6 set for a sprite pair's (which counts eye-only sprites).
+        int8_t slotOf[256];
+        for (unsigned i = 0; i < 256; ++i)
+        {
+            const unsigned world = i >> 3;
+            slotOf[i] = !(i >> 1 & 3) ? -1
+                        : !(i & 1)    ? layerSlot[eye][world]
+                        : spriteSlot[world] >= 0 ? static_cast<int8_t>(spriteSlot[world] | 0x40)
+                                                 : -1;
+        }
+        const uint64_t stamp = view[eye].stamp;
         for (int x = 0; x < VBGO_TT_WIDTH; ++x)
         {
             const uint64_t *column = view[eye].columns[x];
             if (!column)
                 continue;
             const uint8_t *shades = &raw[(static_cast<size_t>(eyeOffset[eye]) + x) * 4 + 3];
-            for (int y = 0; y < VBGO_TT_HEIGHT; ++y)
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+            const unsigned half = x & 32 ? 0 : 1;
+#else
+            const unsigned half = x & 32 ? 1 : 0;
+#endif
+            BitHalf *at = reinterpret_cast<BitHalf *>(bits + static_cast<size_t>(eye) * eyeRows + 1 + (x >> 6)) + half;
+            const uint32_t bit = 1u << (x & 31);
+            for (int y = 0; y < VBGO_TT_HEIGHT; ++y, at += 2 * 3 * kGuardedRow)
             {
                 const uint64_t t = column[y];
-                if ((t >> 48) != view[eye].stamp || !VBGO_TAG_PIXEL(t))
+                if ((t >> 48) != stamp)
                     continue;
-                int k;
-                if (VBGO_TAG_IS_OBJ(t))
-                {
-                    k = spriteSlot[VBGO_TAG_WORLD(t)];
-                    if (k >= 0 && EyeOnly(t) != (eye ? 2 : 1))
-                        continue;
-                }
-                else
-                    k = layerSlot[eye][VBGO_TAG_WORLD(t)];
-                if (k < 0)
+                int k = slotOf[static_cast<uint32_t>(t) >> 19 & 0xFF];
+                if (k < 0 || (k & 0x40 && EyeOnly(t) != (eye ? 2 : 1)))
                     continue;
                 const unsigned shade = shades[static_cast<size_t>(y) * fbWidth * 4] & 3;
                 if (shade)
-                    bits[(static_cast<size_t>(k) * 2 + eye) * eyeRows + (static_cast<size_t>(y) * 3 + shade - 1) * kGuardedRow + 1 +
-                         (x >> 6)] |= 1ull << (x & 63);
+                    at[2 * ((k & 0x3F) * 2 * eyeRows + (shade - 1) * kGuardedRow)] |= bit;
             }
         }
+    }
     for (int k = 0; k < count; ++k)
         EstimatePair(m_pairs[todo[k]], &bits[static_cast<size_t>(k) * 2 * eyeRows], &bits[(static_cast<size_t>(k) * 2 + 1) * eyeRows],
                      local[k]);
