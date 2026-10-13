@@ -1856,13 +1856,15 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      /* (the cells it covers drawn again, the rest kept) */
                      partial = hadDrawing && dirty != all && vbgo_tiletrack_keep_cells(unchanged);
                   }
+                  /* (a partial drawing changes only its cells' pixels) */
                   if(hadDrawing)
                      for(lr = 0; lr < 2; lr++)
                      {
                         int x;
                         const uint8 *from = FB[DrawingFB][lr] + DrawingBlock * 2;
                         for(x = 0; x < 384; x++)
-                           before[lr][x * 2] = from[64 * x], before[lr][x * 2 + 1] = from[64 * x + 1];
+                           if(!partial || (dirty >> (x >> 3) & 1))
+                              before[lr][x * 2] = from[64 * x], before[lr][x * 2 + 1] = from[64 * x + 1];
                      }
                   if(partial)
                   {
@@ -1907,10 +1909,14 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
                      PackBlock(DrawingBuffers, 0, 383);
                   }
+                  if(partial)
+                     same = ~dirty & all;
                   if(hadDrawing)
                      for(c = 0; c < 48; c++)
                      {
                         int x, differs = 0;
+                        if(partial && !(dirty >> c & 1))
+                           continue;
                         for(lr = 0; lr < 2 && !differs; lr++)
                         {
                            const uint8 *to = FB[DrawingFB][lr] + DrawingBlock * 2;
