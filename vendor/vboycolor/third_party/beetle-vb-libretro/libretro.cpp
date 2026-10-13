@@ -205,6 +205,7 @@ uint8 MDFN_FASTCALL MemRead8(v810_timestamp_t &timestamp, uint32 A)
       case 0:
          return VIP_Read8(timestamp, A);
       case 2:
+         vb_idle_unsteady = 1;
          return HWCTRL_Read(timestamp, A);
       case 1:
       case 3:
@@ -231,6 +232,7 @@ uint16 MDFN_FASTCALL MemRead16(v810_timestamp_t &timestamp, uint32 A)
       case 0:
          return VIP_Read16(timestamp, A);
       case 2:
+         vb_idle_unsteady = 1;
          return HWCTRL_Read(timestamp, A);
       case 1:
       case 3:

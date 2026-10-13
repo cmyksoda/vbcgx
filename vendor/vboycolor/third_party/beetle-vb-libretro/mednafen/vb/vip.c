@@ -491,6 +491,8 @@ static uint32 ShownKey[2];       /* FBVersion of the buffer shown and DisplaySer
 static uint32 FramePicture, LastFramePicture;
 
 uint32 vbgo_vip_last_frame_picture(void) { return LastFramePicture; }
+/* Until when VIP register reads can't change but at an event (XPSTTS's SBOUT bit times out on its own). */
+int32 vbgo_vip_steady_until(int32 timestamp) { return timestamp < SBOUT_InactiveTime ? SBOUT_InactiveTime : 0x7FFFFFFF; }
 
 static void NewContents(int fb)
 {

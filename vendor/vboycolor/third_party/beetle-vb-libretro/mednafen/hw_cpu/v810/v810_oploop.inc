@@ -440,6 +440,13 @@
 		  BRANCH_ALIGN_CHECK(PC);		\
 		 }					\
 		 RB_ADDBT(old_PC, RB_GETPC(), 0);			\
+		 if(!RB_AccurateMode && arg1 >= 0x1C0) /* back 64 bytes at most */	\
+		 {					\
+		  if(IdleQuiet)				\
+		   IdleQuiet--;				\
+		  else					\
+		   timestamp = IdleLoop(timestamp, PC_ptr);	\
+		 }					\
 		}					\
 		else					\
 		{					\

@@ -150,6 +150,9 @@ typedef enum
  */
 
 
+/* Set by reads of memory that changes between events (timer, controller) - see V810::IdleLoop. */
+extern uint32 vb_idle_unsteady;
+
 class V810
 {
  public:
@@ -226,6 +229,12 @@ class V810
 
  uint32 IPendingCache;
  void RecalcIPendingCache(void);
+
+ /* Busy-wait loops fast-forwarded to the next event (see IdleLoop). */
+ uint32 IdleQuiet = 0, IdleHead = ~0u;
+ v810_timestamp_t IdleAt = 0, IdleNext = 0;
+ uint32 IdleRegs[64];
+ v810_timestamp_t IdleLoop(v810_timestamp_t timestamp, const uint8 *code);
 
  public:
  v810_timestamp_t v810_timestamp;	/* Will never be less than 0. */

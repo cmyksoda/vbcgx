@@ -63,6 +63,124 @@ uint32 MDFN_FASTCALL VBReadWord(v810_timestamp_t &, uint32);
 void MDFN_FASTCALL VBWriteWord(v810_timestamp_t &, uint32, uint32);
 #endif
 
+uint32 vb_idle_unsteady;
+extern "C" v810_timestamp_t vbgo_vip_steady_until(v810_timestamp_t timestamp);
+
+/* Register, immediate, load and IN instructions: the ones that store nothing and can't jump or trap. */
+static const uint64 kStoreFreeOps = 0x3F | 1ull << 7 | 0xFull << 12 | 0x3Full << 16 | 1ull << 23 | 3ull << 40 |
+                                    0xFull << 44 | 0xBull << 48 | 0xBull << 56;
+
+/* A loop body that runs straight from its head to the branch back without storing. */
+static bool StoreFreeLoop(const uint8 *code)
+{
+   unsigned at = 0;
+   while(at < 64)
+   {
+      const unsigned h = LoadU16_LE((const uint16 *)(code + at)), op = h >> 10;
+      if((op >> 3) == 4)
+      {
+         const int32 disp = (h & 0x100) ? (int32)(h & 0x1FF) - 0x200 : (int32)(h & 0x1FF);
+         if((int32)at + disp == 0)
+            return true;
+         if(((h >> 9) & 15) != 13) /* (NOP) */
+            return false;
+         at += 2;
+         continue;
+      }
+      if(!(kStoreFreeOps >> op & 1))
+         return false;
+      at += op >= 0x28 ? 4 : 2;
+   }
+   return false;
+}
+
+/* Wario Land's wait for the VIP: a RAM counter raised each pass, then a poll
+ * masked (setting every flag but the add's carry) and the branch back. */
+static bool CounterLoop(const uint8 *code, uint32 *addr, int32 *step, unsigned *pollBase, int32 *pollDisp)
+{
+   #define H(i) LoadU16_LE((const uint16 *)(code + 2 * (i)))
+   const unsigned a = (H(0) >> 5) & 31, b = (H(2) >> 5) & 31;
+   unsigned i;
+   if((H(0) >> 10) != 0x2F || (H(0) & 31) || !a || (H(2) >> 10) != 0x33 || (H(2) & 31) != a || !b || b == a ||
+      (H(4) >> 10) != 0x11 || ((H(4) >> 5) & 31) != b || H(5) != H(0) || H(6) != H(1) ||
+      (H(7) >> 10) != 0x37 || (H(7) & 31) != a || ((H(7) >> 5) & 31) != b || H(8) != H(3))
+      return false;
+   if(((H(9) >> 10) != 0x30 && (H(9) >> 10) != 0x31 && (H(9) >> 10) != 0x33) || ((H(9) >> 5) & 31) != b || (H(9) & 31) == b)
+      return false;
+   *addr = ((uint32)H(1) << 16) + (int16)H(3);
+   *step = (H(4) & 0x10) ? (int32)(H(4) & 31) - 32 : (int32)(H(4) & 31);
+   *pollBase = H(9) & 31;
+   *pollDisp = (int16)H(10);
+   for(i = 11; i < 32; i += 2)
+   {
+      const unsigned op = H(i) >> 10;
+      if((op >> 3) == 4) /* the branch back to the head */
+      {
+         const int32 disp = (H(i) & 0x100) ? (int32)(H(i) & 0x1FF) - 0x200 : (int32)(H(i) & 0x1FF);
+         return i > 11 && (int32)(2 * i) + disp == 0;
+      }
+      if((op != 0x2C && op != 0x2D && op != 0x2E) || (H(i) & 31) != b || ((H(i) >> 5) & 31) != b)
+         return false;
+   }
+   return false;
+   #undef H
+}
+
+/* A pass back to the loop head with no register changed, nothing stored but such
+ * a counter and no timer or pad read can only repeat until the next event. */
+v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
+{
+   const uint32 head = code - PC_base;
+   /* (an event in between may have changed what the loop read before it) */
+   if(head == IdleHead && IdleNext == next_event_ts)
+   {
+      bool idle = !vb_idle_unsteady && !IPendingCache && !memcmp(IdleRegs, P_REG, sizeof(P_REG)) &&
+                  !memcmp(IdleRegs + 32, S_REG, sizeof(S_REG));
+      uint32 counter = 0;
+      int32 step = 0;
+      if(idle && !StoreFreeLoop(code))
+      {
+         unsigned pollBase;
+         int32 pollDisp;
+         idle = CounterLoop(code, &counter, &step, &pollBase, &pollDisp) && ((counter >> 24) & 7) == 5 &&
+                ((P_REG[pollBase] + pollDisp) & ~3u) != (counter & ~3u);
+      }
+      if(!idle)
+      {
+         IdleQuiet = 64; /* (loops doing work are looked at now and then) */
+         IdleHead = ~0u;
+         return timestamp;
+      }
+      const v810_timestamp_t d = timestamp - IdleAt, steady = vbgo_vip_steady_until(timestamp);
+      const v810_timestamp_t horizon = steady < next_event_ts ? steady : next_event_ts;
+      if(d > 0 && horizon - timestamp > d)
+      {
+         int32 k = (horizon - 1 - timestamp) / d;
+         if(step)
+         {
+            v810_timestamp_t unused = 0;
+            const uint32 value = ::VBReadWord(unused, counter & ~3u);
+            /* every skipped add must carry as the last one did */
+            const uint32 adds = step > 0 ? (0xFFFFFFFFu - value) / step : value / -step;
+            if((uint32)k > adds)
+               k = adds;
+            ::VBWriteWord(unused, counter & ~3u, value + (uint32)(k * step));
+         }
+         timestamp += k * d;
+      }
+      IdleAt = timestamp;
+      vb_idle_unsteady = 0;
+      return timestamp;
+   }
+   IdleHead = head;
+   memcpy(IdleRegs, P_REG, sizeof(P_REG));
+   memcpy(IdleRegs + 32, S_REG, sizeof(S_REG));
+   IdleAt = timestamp;
+   IdleNext = next_event_ts;
+   vb_idle_unsteady = 0;
+   return timestamp;
+}
+
 V810::V810()
 {
    MemRead8   = NULL;
@@ -559,6 +677,7 @@ void V810::Run_Fast(int32 MDFN_FASTCALL (*event_handler)(const v810_timestamp_t 
 v810_timestamp_t V810::Run(int32 MDFN_FASTCALL (*event_handler)(const v810_timestamp_t timestamp))
 {
    Running = true;
+   IdleHead = ~0u;
 
    {
       if(EmuMode == V810_EMU_MODE_FAST)
