@@ -41,7 +41,7 @@ SHAREDFLAGS	=	-g -O3 -Wall $(MACHDEP) $(INCLUDE) $(FREETYPE_CFLAGS) \
 
 CFLAGS		=	$(SHAREDFLAGS) -Wno-incompatible-pointer-types
 CXXFLAGS	=	$(SHAREDFLAGS) -std=gnu++17 -Wno-register -Wno-catch-value -Wno-class-memaccess -fno-exceptions -fno-rtti -fno-threadsafe-statics
-LDFLAGS		=	-g -O3 $(MACHDEP) -Wl,-Map,$(notdir $@).map -Wl,--gc-sections
+LDFLAGS		=	-flto=2 -g -O3 $(MACHDEP) -Wl,-Map,$(notdir $@).map -Wl,--gc-sections
 LDFLAGS		+=	-L../buildtools
 
 #---------------------------------------------------------------------------------

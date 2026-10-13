@@ -13,7 +13,13 @@ namespace
 {
 uint32_t ReadTaggedPixel(const uint8_t *p)
 {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    uint32_t pixel;
+    std::memcpy(&pixel, p, sizeof(pixel));
+    return __builtin_bswap32(pixel);
+#else
     return p[0] | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
+#endif
 }
 
 int Sign9(uint16_t v)
@@ -156,6 +162,7 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
 
 void ColorPackRenderer::SetFadeReference(unsigned level)
 {
+    m_fadeLutValid = false;
     // Same fade as the Multicolor palette (see ShadeColorizer): the brightest
     // shade's level from the core's tag byte, through the core's gamma -
     // relative to the brightness the paintings were made at (without a
@@ -164,6 +171,19 @@ void ColorPackRenderer::SetFadeReference(unsigned level)
     const float reference = std::pow(std::max(1u, std::min(63u, level)) / 63.0f, 1.0f / 2.2f);
     for (int i = 0; i < 64; ++i)
         m_fade[i] = static_cast<int>(std::lround(256.0f * std::min(1.0f, std::pow(static_cast<float>(i) / 63.0f, 1.0f / 2.2f) / reference)));
+}
+
+void ColorPackRenderer::UpdateFadeLut(const int bg[3])
+{
+    if (m_fadeLutValid && std::equal(bg, bg + 3, m_fadeBackground))
+        return;
+    for (int level = 0; level < 64; ++level)
+        for (int channel = 0; channel < 3; ++channel)
+            for (int color = 0; color < 256; ++color)
+                m_fadeLut[level][channel][color] = static_cast<uint8_t>(
+                    bg[channel] + (((color - bg[channel]) * m_fade[level] + 128) >> 8));
+    std::copy(bg, bg + 3, m_fadeBackground);
+    m_fadeLutValid = true;
 }
 
 void ColorPackRenderer::UpdateAutoColors()
@@ -809,7 +829,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             ResolveSlots(v.hashes);
             bool any = false;
             for (unsigned c = 0; c < 2048; ++c)
-                any |= (m_slotMarkers[c] = m_slots[c].markerBits).Any();
+            {
+                m_slotMarkers[c] = m_slots[c].markerBits;
+                m_slotHasMarkers[c] = m_slotMarkers[c].Any();
+                any |= m_slotHasMarkers[c];
+            }
             for (uint32_t x = 0; any && x < VBGO_TT_WIDTH; ++x)
             {
                 const uint64_t *column = v.columns[x];
@@ -824,7 +848,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                         continue;
                     const unsigned chr = VBGO_TAG_CHAR(t);
                     const ContextGroupBits &slotBits = m_slotMarkers[chr];
-                    if (!slotBits.Any() || !VBGO_TAG_PIXEL(t) || (chr == lastChr && (y >> 3) == lastBand))
+                    if (!m_slotHasMarkers[chr] || !VBGO_TAG_PIXEL(t) || (chr == lastChr && (y >> 3) == lastBand))
                         continue;
                     uint32_t rawPixel;
                     rawPixel = ReadTaggedPixel(r + static_cast<size_t>(y) * fbWidth * 4);
@@ -854,25 +878,34 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         for (int gy = 0; gy < kGridH; ++gy)
             for (int gx = 0; gx < kGridW; ++gx)
             {
-                ContextGroupBits bits, closeBits;
-                for (int x = std::max(0, gx - kContextReach); x <= std::min(kGridW - 1, gx + kContextReach); ++x)
-                {
-                    bits |= here[gy * kGridW + x];
-                    if (std::abs(x - gx) <= 1)
-                        closeBits |= here[gy * kGridW + x];
-                }
-                rows[gy * kGridW + gx] = bits, closeRows[gy * kGridW + gx] = closeBits;
+                const int row = gy * kGridW;
+                closeRows[row + gx] = here[row + std::max(0, gx - 1)] |
+                                      here[row + gx] | here[row + std::min(kGridW - 1, gx + 1)];
             }
-        m_nearSprites.assign(kGridW * kGridH, ContextGroupBits{});
-        m_closeSprites.assign(kGridW * kGridH, ContextGroupBits{});
+        // Three adjacent 3-cell windows cover the same 9-cell neighborhood.
+        static_assert(kContextReach == 4);
         for (int gy = 0; gy < kGridH; ++gy)
             for (int gx = 0; gx < kGridW; ++gx)
-                for (int y = std::max(0, gy - kContextReach); y <= std::min(kGridH - 1, gy + kContextReach); ++y)
-                {
-                    m_nearSprites[gy * kGridW + gx] |= rows[y * kGridW + gx];
-                    if (std::abs(y - gy) <= 1)
-                        m_closeSprites[gy * kGridW + gx] |= closeRows[y * kGridW + gx];
-                }
+            {
+                const int row = gy * kGridW;
+                rows[row + gx] = closeRows[row + std::max(0, gx - 3)] |
+                                 closeRows[row + gx] | closeRows[row + std::min(kGridW - 1, gx + 3)];
+            }
+        m_nearSprites.resize(kGridW * kGridH);
+        m_closeSprites.resize(kGridW * kGridH);
+        for (int gy = 0; gy < kGridH; ++gy)
+            for (int gx = 0; gx < kGridW; ++gx)
+            {
+                const int at = gy * kGridW + gx;
+                const int before = std::max(0, gy - 1) * kGridW + gx;
+                const int after = std::min(kGridH - 1, gy + 1) * kGridW + gx;
+                m_closeSprites[at] = closeRows[before] | closeRows[at] | closeRows[after];
+                here[at] = rows[before] | rows[at] | rows[after];
+            }
+        for (int gy = 0; gy < kGridH; ++gy)
+            for (int gx = 0; gx < kGridW; ++gx)
+                m_nearSprites[gy * kGridW + gx] = here[std::max(0, gy - 3) * kGridW + gx] |
+                    here[gy * kGridW + gx] | here[std::min(kGridH - 1, gy + 3) * kGridW + gx];
     }
     // Pairs: the left pictures' colors per block and shade, the tiles they
     // use, their pixels of tiles colored per map cell.
@@ -902,6 +935,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
     std::array<int16_t, 32> left, right, top, bottom; // (each layer's extent this frame, both eyes)
     left.fill(VBGO_TT_WIDTH), right.fill(-1), top.fill(VBGO_TT_HEIGHT), bottom.fill(-1);
 
+    UpdateFadeLut(bg);
     auto write = [&](uint8_t *dst, const uint8_t *rgb, unsigned level) {
         const int fade = m_fade[level]; // 0-256
         if (fade == 256)
@@ -912,9 +946,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         }
         else
         {
-            dst[0] = static_cast<uint8_t>(bg[0] + (((rgb[2] - bg[0]) * fade + 128) >> 8));
-            dst[1] = static_cast<uint8_t>(bg[1] + (((rgb[1] - bg[1]) * fade + 128) >> 8));
-            dst[2] = static_cast<uint8_t>(bg[2] + (((rgb[0] - bg[2]) * fade + 128) >> 8));
+            dst[0] = m_fadeLut[level][0][rgb[2]];
+            dst[1] = m_fadeLut[level][1][rgb[1]];
+            dst[2] = m_fadeLut[level][2][rgb[0]];
         }
     };
     // The tile's colors with context (the slow path - see Run::slow): the
@@ -1021,10 +1055,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             m_runCacheAt = 1;
         }
         const uint32_t runAt = m_runCacheAt;
-        // In strips of kStrip columns, row by row: the frame is stored by
-        // rows, so a row of a strip is one cache line of it (the tags are by
-        // columns - each column of the strip reads on down its own).
-        constexpr uint32_t kStrip = 16;
+        // One column keeps the active run small on 32-bit PowerPC.
+        constexpr uint32_t kStrip = 1;
         for (uint32_t x0 = 0; x0 < VBGO_TT_WIDTH; x0 += kStrip)
         {
             uint64_t runKeys[kStrip];

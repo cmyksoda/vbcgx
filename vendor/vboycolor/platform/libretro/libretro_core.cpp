@@ -754,31 +754,25 @@ namespace
     {
         const unsigned w = g_frameW, h = std::min<unsigned>(g_frameH, VBGO_TT_HEIGHT);
         const size_t pixels = static_cast<size_t>(w) * h;
-        g_raw.resize(pixels * 4);
         g_colored.resize(pixels * 4);
-        for (unsigned y = 0; y < h; ++y) {
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-            for (unsigned x = 0; x < w; ++x) {
-                uint32_t pixel;
-                std::memcpy(&pixel, g_frame + y * g_framePitch + x * 4, 4);
-                uint8_t *dst = &g_raw[(static_cast<size_t>(y) * w + x) * 4];
-                dst[0] = pixel; dst[1] = pixel >> 8; dst[2] = pixel >> 16; dst[3] = pixel >> 24;
-            }
-#else
-            std::memcpy(&g_raw[static_cast<size_t>(y) * w * 4], g_frame + y * g_framePitch, static_cast<size_t>(w) * 4);
-#endif
+        const uint8_t *raw = g_frame;
+        if (g_framePitch != static_cast<size_t>(w) * 4) {
+            g_raw.resize(pixels * 4);
+            for (unsigned y = 0; y < h; ++y)
+                std::memcpy(&g_raw[static_cast<size_t>(y) * w * 4], g_frame + y * g_framePitch, static_cast<size_t>(w) * 4);
+            raw = g_raw.data();
         }
 
         if (g_shadeColors)
         {
             if (g_colorizer.IsGradient())
-                g_colorizer.Observe(g_raw.data(), w, h, static_cast<size_t>(w) * 4);
-            g_colorizer.Colorize(g_raw.data(), g_colored.data(), pixels);
+                g_colorizer.Observe(raw, w, h, static_cast<size_t>(w) * 4);
+            g_colorizer.Colorize(raw, g_colored.data(), pixels);
             if (g_renderer.Active() && vbgo_tiletrack_is_enabled())
             {
                 const uint32_t eyeOffset[2] = {0, w - VBGO_TT_WIDTH};
                 g_renderer.SetPackShown(true);
-                g_renderer.Paint(g_colored.data(), g_raw.data(), w, eyeOffset, g_background);
+                g_renderer.Paint(g_colored.data(), raw, w, eyeOffset, g_background);
             }
         }
         else
@@ -786,7 +780,7 @@ namespace
             // By brightness (the core draws red: its red is the brightness).
             uint32_t *out = reinterpret_cast<uint32_t *>(g_colored.data());
             for (size_t i = 0; i < pixels; ++i)
-                out[i] = g_brightness[g_raw[i * 4 + 2]];
+                out[i] = g_brightness[raw[i * 4 + 2]];
         }
 
         // Lay the eyes out.
@@ -798,7 +792,7 @@ namespace
             g_outW = g.w;
             g_outH = g.h;
         }
-        g_out.assign(static_cast<size_t>(g.w) * g.h * 4, 0);
+        g_out.resize(static_cast<size_t>(g.w) * g.h * 4);
         const unsigned rightX = w >= 2 * VBGO_TT_WIDTH ? w - VBGO_TT_WIDTH : 0;
         auto copyEye = [&](unsigned fromX, unsigned toX, unsigned toY)
         {

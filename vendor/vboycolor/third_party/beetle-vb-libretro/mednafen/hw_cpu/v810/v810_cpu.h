@@ -162,6 +162,7 @@ class V810
   */
  bool Init(V810_Emu_Mode mode, bool vb_mode);
  void Kill(void);
+ void EnableIdlePatches() { idlePatches = true; }
 
  void SetInt(int level);
 
@@ -211,6 +212,7 @@ class V810
  uint32 GetSR(const unsigned int which);
 
  private:
+ bool idlePatches = false;
 
  /* Make sure P_REG[] is the first variable/array in this class, 
     so non-zero offset encoding (at assembly level) 

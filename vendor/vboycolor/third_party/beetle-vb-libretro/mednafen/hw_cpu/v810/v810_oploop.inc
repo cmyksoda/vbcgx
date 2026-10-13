@@ -18,6 +18,22 @@
  */
 
 
+#ifdef VB_STATIC_MEMORY
+#define MemRead8(...) (::MemRead8)(__VA_ARGS__)
+#define MemRead16(...) (::MemRead16)(__VA_ARGS__)
+#define MemWrite8(...) (::MemWrite8)(__VA_ARGS__)
+#define MemWrite16(...) (::MemWrite16)(__VA_ARGS__)
+#define IORead8(...) (::MemRead8)(__VA_ARGS__)
+#define IORead16(...) (::MemRead16)(__VA_ARGS__)
+#define IOWrite8(...) (::MemWrite8)(__VA_ARGS__)
+#define IOWrite16(...) (::MemWrite16)(__VA_ARGS__)
+#define VB_READ_WORD(t, a) ::VBReadWord(t, a)
+#define VB_WRITE_WORD(t, a, v) ::VBWriteWord(t, a, v)
+#else
+#define VB_READ_WORD(t, a) (MemRead16(t, a) | (uint32(MemRead16(t, (a) | 2)) << 16))
+#define VB_WRITE_WORD(t, a, v) do { MemWrite16(t, a, (v) & 0xFFFF); MemWrite16(t, (a) | 2, (v) >> 16); } while (0)
+#endif
+
     v810_timestamp_t timestamp_rl = v810_timestamp;
 
     uint32 opcode;
@@ -623,7 +639,7 @@
 			}
 			else
 			{
-                         SetPREG(arg3, MemRead16(timestamp, tmp2) | (MemRead16(timestamp, tmp2 | 2) << 16));
+                         SetPREG(arg3, VB_READ_WORD(timestamp, tmp2));
 
                          if(lastop >= 0)
                          {
@@ -681,8 +697,7 @@
 	     }
 	     else
 	     {
-              MemWrite16(timestamp, tmp2, P_REG[arg1] & 0xFFFF);
-              MemWrite16(timestamp, tmp2 | 2, P_REG[arg1] >> 16);
+              VB_WRITE_WORD(timestamp, tmp2, P_REG[arg1]);
 
               if(lastop == LASTOP_ST)
 	      {
@@ -921,6 +936,93 @@
 	    Halted = HALT_HALT;
 	END_OP();
 
+
+        // Known idle loops wait for the next hardware event while both video
+        // eyes and the sound unit continue to advance normally.
+        BEGIN_OP(WAIT_BE);
+            if (RB_AccurateMode || !idlePatches || ((RB_GETPC() >> 24) & 7) != 7 ||
+                PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
+                goto op_INVALID;
+            if (TESTCOND_E) {
+                if (timestamp < next_event_ts) timestamp = next_event_ts;
+                ADDCLOCK(3);
+                RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
+            } else {
+                ADDCLOCK(1);
+                RB_INCPCBY2();
+            }
+        END_OP();
+
+        BEGIN_OP(WAIT_BNE);
+            if (RB_AccurateMode || !idlePatches || ((RB_GETPC() >> 24) & 7) != 7 ||
+                PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
+                goto op_INVALID;
+            if (TESTCOND_NE) {
+                if (timestamp < next_event_ts) timestamp = next_event_ts;
+                ADDCLOCK(3);
+                RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
+            } else {
+                ADDCLOCK(1);
+                RB_INCPCBY2();
+            }
+        END_OP();
+
+        BEGIN_OP(WAIT_BP);
+            if (RB_AccurateMode || !idlePatches || ((RB_GETPC() >> 24) & 7) != 7 ||
+                PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
+                goto op_INVALID;
+            if (TESTCOND_P) {
+                if (timestamp < next_event_ts) timestamp = next_event_ts;
+                ADDCLOCK(3);
+                RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
+            } else {
+                ADDCLOCK(1);
+                RB_INCPCBY2();
+            }
+        END_OP();
+
+        BEGIN_OP(WAIT_BLT);
+            if (RB_AccurateMode || !idlePatches || ((RB_GETPC() >> 24) & 7) != 7 ||
+                PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
+                goto op_INVALID;
+            if (TESTCOND_LT) {
+                if (timestamp < next_event_ts) timestamp = next_event_ts;
+                ADDCLOCK(3);
+                RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
+            } else {
+                ADDCLOCK(1);
+                RB_INCPCBY2();
+            }
+        END_OP();
+
+        BEGIN_OP(WAIT_BL);
+            if (RB_AccurateMode || !idlePatches || ((RB_GETPC() >> 24) & 7) != 7 ||
+                PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
+                goto op_INVALID;
+            if (TESTCOND_L) {
+                if (timestamp < next_event_ts) timestamp = next_event_ts;
+                ADDCLOCK(3);
+                RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
+            } else {
+                ADDCLOCK(1);
+                RB_INCPCBY2();
+            }
+        END_OP();
+
+        BEGIN_OP(WAIT_BR);
+            if (RB_AccurateMode || !idlePatches || ((RB_GETPC() >> 24) & 7) != 7 ||
+                PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
+                goto op_INVALID;
+            if (true) {
+                if (timestamp < next_event_ts) timestamp = next_event_ts;
+                ADDCLOCK(3);
+                RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
+            } else {
+                ADDCLOCK(1);
+                RB_INCPCBY2();
+            }
+        END_OP();
+
 	BEGIN_OP(TRAP);
             (void)arg2;         /* arg2 is unused. */
 
@@ -945,7 +1047,7 @@
 	     if(MemReadBus32[addr >> 24])
 	      tmp = MemRead32(timestamp, addr);
 	     else
-	      tmp = MemRead16(timestamp, addr) | (MemRead16(timestamp, addr | 2) << 16);
+	      tmp = VB_READ_WORD(timestamp, addr);
 
              compare_temp = P_REG[arg3] - tmp;
 
@@ -962,8 +1064,7 @@
 	      MemWrite32(timestamp, addr, to_write);
 	     else
 	     {
-              MemWrite16(timestamp, addr, to_write & 0xFFFF);
-              MemWrite16(timestamp, addr | 2, to_write >> 16);
+              VB_WRITE_WORD(timestamp, addr, to_write);
 	     }
 	     P_REG[arg3] = tmp;
 	    }
@@ -1045,3 +1146,16 @@
     }
 
 v810_timestamp = timestamp_rl;
+
+#ifdef VB_STATIC_MEMORY
+#undef MemRead8
+#undef MemRead16
+#undef MemWrite8
+#undef MemWrite16
+#undef IORead8
+#undef IORead16
+#undef IOWrite8
+#undef IOWrite16
+#endif
+#undef VB_READ_WORD
+#undef VB_WRITE_WORD

@@ -54,6 +54,15 @@ found freely through public domain sources.
 #include "v810_opt.h"
 #include "v810_cpu.h"
 
+#ifdef VB_STATIC_MEMORY
+uint8 MDFN_FASTCALL MemRead8(v810_timestamp_t &, uint32);
+uint16 MDFN_FASTCALL MemRead16(v810_timestamp_t &, uint32);
+void MDFN_FASTCALL MemWrite8(v810_timestamp_t &, uint32, uint8);
+void MDFN_FASTCALL MemWrite16(v810_timestamp_t &, uint32, uint16);
+uint32 MDFN_FASTCALL VBReadWord(v810_timestamp_t &, uint32);
+void MDFN_FASTCALL VBWriteWord(v810_timestamp_t &, uint32, uint32);
+#endif
+
 V810::V810()
 {
    MemRead8   = NULL;

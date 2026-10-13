@@ -33,8 +33,7 @@ class OgcEmulatorAudio : public EmulatorAudioDriver
 		void setSampleRate() override;
 
 		//! Hardware DMA callback that feeds the sound buffer ring to the audio
-		//! backend. Invoked from interrupt context by the platform's DMA
-		//! callback trampoline - never called directly by emulator core code.
+		//! backend. The producer also calls it once to prime DMA before playback.
 		void switchBuffers();
 	private:
 		int mixerCollect(uint8_t* outbuffer, int len);

@@ -109,8 +109,10 @@ switch(opcode)
 		goto op_HALT;
 		break;
 	case 54:
+		goto op_WAIT_BE;
+		break;
 	case 55:
-		goto op_INVALID;
+		goto op_WAIT_BNE;
 		break;
 	case 56:
 	case 57:
@@ -217,8 +219,10 @@ switch(opcode)
 		goto op_LD_H;
 		break;
 	case 100:
+		goto op_WAIT_BP;
+		break;
 	case 101:
-		goto op_INVALID;
+		goto op_WAIT_BLT;
 		break;
 	case 102:
 	case 103:
@@ -233,8 +237,10 @@ switch(opcode)
 		goto op_ST_H;
 		break;
 	case 108:
+		goto op_WAIT_BL;
+		break;
 	case 109:
-		goto op_INVALID;
+		goto op_WAIT_BR;
 		break;
 	case 110:
 	case 111:

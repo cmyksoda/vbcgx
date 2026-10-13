@@ -101,6 +101,10 @@ public:
     const std::vector<uint8_t> &RightPictureOwn() const { return m_rightOwn; }
 
 private:
+    uint8_t m_fadeLut[64][3][256];
+    bool m_fadeLutValid = false;
+    int m_fadeBackground[3] = {};
+    void UpdateFadeLut(const int bg[3]);
     static constexpr int kBands = VBGO_TT_HEIGHT / 8, kBlocksX = VBGO_TT_WIDTH / 8;
     struct Slot
     {
@@ -289,6 +293,7 @@ private:
     std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> m_contextRange; // hash -> (first, count)
     std::vector<ContextGroupBits> m_markerGrid[3];
     std::array<ContextGroupBits, 2048> m_slotMarkers{}; // per slot: its markerBits (compact, for gathering this frame's markers)
+    std::array<bool, 2048> m_slotHasMarkers{};
     std::vector<uint8_t> m_markerLayer[3];
     ContextGroupBits m_layerBound;
     unsigned m_gridCurrent = 0;

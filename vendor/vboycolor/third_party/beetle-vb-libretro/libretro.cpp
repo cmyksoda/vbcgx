@@ -107,6 +107,7 @@ static uint8 *GPRAM = NULL;
 static uint32 GPRAM_Mask;
 
 static uint8 *GPROM = NULL;
+static uint8 *GPROM_Data = NULL;
 static uint32 GPROM_Mask;
 
 V810 *VB_V810 = NULL;
@@ -215,7 +216,7 @@ uint8 MDFN_FASTCALL MemRead8(v810_timestamp_t &timestamp, uint32 A)
             return GPRAM[A & GPRAM_Mask];
          break;
       case 7:
-         return GPROM[A & GPROM_Mask];
+         return GPROM_Data[A & GPROM_Mask];
    }
    return 0;
 }
@@ -242,7 +243,7 @@ uint16 MDFN_FASTCALL MemRead16(v810_timestamp_t &timestamp, uint32 A)
          break;
 
       case 7:
-         return LoadU16_LE((uint16 *)&GPROM[A & GPROM_Mask]);
+         return LoadU16_LE((uint16 *)&GPROM_Data[A & GPROM_Mask]);
    }
 
    return 0;
@@ -307,6 +308,45 @@ void MDFN_FASTCALL MemWrite16(v810_timestamp_t &timestamp, uint32 A, uint16 V)
          /* ROM, no writing allowed! */
          break;
    }
+}
+
+// RAM and ROM have no device side effects; keep MMIO as two 16-bit accesses.
+uint32 MDFN_FASTCALL VBReadWord(v810_timestamp_t &timestamp, uint32 A)
+{
+   const uint8 *bytes = NULL;
+   switch ((A >> 24) & 7) {
+   case 5: bytes = WRAM + (A & 0xFFFF); break;
+   case 6: if (GPRAM) bytes = GPRAM + (A & GPRAM_Mask); break;
+   case 7: bytes = GPROM_Data + (A & GPROM_Mask); break;
+   }
+   if (bytes) {
+      uint32 value;
+      memcpy(&value, bytes, sizeof(value));
+#ifdef MSB_FIRST
+      value = __builtin_bswap32(value);
+#endif
+      return value;
+   }
+   uint32 lo = MemRead16(timestamp, A);
+   return lo | (uint32(MemRead16(timestamp, A | 2)) << 16);
+}
+
+void MDFN_FASTCALL VBWriteWord(v810_timestamp_t &timestamp, uint32 A, uint32 V)
+{
+   uint8 *bytes = NULL;
+   switch ((A >> 24) & 7) {
+   case 5: bytes = WRAM + (A & 0xFFFF); break;
+   case 6: if (GPRAM) bytes = GPRAM + (A & GPRAM_Mask); break;
+   }
+   if (bytes) {
+#ifdef MSB_FIRST
+      V = __builtin_bswap32(V);
+#endif
+      memcpy(bytes, &V, sizeof(V));
+      return;
+   }
+   MemWrite16(timestamp, A, V & 0xFFFF);
+   MemWrite16(timestamp, A | 2, V >> 16);
 }
 
 static void FixNonEvents(void)
@@ -1796,6 +1836,62 @@ static INLINE uint32 round_up_pow2(uint32 v)
    return(v);
 }
 
+// Mednafen's CRC-matched idle branches, as used by WiiMednafen. Only
+// instruction fetches see the wait opcodes; ROM reads retain the original data.
+static void PatchIdleLoops(V810_Emu_Mode mode)
+{
+   GPROM_Data = GPROM;
+   if (mode != V810_EMU_MODE_FAST)
+      return;
+   uint32 table[256];
+   for (uint32 i = 0; i < 256; ++i) {
+      uint32 c = i;
+      for (unsigned bit = 0; bit < 8; ++bit)
+         c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1)));
+      table[i] = c;
+   }
+   uint32 crc = ~0u;
+   for (size_t i = 0; i <= GPROM_Mask; ++i)
+      crc = (crc >> 8) ^ table[(crc ^ GPROM[i]) & 0xFF];
+   crc = ~crc;
+   for (const VBGameEntry &game : VBGames) {
+      bool match = false;
+      for (unsigned c = 0; c < 16 && game.checksums[c]; ++c)
+         match |= game.checksums[c] == crc;
+      if (!match || !game.patch_address[0])
+         continue;
+      // Validate the entire entry before changing any instruction.
+      for (unsigned j = 0; j < 512 && game.patch_address[j]; ++j) {
+         uint32 addr = game.patch_address[j] & GPROM_Mask;
+         unsigned op = LoadU16_LE((uint16 *)&GPROM[addr]) >> 9;
+         if ((addr & 1) || (op != 0x42 && op != 0x4A && op != 0x4C &&
+                           op != 0x41 && op != 0x46 && op != 0x45))
+            return;
+      }
+      uint8 *original = (uint8 *)malloc(GPROM_Mask + 1);
+      if (!original)
+         return;
+      memcpy(original, GPROM, GPROM_Mask + 1);
+      GPROM_Data = original;
+      VB_V810->EnableIdlePatches();
+      for (unsigned j = 0; j < 512 && game.patch_address[j]; ++j) {
+         uint32 addr = game.patch_address[j] & GPROM_Mask;
+         uint16 raw = LoadU16_LE((uint16 *)&GPROM[addr]);
+         unsigned op = raw >> 9, replacement = 0;
+         switch (op) {
+         case 0x42: replacement = 0x36; break;
+         case 0x4A: replacement = 0x37; break;
+         case 0x4C: replacement = 0x64; break;
+         case 0x41: replacement = 0x6C; break;
+         case 0x46: replacement = 0x65; break;
+         case 0x45: replacement = 0x6D; break;
+         }
+         StoreU16_LE((uint16 *)&GPROM[addr], (raw & 0x1FF) | (replacement << 9));
+      }
+      return;
+   }
+}
+
 static int Load(const uint8_t *data, size_t size)
 {
    uint32_t* Map_Addresses;
@@ -1857,6 +1953,8 @@ static int Load(const uint8_t *data, size_t size)
    for(uint64 i = 0; i < 65536; i += size)
       memcpy(GPROM + i, data, size);
 
+   PatchIdleLoops(cpu_mode);
+
    GPRAM_Mask = 0xFFFF;
 
    for(uint64 A = 0; A < 1ULL << 32; A += (1 << 27))
@@ -1907,6 +2005,9 @@ static int Load(const uint8_t *data, size_t size)
 
 static void CloseGame(void)
 {
+   if (GPROM_Data != GPROM)
+      free(GPROM_Data);
+   GPROM_Data = NULL;
 #if 0
    VIP_Kill();
 #endif
@@ -2016,7 +2117,8 @@ extern "C" int StateAction(StateMem *sm, int load, int data_only)
 #define MEDNAFEN_CORE_GEOMETRY_MAX_W (384 * 2 + 256)
 #define MEDNAFEN_CORE_GEOMETRY_MAX_H (224 * 2)
 #define MEDNAFEN_CORE_GEOMETRY_ASPECT_RATIO (12.0 / 7.0)
-#define FB_WIDTH (384 * 2 + 256)
+// The color frontend always requests side-by-side eyes with zero separation.
+#define FB_WIDTH (384 * 2)
 #define FB_HEIGHT 224 * 2
 
 
@@ -2344,10 +2446,18 @@ bool retro_load_game(const struct retro_game_info *info)
    pix_fmt.bpp        = 32;
 #endif
    pix_fmt.colorspace = MDFN_COLORSPACE_RGB;
+   // This private core hands BGRA bytes directly to the color frontend.
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+   pix_fmt.Rshift     = 8;
+   pix_fmt.Gshift     = 16;
+   pix_fmt.Bshift     = 24;
+   pix_fmt.Ashift     = 0;
+#else
    pix_fmt.Rshift     = 16;
    pix_fmt.Gshift     = 8;
    pix_fmt.Bshift     = 0;
    pix_fmt.Ashift     = 24;
+#endif
 
    last_pixel_format.bpp        = 0;
    last_pixel_format.colorspace = 0;

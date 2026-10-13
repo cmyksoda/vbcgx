@@ -32,7 +32,7 @@ target_include_directories(beetle_vb PUBLIC ${VB_CORE_DIR} ${VB_CORE_DIR}/mednaf
 target_include_directories(beetle_vb PRIVATE ${VB_CORE_DIR}/mednafen/vb)
 # (RETRO_API empty: Beetle's entry points stay inside the core - only ours are exported)
 target_compile_definitions(beetle_vb PRIVATE WANT_32BPP __LIBRETRO__ STDC_HEADERS __STDC_LIMIT_MACROS
-    MEDNAFEN_VERSION="0.9.31" MEDNAFEN_VERSION_NUMERIC=931 RETRO_API=)
+    VB_STATIC_MEMORY MEDNAFEN_VERSION="0.9.31" MEDNAFEN_VERSION_NUMERIC=931 RETRO_API=)
 if(MSVC)
     target_compile_definitions(beetle_vb PRIVATE INLINE=_inline NOMINMAX _CRT_SECURE_NO_DEPRECATE)
     target_compile_options(beetle_vb PRIVATE /W0 /FI${CMAKE_CURRENT_SOURCE_DIR}/beetle_rename.h)
@@ -69,4 +69,10 @@ if(VBC_HOST_TESTS)
     target_include_directories(input-check PRIVATE source)
     add_executable(video-check tests/video.cpp)
     target_include_directories(video-check PRIVATE source)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Generic" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "powerpc")
+    set_target_properties(beetle_vb vboycolor PROPERTIES POSITION_INDEPENDENT_CODE OFF INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set_source_files_properties(${VB_CORE_DIR}/mednafen/hw_cpu/v810/v810_cpu.cpp PROPERTIES
+        COMPILE_OPTIONS "-fno-gcse;-fno-crossjumping;-fno-tree-tail-merge;--param=max-goto-duplication-insns=64")
 endif()

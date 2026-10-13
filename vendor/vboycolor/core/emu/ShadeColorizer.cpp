@@ -144,9 +144,7 @@ void ShadeColorizer::Observe(const uint8_t *src, size_t width, size_t height, si
 
 void ShadeColorizer::Colorize(const uint8_t *src, uint8_t *dst, size_t pixelCount) const
 {
-    // (a pixel as one little-endian word - B, G, R, tag from the low byte up,
-    // as on every platform this runs on; chosen without a branch, since
-    // switched-off pixels come and go with the picture)
+    // Read BGRA bytes as native words; the RGB mask follows the host byte order.
     uint32_t background;
     std::memcpy(&background, m_background.data(), 4);
     for (size_t i = 0; i < pixelCount; ++i, src += 4, dst += 4)
@@ -156,7 +154,11 @@ void ShadeColorizer::Colorize(const uint8_t *src, uint8_t *dst, size_t pixelCoun
         std::memcpy(&color, m_lut[src[3]].data(), 4);
         // A shade switched fully off by the game (output 0) shows as
         // background, whatever the fade level says.
-        color = (src[0] | src[1] | src[2]) ? color : background;
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+        color = (pixel & 0xFFFFFF00u) ? color : background;
+#else
+        color = (pixel & 0x00FFFFFFu) ? color : background;
+#endif
         std::memcpy(dst, &color, 4);
     }
 }

@@ -80,7 +80,13 @@ function(vbgo_generate_patched_vip VB_CORE_DIR OUT_DIR)
     # ---- 1. Shade tag ------------------------------------------------------
     _vbgo_replace_once(VIP
         [=[BrightCLUT[lr][i] = ColorLUT[lr][BrightnessCache[i]];]=]
-        [=[BrightCLUT[lr][i] = ColorLUT[lr][BrightnessCache[i]] | ((uint32)i << 24) | ((uint32)(BrightnessCache[3] >> 2) << 26); /* VirtualBoyGo: shade index + fade tag, see cmake/PatchBeetleVip.cmake */]=]
+        [=[
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      BrightCLUT[lr][i] = ColorLUT[lr][BrightnessCache[i]] | (uint32)i | ((uint32)(BrightnessCache[3] >> 2) << 2);
+#else
+      BrightCLUT[lr][i] = ColorLUT[lr][BrightnessCache[i]] | ((uint32)i << 24) | ((uint32)(BrightnessCache[3] >> 2) << 26);
+#endif
+]=]
         "vip.c (RecalcBrightnessCache's BrightCLUT assignment)")
 
     # ---- 2. Tile tracking hooks: vip.c ---------------------------------------
