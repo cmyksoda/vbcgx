@@ -1130,14 +1130,15 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                         if (run.slow)
                         {
                             const unsigned chr = VBGO_TAG_CHAR(t);
-                            if (m_slots[chr].ambiguous)
+                            if (m_slots[chr].ambiguous && !eye)
                                 m_ambiguousPixels.emplace_back(static_cast<uint16_t>(x), static_cast<uint16_t>(y));
                             // (markers and context: the same for the run's pixels in a row of grid cells)
                             const bool newBand = static_cast<int>(y >> 3) != run.band;
                             if (newBand)
                             {
                                 run.band = static_cast<int>(y >> 3);
-                                run.tile = contextTile(t, eye, static_cast<int>(x), static_cast<int>(y), nearCells[k], nearBitsOf[k]);
+                                if (!eye)
+                                    run.tile = contextTile(t, eye, static_cast<int>(x), static_cast<int>(y), nearCells[k], nearBitsOf[k]);
                             }
                             if (newBand && markers && m_slots[chr].markerBits.Any())
                             {
@@ -1157,6 +1158,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                             }
                         }
                     }
+                    // The right eye isn't shown: only what it adds to later frames (above) counts.
+                    if (eye)
+                        continue;
                     // 0. A tile its left picture draws too, where the pair's pictures are the same
                     // drawing shifted: the very pixel the left eye shows there (Mario Clash's
                     // stage: the right picture's tiles can be other tiles of the same look, or
@@ -1313,7 +1317,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, const uint8_t *raw, uint3
     const uint8_t *const shades[2] = {m_depthShades[0].data(), m_depthShades[1].data()};
     const uint8_t *const want[2] = {m_depthWant[0].data(), m_depthWant[1].data()};
     m_depth.Update(shades, want);
-    for (unsigned eye = 0; eye < 2; ++eye)
+    for (unsigned eye = 0; eye < 1; ++eye) // (only the left eye is shown)
         for (uint32_t y = 0; y < VBGO_TT_HEIGHT; ++y)
         {
             const uint8_t *w = &want[eye][y * VBGO_TT_WIDTH];
