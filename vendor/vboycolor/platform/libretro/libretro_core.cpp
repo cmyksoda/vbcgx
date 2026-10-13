@@ -676,6 +676,10 @@ namespace
                 for (unsigned y = first; y < first + count && y < h; ++y)
                     g_colorizer.Colorize(raw + y * rowBytes, &colored[y * rowBytes], VBGO_TT_WIDTH);
             };
+            auto shadeCells = [&](unsigned band, unsigned first, unsigned count) {
+                for (unsigned y = band * 8; y < band * 8 + 8 && y < h; ++y)
+                    g_colorizer.Colorize(raw + y * rowBytes + first * 32, &colored[y * rowBytes + first * 32], count * 8);
+            };
             if (painting)
             {
                 const uint32_t eyeOffset[2] = {0, w - VBGO_TT_WIDTH};
@@ -684,7 +688,7 @@ namespace
                     for (unsigned y = first; y < first + count && y < h; ++y)
                         g_colorizer.Colorize(raw + y * rowBytes + x * 4, &colored[y * rowBytes + x * 4], 1);
                 };
-                g_renderer.Paint(colored.data(), raw, w, eyeOffset, g_background, {shadeRows, shadeColumn, g_colorizer.Version()});
+                g_renderer.Paint(colored.data(), raw, w, eyeOffset, g_background, {shadeCells, shadeColumn, g_colorizer.Version()});
             }
             else
                 shadeRows(0, h);

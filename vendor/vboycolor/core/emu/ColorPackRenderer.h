@@ -72,11 +72,11 @@ public:
     // vbgo_tiletrack_set_fill_cells takes; empty if there are none.
     const std::vector<uint8_t> &FillCells() const { return m_fillCells; }
 
-    // The shade colorizer's colors, which the picture starts from: rows, or pixels down one column;
-    // version changes whenever they would come out differently.
+    // The shade colorizer's colors, which the picture starts from: count 8x8 cells of a band from
+    // first, or pixels down one column; version changes whenever they would come out differently.
     struct Shade
     {
-        std::function<void(unsigned first, unsigned count)> rows;
+        std::function<void(unsigned band, unsigned first, unsigned count)> cells;
         std::function<void(unsigned x, unsigned first, unsigned count)> column;
         uint32_t version = 0;
     };
@@ -123,15 +123,20 @@ private:
         uint64_t first = kNoKey;
         uint64_t last = kNoKey; // the last one's run key
     };
+    struct Cell // (what an 8x8 cell's runs added, as last painted)
+    {
+        uint32_t version = 0;
+        uint32_t worlds = 0; // (as worldsDrawn, with these extents: left << 9 | right << 6 | top << 3 | bottom, in the cell)
+        uint8_t brightest = 0;
+        uint8_t markerLayer = 0xFF;
+        std::array<uint16_t, 32> extent{};
+        ContextGroupBits markers; // (left eye: the marker pre-pass's grid cell)
+    };
     struct Band
     {
-        uint32_t version = 0, clut = 0, state = 0;
-        uint32_t worlds = 0; // (as worldsDrawn, with these extents)
-        unsigned brightest = 0;
-        std::array<int16_t, 32> left{}, right{}, top{}, bottom{};
-        std::vector<uint32_t> pairSlots; // left eye: chr | pairs << 11; right eye: chr | (pair + 1) << 11
-        std::array<ContextGroupBits, VBGO_TT_WIDTH / 8> markers{}; // (left eye: the marker pre-pass's grid cells)
-        std::array<uint8_t, VBGO_TT_WIDTH / 8> markerLayers{};
+        uint32_t clut = 0, state = 0;
+        std::array<Cell, VBGO_TT_WIDTH / 8> cells{};
+        std::vector<uint64_t> pairSlots; // cell << 32 | left eye: chr | pairs << 11; right eye: chr | (pair + 1) << 11
     };
     std::array<std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2>, 2> m_bands; // [eye][buffer]
     std::array<std::array<std::vector<BandColumn>, 2>, 2> m_bandColumns;

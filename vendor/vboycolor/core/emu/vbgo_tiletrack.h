@@ -129,9 +129,9 @@ typedef struct
    /* Per 8-row band (28 of 64 words): the characters the drawing used there
     * - every character a tag of the band can name (a bit each). */
    const uint32_t *band_chr;
-   /* ... and its drawing's version (28): equal nonzero versions mean the same tags (but stamps),
-    * pixels and per-pass copies of what they read. */
-   const uint32_t *band_version;
+   /* Per 8x8 cell [band * 48 + cell]: the version of what it shows; equal nonzero versions mean
+    * the same tags (but stamps), pixels and per-pass copies of what they read. */
+   const uint32_t *cell_version;
    int fb; /* the frame buffer shown */
    /* vbgo_tt_clut_serial as every column was shown, or 0 if they differed (or
     * a column showed nothing, or the other eye): the core's shades to colors. */
@@ -286,10 +286,14 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
  * it): keeps that pass's tags for it as this pass's. False if they're gone
  * (the block must be drawn after all). */
 bool vbgo_tiletrack_keep_block(void);
-/* After drawing the block begun last: the characters it used (2048 bits), and
- * whether nothing it read had changed since its pass started (else its
- * drawing gets no version - see band_version). */
-void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled);
+/* Before drawing the block begun last (rather than keeping it); compare: tell
+ * the cells that came out the same by their tags (else only by unchanged). */
+void vbgo_tiletrack_block_drawing(bool compare);
+/* After drawing it: the characters it used (2048 bits), whether nothing it read
+ * had changed since its pass started (else no versions - see cell_version), and
+ * per cell (bit per 8 columns) whether its pixels came out as this buffer last
+ * held them, and whether nothing it shows could have changed. */
+void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same_pixels, uint64_t unchanged);
 bool vbgo_tiletrack_pass_reusable(unsigned src_fb);
 void vbgo_tiletrack_share_pass(unsigned fb, unsigned src_fb);
 void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no);

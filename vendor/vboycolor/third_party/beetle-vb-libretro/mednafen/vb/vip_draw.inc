@@ -5,6 +5,7 @@
 
 /* What the block being drawn reads (see BlockInputs in vip.c). */
 #define USE_CHR(c) (UsedChr[(c) >> 5] |= 1u << ((c) & 31))
+#define USE_BG_CHR(c) (USE_CHR(c), UsedBgChr[(c) >> 5] |= 1u << ((c) & 31))
 #define USE_ROW(h) (UsedRows[((h) & 0xFFFF) >> 11] |= 1u << ((((h) & 0xFFFF) >> 6) & 31))
 
 
@@ -78,7 +79,7 @@ static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, b
   {
    uint32 pixels = CHR16[char_no * 8 + char_sub_y];
 
-   USE_CHR(char_no);
+   USE_BG_CHR(char_no);
    if(!pixels)
     ;
    else if(bgsc & 0x2000)
@@ -112,7 +113,7 @@ static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, b
    unsigned int char_sub_x = hflip_xor ^ (SourceX & 0x7);
    uint8 pixel = (CHR16[char_no * 8 + char_sub_y] >> (char_sub_x * 2)) & 0x3;
 
-   USE_CHR(char_no);
+   USE_BG_CHR(char_no);
    if(pixel)
     target[x] = GPLT_Cache[palette_selector][pixel];
    SourceX++;
@@ -220,7 +221,7 @@ if(dy == 0)	/* Optimization for no rotation. */
   char_sub_x = hflip_xor ^ ((SourceX >> 8) & 0xE);
 
   pixel = (CHR16[((bgsc & 0x7FF) * 8) | char_sub_y] >> char_sub_x) & 0x3;
-  USE_CHR(bgsc & 0x7FF);
+  USE_BG_CHR(bgsc & 0x7FF);
 
   if(pixel)
    target[x] = GPLT_Cache[bgsc >> 14][pixel];
@@ -263,7 +264,7 @@ else
   char_sub_x = hflip_xor ^ ((SourceX >> 9) & 0x7);
 
   pixel = (CHR16[char_no * 8 + char_sub_y] >> (char_sub_x * 2)) & 0x3;
-  USE_CHR(char_no);
+  USE_BG_CHR(char_no);
 
   if(pixel)
    target[x] = GPLT_Cache[palette_selector][pixel];
@@ -421,6 +422,7 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
   {
    obj_count = GatherOBJ(obj_list, block_no * 8);
    *UsedObjs = HashObjList(*UsedObjs, world, obj_list, obj_count);
+   NoteSprites(world, obj_list, obj_count);
   }
 
   for(y = 0; y < 8; y++)

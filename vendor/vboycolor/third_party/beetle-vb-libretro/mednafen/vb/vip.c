@@ -399,21 +399,33 @@ static uint32 SptChangedAt;       /* sprite groups (some games move them every f
 static uint32 RowChangedAt[1024]; /* DRAM, per 64 halfwords */
 static uint32 ChrChangedAt[2048];
 static uint32 ObjChangedAt[32];   /* sprite attributes, per 8 rows the sprite was or is on */
+static uint32 ObjEntryChangedAt[1024];
+#define MAX_BLOCK_SPRITES 96
+typedef struct
+{
+   uint16 oam, chr;
+   uint8 world;
+   int16 x[2]; /* each eye's */
+} SpriteDrawn;
+
 typedef struct
 {
    bool valid;     /* the buffer holds this drawing (the CPU hasn't written over it) */
    uint32 drawnAt; /* DrawSerial when drawn, or last found unchanged */
    uint32 passAt;  /* ... and as that pass started (the tile tracker's blank tiles are the pass's) */
    uint32 chr[2048 / 32], rows[1024 / 32];
+   uint32 bgChr[2048 / 32]; /* (the characters background drawing used) */
    uint64 objs;    /* its sprite lists, hashed (see ObjListsHash) */
+   int sprites;    /* the sprites its lists hold (more than MAX_BLOCK_SPRITES: -1) */
+   SpriteDrawn sprite[MAX_BLOCK_SPRITES];
 } BlockInputs;
 static BlockInputs Blocks[2][28];
 /* Each buffer's side-by-side picture has a half of the surface of its own,
- * where a column's block is converted again only if the buffer's block or the
- * brightness table changed since. */
-static uint32 BlockContent[2][28]; /* a version per drawing in the buffer, 0: unknown */
+ * where a column's block is converted again only if the buffer's pixels there
+ * (per 8x8 cell) or the brightness table changed since. */
+static uint32 CellContent[2][28][48]; /* a version per cell's pixels, 0: unknown */
 static uint32 Contents;
-static uint32 ShownContent[2][2][384][28]; /* [fb][output eye][column][block]: BlockContent as converted */
+static uint32 ShownContent[2][2][384][28]; /* [fb][output eye][column][block]: CellContent as converted */
 static uint32 ShownClut[2][2][384];        /* ... vbgo_tt_clut_serial as converted */
 static int ShownFB;
 int vbgo_vip_shown_fb(void) { return ShownFB; }
@@ -425,7 +437,8 @@ static uint32 NewContent(void)
    return Contents;
 }
 static uint32 UnusedInputs[2048 / 32];
-static uint32 *UsedChr = UnusedInputs, *UsedRows = UnusedInputs; /* the block being drawn's */
+static uint32 *UsedChr = UnusedInputs, *UsedRows = UnusedInputs, *UsedBgChr = UnusedInputs; /* the block being drawn's */
+static BlockInputs *Drawing; /* (its sprites go here) */
 static uint64 UnusedObjs, *UsedObjs = &UnusedObjs;
 #define OBJS_START 1469598103934665603ull
 
@@ -439,6 +452,30 @@ static uint64 HashObjList(uint64 h, int world, const uint16 *list, int count)
 }
 
 static uint64 ObjListsHash(uint32 block_no);
+
+static void NoteSprites(int world, const uint16 *list, int count)
+{
+   int k;
+   if(!Drawing)
+      return;
+   for(k = 0; k < count && Drawing->sprites >= 0; k++)
+   {
+      const uint16 *oam = &DRAM[(0x1E000 + list[k] * 8) >> 1];
+      const uint32 jp = ParallaxDisabled ? 0 : (oam[1] & 0x3FFF);
+      SpriteDrawn *drawn = &Drawing->sprite[Drawing->sprites];
+      if(Drawing->sprites == MAX_BLOCK_SPRITES)
+      {
+         Drawing->sprites = -1;
+         break;
+      }
+      drawn->oam = list[k];
+      drawn->chr = oam[3] & 0x7FF;
+      drawn->world = world;
+      drawn->x[0] = sign_x_to_s32(10, oam[0] - jp);
+      drawn->x[1] = sign_x_to_s32(10, oam[0] + jp);
+      Drawing->sprites++;
+   }
+}
 /* What each frame shows, to tell a frame that shows the same picture as the
  * last: each buffer's contents get a fresh version when drawn or written, the
  * display's brightness and settings a serial, and a frame that changes either
@@ -501,7 +538,10 @@ static void ForgetBlocks(void)
    int fb, b;
    for(fb = 0; fb < 2; fb++)
       for(b = 0; b < 28; b++)
-         Blocks[fb][b].valid = false, BlockContent[fb][b] = 0;
+      {
+         Blocks[fb][b].valid = false;
+         memset(CellContent[fb][b], 0, sizeof(CellContent[fb][b]));
+      }
 }
 
 /* The serial runs for hours, but not forever. */
@@ -510,6 +550,7 @@ static void RestartSerials(void)
    memset(RowChangedAt, 0, sizeof(RowChangedAt));
    memset(ChrChangedAt, 0, sizeof(ChrChangedAt));
    memset(ObjChangedAt, 0, sizeof(ObjChangedAt));
+   memset(ObjEntryChangedAt, 0, sizeof(ObjEntryChangedAt));
    GlobalChangedAt = SptChangedAt = 0;
    DrawSerial = 0;
    ForgetPasses();
@@ -531,6 +572,7 @@ static void DramChanging(uint32 a, uint16 v)
       GlobalChangedAt = at;
    else if(h >= (0x1E000 >> 1))
    {
+      ObjEntryChangedAt[(h - (0x1E000 >> 1)) >> 2] = at;
       /* (a sprite's: the rows it's on, and will be on) */
       ObjRowsChanged(DRAM[(h & ~3u) + 2], at);
       if((h & 3) == 2)
@@ -538,28 +580,85 @@ static void DramChanging(uint32 a, uint16 v)
    }
 }
 
-static bool BlockUnchanged(const BlockInputs *block)
+/* What changed since the block was drawn: 0 nothing, 1 only its sprites
+ * (some moved, came or went, or show another tile), 2 more. */
+static int BlockChange(const BlockInputs *block)
 {
-   int i;
-   if(!block->valid || GlobalChangedAt > block->drawnAt || ObjChangedAt[DrawingBlock] > block->drawnAt)
-      return false;
-   if(SptChangedAt > block->drawnAt && ObjListsHash(DrawingBlock) != block->objs)
-      return false;
+   int i, change = 0;
+   if(!block->valid || GlobalChangedAt > block->drawnAt)
+      return 2;
    for(i = 0; i < 1024 / 32; i++)
    {
       uint32 m;
       for(m = block->rows[i]; m; m &= m - 1)
          if(RowChangedAt[i * 32 + __builtin_ctz(m)] > block->drawnAt)
-            return false;
+            return 2;
    }
    for(i = 0; i < 2048 / 32; i++)
    {
       uint32 m;
       for(m = block->chr[i]; m; m &= m - 1)
-         if(ChrChangedAt[i * 32 + __builtin_ctz(m)] > block->passAt)
-            return false;
+      {
+         const int c = i * 32 + __builtin_ctz(m);
+         if(ChrChangedAt[c] > block->passAt)
+         {
+            if(block->bgChr[i] >> (c & 31) & 1)
+               return 2;
+            change = 1;
+         }
+      }
    }
-   return true;
+   if(ObjChangedAt[DrawingBlock] > block->drawnAt)
+      change = 1;
+   if(!change && SptChangedAt > block->drawnAt && ObjListsHash(DrawingBlock) != block->objs)
+      change = 1;
+   return change;
+}
+
+static uint64 SpriteCells(const SpriteDrawn *drawn)
+{
+   uint64 cells = 0;
+   int eye;
+   for(eye = 0; eye < 2; eye++)
+   {
+      const int x = drawn->x[eye];
+      if(x > -8 && x < 384)
+      {
+         const int first = (x < 0 ? 0 : x) >> 3, last = (x + 7 > 383 ? 383 : x + 7) >> 3;
+         cells |= ((2ull << last) - 1) & ~((1ull << first) - 1);
+      }
+   }
+   return cells;
+}
+
+/* A block drawn again because only its sprites changed: the cells the
+ * changed, new and gone ones cover (else as before). */
+static uint64 SpriteChangedCells(const BlockInputs *was, int wasCount, uint32 drawnAt, uint32 passAt, const BlockInputs *is)
+{
+   uint64 cells = 0;
+   int i, k;
+   if(wasCount < 0 || is->sprites < 0)
+      return ~0ull;
+   for(i = 0; i < wasCount; i++)
+   {
+      const SpriteDrawn *a = &was->sprite[i];
+      const SpriteDrawn *b = NULL;
+      for(k = 0; k < is->sprites && !b; k++)
+         if(is->sprite[k].oam == a->oam && is->sprite[k].world == a->world)
+            b = &is->sprite[k];
+      if(!b || ObjEntryChangedAt[a->oam] > drawnAt || ChrChangedAt[a->chr] > passAt)
+         cells |= SpriteCells(a) | (b ? SpriteCells(b) : 0);
+   }
+   for(k = 0; k < is->sprites; k++)
+   {
+      const SpriteDrawn *b = &is->sprite[k];
+      int found = 0;
+      for(i = 0; i < wasCount && !found; i++)
+         found = was->sprite[i].oam == b->oam && was->sprite[i].world == b->world;
+      if(!found)
+         cells |= SpriteCells(b);
+   }
+   return cells;
 }
 
 /* Whether nothing the block just drawn read had changed since its pass
@@ -1009,7 +1108,7 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
             PassTouched[(A >> 15) & 1] = true;
             NewContents((A >> 15) & 1);
             if((A & 63) < 56)
-               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false, BlockContent[(A >> 15) & 1][(A & 63) >> 1] = 0;
+               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false, CellContent[(A >> 15) & 1][(A & 63) >> 1][((A & 0x7FFF) >> 9) % 48] = 0;
             FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF] = V;
          }
          break;
@@ -1065,7 +1164,7 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
             PassTouched[(A >> 15) & 1] = true;
             NewContents((A >> 15) & 1);
             if((A & 63) < 56)
-               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false, BlockContent[(A >> 15) & 1][(A & 63) >> 1] = 0;
+               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false, CellContent[(A >> 15) & 1][(A & 63) >> 1][((A & 0x7FFF) >> 9) % 48] = 0;
             StoreU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF], V);
          }
          break;
@@ -1462,9 +1561,10 @@ static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, c
       for(block = 0; block < 28; block++, fb_source += 2, target += 8 * pitch32)
       {
          int byte;
-         if(sameClut && BlockContent[fb][block] && shown[block] == BlockContent[fb][block])
+         const uint32 content = CellContent[fb][block][Column >> 3];
+         if(sameClut && content && shown[block] == content)
             continue;
-         shown[block] = BlockContent[fb][block];
+         shown[block] = content;
          for(byte = 0; byte < 2; byte++)
          {
             uint32 source_bits = fb_source[byte];
@@ -1646,12 +1746,12 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
 
             BlockInputs *block = &Blocks[DrawingFB][DrawingBlock];
             if(skip && InstantDisplayHack && AllowDrawSkip)
-               PassTouched[DrawingFB] = true, NewContents(DrawingFB), block->valid = false, BlockContent[DrawingFB][DrawingBlock] = 0;
+               PassTouched[DrawingFB] = true, NewContents(DrawingFB), block->valid = false, memset(CellContent[DrawingFB][DrawingBlock], 0, sizeof(CellContent[0][0]));
             else if(PassRepeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB])
             {
                CopyRepeatedBlock();
                block->valid = false;
-               BlockContent[DrawingFB][DrawingBlock] = BlockContent[!DrawingFB][DrawingBlock];
+               memcpy(CellContent[DrawingFB][DrawingBlock], CellContent[!DrawingFB][DrawingBlock], sizeof(CellContent[0][0]));
             }
             else
             {
@@ -1665,16 +1765,39 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   PassAlreadyCopied = false;
                }
                vbgo_tiletrack_begin_block(DrawingBuffers[0], CHR_RAM, DRAM, DrawingBlock, DrawingFB, &JPLT_Cache[0][0]);
-               if(BlockUnchanged(block) && vbgo_tiletrack_keep_block())
+               const int change = BlockChange(block);
+               if(!change && vbgo_tiletrack_keep_block())
                   block->drawnAt = DrawSerial, block->passAt = PassStartedAt;
                else
                {
+                  /* (what the buffer held, to tell which cells come out the same) */
+                  static SpriteDrawn wasSprite[MAX_BLOCK_SPRITES];
+                  const uint32 wasDrawnAt = block->drawnAt, wasPassAt = block->passAt;
+                  const int wasSprites = change == 1 ? block->sprites : -1;
+                  uint8 before[2][384 * 2];
+                  const bool hadDrawing = block->valid;
+                  uint64 same = 0, unchanged = 0;
+                  if(wasSprites > 0)
+                     memcpy(wasSprite, block->sprite, sizeof(SpriteDrawn) * wasSprites);
+                  if(hadDrawing)
+                     for(lr = 0; lr < 2; lr++)
+                     {
+                        int x;
+                        const uint8 *from = FB[DrawingFB][lr] + DrawingBlock * 2;
+                        for(x = 0; x < 384; x++)
+                           before[lr][x * 2] = from[64 * x], before[lr][x * 2 + 1] = from[64 * x + 1];
+                     }
+                  vbgo_tiletrack_block_drawing(change == 2);
                   memset(block->chr, 0, sizeof(block->chr));
                   memset(block->rows, 0, sizeof(block->rows));
+                  memset(block->bgChr, 0, sizeof(block->bgChr));
                   block->objs = OBJS_START;
+                  block->sprites = 0;
                   UsedChr = block->chr;
                   UsedRows = block->rows;
+                  UsedBgChr = block->bgChr;
                   UsedObjs = &block->objs;
+                  Drawing = block;
                   VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
 
                   for(lr = 0; lr < 2; lr++)
@@ -1695,13 +1818,44 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                            | (DrawingBuffers[lr][8 + x + 512 * 7] << 6);
                      }
                   }
+                  if(hadDrawing)
+                  {
+                     int c;
+                     for(c = 0; c < 48; c++)
+                     {
+                        int x, differs = 0;
+                        for(lr = 0; lr < 2 && !differs; lr++)
+                        {
+                           const uint8 *to = FB[DrawingFB][lr] + DrawingBlock * 2;
+                           for(x = c * 8; x < c * 8 + 8; x++)
+                              differs |= (to[64 * x] ^ before[lr][x * 2]) | (to[64 * x + 1] ^ before[lr][x * 2 + 1]);
+                        }
+                        same |= (uint64)!differs << c;
+                     }
+                  }
+                  {
+                     const uint32 fresh = NewContent();
+                     int c;
+                     for(c = 0; c < 48; c++)
+                        if(!(same >> c & 1) || !CellContent[DrawingFB][DrawingBlock][c])
+                           CellContent[DrawingFB][DrawingBlock][c] = fresh;
+                  }
                   block->valid = true;
                   block->drawnAt = DrawSerial;
                   block->passAt = PassStartedAt;
-                  BlockContent[DrawingFB][DrawingBlock] = NewContent();
-                  UsedChr = UsedRows = UnusedInputs;
+                  UsedChr = UsedRows = UsedBgChr = UnusedInputs;
                   UsedObjs = &UnusedObjs;
-                  vbgo_tiletrack_block_drawn(block->chr, BlockSettled(block));
+                  Drawing = NULL;
+                  if(change == 0)
+                     unchanged = ~0ull;
+                  else if(change == 1)
+                  {
+                     /* (a scratch BlockInputs view of the sprites it drew before) */
+                     static BlockInputs was;
+                     memcpy(was.sprite, wasSprite, sizeof(SpriteDrawn) * (wasSprites > 0 ? wasSprites : 0));
+                     unchanged = ~SpriteChangedCells(&was, wasSprites, wasDrawnAt, wasPassAt, block);
+                  }
+                  vbgo_tiletrack_block_drawn(block->chr, BlockSettled(block), same, unchanged);
                }
             }
 
