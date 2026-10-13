@@ -69,6 +69,9 @@ extern "C"
     // The built-in color packs (generated - cmake/EmbedColorPacks.cmake).
     extern const unsigned char vbc_packs_zip[];
     extern const size_t vbc_packs_zip_size;
+
+    // An id for the picture the VIP displayed in the frame that just ended.
+    uint32_t vbgo_vip_last_frame_picture(void);
 }
 
 namespace
@@ -399,6 +402,17 @@ namespace
     unsigned g_frameW = 0, g_frameH = 0;
     size_t g_framePitch = 0;
     std::vector<uint8_t> g_raw, g_colored;
+    uint32_t g_lastPicture; // (the VIP's id for the last frame's picture)
+    bool g_repaint = true;  // the next frame is colored in full regardless
+
+    // The same picture as the last frame, by a renderer at rest: nothing new to show.
+    bool SameAsLastFrame()
+    {
+        const uint32_t picture = vbgo_vip_last_frame_picture();
+        const bool same = !g_repaint && picture == g_lastPicture;
+        g_lastPicture = picture;
+        return same && (!g_shadeColors || !g_renderer.Active() || !vbgo_tiletrack_is_enabled() || g_renderer.Coast());
+    }
 
     void OnVideo(const void *data, unsigned width, unsigned height, size_t pitch)
     {
@@ -628,6 +642,12 @@ namespace
     // Colors the frame Beetle drew and sends the frontend the left eye.
     void Present()
     {
+        if (SameAsLastFrame())
+        {
+            g_video(nullptr, VBGO_TT_WIDTH, VBGO_TT_HEIGHT, 0);
+            return;
+        }
+        g_repaint = false;
         const unsigned w = g_frameW, h = std::min<unsigned>(g_frameH, VBGO_TT_HEIGHT);
         const size_t pixels = static_cast<size_t>(w) * h, rowBytes = static_cast<size_t>(w) * 4;
         g_colored.resize(pixels * 4);
@@ -730,6 +750,7 @@ extern "C"
     {
         beetle_retro_reset();
         vbgo_tiletrack_reset();
+        g_repaint = true;
     }
 
     RETRO_API void retro_run(void)
@@ -740,6 +761,7 @@ extern "C"
             g_beetleOptionsChanged = true; // (Beetle VB's own options may have changed too)
             ReadOptions();
             ApplyColors();
+            g_repaint = true;
         }
         g_frame = nullptr;
         beetle_retro_run();
@@ -749,7 +771,10 @@ extern "C"
         if (shown && g_frame && g_frameW >= VBGO_TT_WIDTH && g_frameH >= VBGO_TT_HEIGHT)
             Present();
         else
+        {
+            g_repaint = true;
             g_video(nullptr, VBGO_TT_WIDTH, VBGO_TT_HEIGHT, 0); // (nothing new drawn)
+        }
     }
 
     RETRO_API size_t retro_serialize_size(void) { return beetle_retro_serialize_size(); }
@@ -766,6 +791,7 @@ extern "C"
         static std::vector<uint8_t> before(kBufferBytes * 4);
         std::memcpy(before.data(), vbgo_vip_framebuffers(), before.size());
         const bool ok = beetle_retro_unserialize(data, size);
+        g_repaint = true;
         const uint8_t *after = vbgo_vip_framebuffers();
         for (unsigned b = 0; ok && b < 4; ++b)
         {
@@ -810,6 +836,7 @@ extern "C"
         g_env(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
 
         vbgo_tiletrack_reset();
+        g_repaint = true;
         ReadOptions();
         const std::string from = LoadPack();
         ApplyColors();

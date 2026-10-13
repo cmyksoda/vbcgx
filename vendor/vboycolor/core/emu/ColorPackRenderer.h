@@ -77,6 +77,10 @@ public:
     // background, which painted colors fade toward with the game's
     // brightness (same as the palette itself - see ShadeColorizer).
     void Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWidth, const uint32_t eyeOffset[2], const ShadeRgb &background);
+    // Instead of painting the same frame again after a Paint that left
+    // everything carried over to the next frame as it found it: false if it
+    // still needs painting.
+    bool Coast();
 
     // How the last frame drew its worlds (for tools).
     static constexpr int kNoDisparity = 0x7FFF;
@@ -176,7 +180,8 @@ private:
     int m_pairCount = 0;
     uint32_t m_frame = 0;
     // Pairs' disparities, where out of date (once a frame, before the right eye).
-    void EstimatePairs(const vbgo_tt_eye_view view[2], const uint8_t *raw, uint32_t fbWidth, const uint32_t eyeOffset[2]);
+    int EstimatePairs(const vbgo_tt_eye_view view[2], const uint8_t *raw, uint32_t fbWidth, const uint32_t eyeOffset[2]);
+    bool PairDue(const Pair &pair, const uint16_t *worlds, std::array<uint16_t, 32> &attributes, uint32_t &others, bool &scrolled) const;
     void EstimatePair(Pair &pair, const uint64_t *leftBits, const uint64_t *rightBits, bool scrolled);
     std::vector<uint64_t> m_estimateBits; // (EstimatePairs: the pictures' shades as bit rows)
     // Tiles the left pictures of pairs draw this frame (by hash, with the
@@ -309,6 +314,11 @@ private:
                         const bool have[2], const int bg[3]);
     DepthColors m_depth;
     std::vector<uint8_t> m_depthShades[2], m_depthWant[2];
+
+    bool m_settled = false;
+    bool m_pairsChecked = false; // (the last Paint ran EstimatePairs)
+    uint32_t m_pairsWanted = 0;  // (pairs the last Paint wanted, bit per pair)
+    bool MarkersSettled() const;
 
     const TileColorPack *m_pack = nullptr;
     std::vector<uint32_t> m_cellStart;  // 65537 entries: cell n's CellTiles are [m_cellStart[n], m_cellStart[n + 1])

@@ -783,8 +783,13 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                               const ShadeRgb &background)
 {
     const TileColorPack *pack = m_packShown ? m_pack : nullptr;
+    m_settled = false;
     if (!pack && !m_auto)
         return;
+    // (what carries over to later frames, to tell whether this one changed it)
+    const uint32_t autoWorldsBefore = m_autoWorlds, figuresBefore = m_figureWorlds;
+    const unsigned maxLevelBefore = m_autoMaxLevel;
+    const std::array<int16_t, 32> extentBefore = m_worldExtent;
     vbgo_tt_eye_view view[2];
     const bool have[2] = {vbgo_tiletrack_eye_view(0, &view[0]), vbgo_tiletrack_eye_view(1, &view[1])};
     const int bg[3] = {static_cast<int>(background.b * 255.0f + 0.5f), static_cast<int>(background.g * 255.0f + 0.5f),
@@ -1016,6 +1021,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         m_runCache.resize(kRunCacheSize);
 
     RunSetUp setUp{pack, haveCells, markers != nullptr, haveContexts, pairs, leftPairSlot.data(), 0};
+    bool reestimated = false;
     for (unsigned eye = 0; eye < 2; ++eye)
     {
         if (!have[eye])
@@ -1025,7 +1031,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         if (pack)
             ResolveSlots(v.hashes);
         if (eye == 1 && pairs)
-            EstimatePairs(view, raw, fbWidth, eyeOffset);
+            reestimated = EstimatePairs(view, raw, fbWidth, eyeOffset) > 0;
         if (eye == 1 && pairs)
         {
             // The tiles each pair's left picture drew (by contents: games
@@ -1313,7 +1319,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             PaintAmbiguous(frame, fbWidth, eyeOffset[eye], v);
     }
     // (only where the game's CPU drew - else every pixel shown came from tiles)
-    if (m_auto && ((have[0] && view[0].cpu_drawn) || (have[1] && view[1].cpu_drawn) || !have[0] || !have[1]))
+    const bool depth = m_auto && ((have[0] && view[0].cpu_drawn) || (have[1] && view[1].cpu_drawn) || !have[0] || !have[1]);
+    if (depth)
         brightest = std::max(brightest, PaintDepth(frame, raw, fbWidth, eyeOffset, view, have, bg));
     // Automatic colors: the layers this game draws, its brightness (without
     // a pack, they fade relative to the brightest it has shown).
@@ -1336,6 +1343,60 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         m_autoMaxLevel = brightest;
         SetFadeReference(brightest);
     }
+    // (depth colors keep estimates that age, so they never count as settled; pairs' ages are kept by Coast)
+    m_settled = !depth && !reestimated && m_autoWorlds == autoWorldsBefore && m_figureWorlds == figuresBefore &&
+                m_autoMaxLevel == maxLevelBefore && m_worldExtent == extentBefore && MarkersSettled();
+    m_pairsChecked = pairs && have[1];
+    m_pairsWanted = 0;
+    for (int p = 0; p < m_pairCount; ++p)
+        if (m_pairs[p].wantedAt == m_frame)
+            m_pairsWanted |= 1u << p;
+}
+
+bool ColorPackRenderer::Coast()
+{
+    // The same frame again after a settled Paint would change nothing but the
+    // frame count and the pairs it wants - unless a pair's estimate comes due.
+    if (!m_settled)
+        return false;
+    ++m_frame;
+    if (m_pairsChecked)
+    {
+        vbgo_tt_eye_view view[2];
+        const bool have[2] = {vbgo_tiletrack_eye_view(0, &view[0]), vbgo_tiletrack_eye_view(1, &view[1])};
+        const uint16_t *worlds = have[0] && view[0].worlds ? view[0].worlds : have[1] ? view[1].worlds : nullptr;
+        for (int p = 0; worlds && p < m_pairCount; ++p)
+        {
+            std::array<uint16_t, 32> attributes;
+            uint32_t others;
+            bool scrolled;
+            if (PairDue(m_pairs[p], worlds, attributes, others, scrolled))
+            {
+                --m_frame;
+                return false;
+            }
+        }
+    }
+    for (int p = 0; p < m_pairCount; ++p)
+        if (m_pairsWanted >> p & 1)
+            m_pairs[p].wantedAt = m_frame;
+    return true;
+}
+
+bool ColorPackRenderer::MarkersSettled() const
+{
+    // Paint reads the last three frames' markers together: settled once all three agree.
+    if (m_markerGrid[0].empty())
+        return true;
+    const size_t cells = kGridW * kGridH;
+    for (unsigned g = 1; g < 3; ++g)
+    {
+        if (std::memcmp(m_markerGrid[g].data(), m_markerGrid[0].data(), cells * sizeof(ContextGroupBits)) != 0)
+            return false;
+        if (!m_markerLayer[0].empty() && std::memcmp(m_markerLayer[g].data(), m_markerLayer[0].data(), cells) != 0)
+            return false;
+    }
+    return true;
 }
 
 unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, const uint8_t *raw, uint32_t fbWidth, const uint32_t eyeOffset[2],
@@ -1414,51 +1475,60 @@ inline uint64_t ByteCounts(uint64_t x)
 }
 } // namespace
 
-void ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8_t *raw, uint32_t fbWidth,
-                                      const uint32_t eyeOffset[2])
+bool ColorPackRenderer::PairDue(const Pair &pair, const uint16_t *worlds, std::array<uint16_t, 32> &attributes, uint32_t &others,
+                                bool &scrolled) const
+{
+    // Kept while a pair's registers stay put (64 frames at most); while both
+    // its worlds scroll together, refined around the last estimate every few
+    // frames; anything else searches again. Only pairs that needed them
+    // lately (or never had any).
+    if (pair.estimated && m_frame - pair.wantedAt > 64)
+        return false;
+    std::copy(&worlds[pair.left * 16], &worlds[pair.left * 16] + 16, attributes.begin());
+    std::copy(&worlds[pair.right * 16], &worlds[pair.right * 16] + 16, attributes.begin() + 16);
+    // (a pair's other left worlds: any change there is another picture)
+    others = 2166136261u;
+    for (int w = 0; w < 32; ++w)
+        if (w != pair.left && (pair.leftWorlds >> w & 1))
+            for (int f = 0; f < 16; ++f)
+                others = (others ^ worlds[w * 16 + f]) * 16777619u;
+    const uint32_t age = m_frame - pair.estimatedAt;
+    if (pair.estimated && attributes == pair.attributes && others == pair.otherAttributes && age < 64)
+        return false;
+    scrolled = pair.estimated && others == pair.otherAttributes;
+    for (int f = 0; f < 16 && scrolled; ++f)
+        scrolled = f >= 1 && f <= 6 ? static_cast<uint16_t>(attributes[16 + f] - attributes[f]) ==
+                                          static_cast<uint16_t>(pair.attributes[16 + f] - pair.attributes[f])
+                                    : attributes[f] == pair.attributes[f] && attributes[16 + f] == pair.attributes[16 + f];
+    return !(scrolled && age < 4);
+}
+
+int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8_t *raw, uint32_t fbWidth,
+                                     const uint32_t eyeOffset[2])
 {
     // The pairs whose disparities are out of date (once a frame, before the
-    // right eye is painted): kept while a pair's registers stay put (64
-    // frames at most); while both its worlds scroll together, refined
-    // around the last estimate every few frames; anything else searches
-    // again. Only pairs that needed them lately (or never had any).
+    // right eye is painted - see PairDue). Returns how many were.
     const uint16_t *worlds = view[0].worlds ? view[0].worlds : view[1].worlds;
     if (!worlds)
-        return;
+        return 0;
     std::array<int, kMaxPairs> todo{};
     std::array<bool, kMaxPairs> local{};
     int count = 0;
     for (int p = 0; p < m_pairCount; ++p)
     {
         Pair &pair = m_pairs[p];
-        if (pair.estimated && m_frame - pair.wantedAt > 64)
-            continue;
         std::array<uint16_t, 32> attributes;
-        std::copy(&worlds[pair.left * 16], &worlds[pair.left * 16] + 16, attributes.begin());
-        std::copy(&worlds[pair.right * 16], &worlds[pair.right * 16] + 16, attributes.begin() + 16);
-        // (a pair's other left worlds: any change there is another picture)
-        uint32_t others = 2166136261u;
-        for (int w = 0; w < 32; ++w)
-            if (w != pair.left && (pair.leftWorlds >> w & 1))
-                for (int f = 0; f < 16; ++f)
-                    others = (others ^ worlds[w * 16 + f]) * 16777619u;
-        const uint32_t age = m_frame - pair.estimatedAt;
-        if (pair.estimated && attributes == pair.attributes && others == pair.otherAttributes && age < 64)
+        uint32_t others;
+        bool scrolled;
+        if (!PairDue(pair, worlds, attributes, others, scrolled))
             continue;
-        bool scrolled = pair.estimated && others == pair.otherAttributes;
         pair.otherAttributes = others;
-        for (int f = 0; f < 16 && scrolled; ++f)
-            scrolled = f >= 1 && f <= 6 ? static_cast<uint16_t>(attributes[16 + f] - attributes[f]) ==
-                                              static_cast<uint16_t>(pair.attributes[16 + f] - pair.attributes[f])
-                                        : attributes[f] == pair.attributes[f] && attributes[16 + f] == pair.attributes[16 + f];
-        if (scrolled && age < 4)
-            continue;
         pair.attributes = attributes;
         local[count] = scrolled;
         todo[count++] = p;
     }
     if (!count)
-        return;
+        return 0;
     // Both pictures of every one of them, in one pass: per pair, per eye,
     // per row, per shade 1-3, a guarded bit row.
     std::array<int8_t, 32> layerSlot[2], spriteSlot;
@@ -1511,6 +1581,7 @@ void ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint
     for (int k = 0; k < count; ++k)
         EstimatePair(m_pairs[todo[k]], &bits[static_cast<size_t>(k) * 2 * eyeRows], &bits[(static_cast<size_t>(k) * 2 + 1) * eyeRows],
                      local[k]);
+    return count;
 }
 
 void ColorPackRenderer::EstimatePair(Pair &pair, const uint64_t *leftBits, const uint64_t *rightBits, bool scrolled)

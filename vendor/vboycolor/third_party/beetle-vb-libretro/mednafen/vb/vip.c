@@ -385,10 +385,56 @@ static bool PassClean[2];    /* that pass drew with unchanged inputs, and the CP
 static bool PassTouched[2];  /* the CPU wrote into the buffer during its pass */
 static bool PassRepeats;     /* the pass in progress copies the other buffer's */
 static bool PassAlreadyCopied; /* ... whose blocks this buffer already holds */
+/* What each frame shows, to tell a frame that shows the same picture as the
+ * last: each buffer's contents get a fresh version when drawn or written, the
+ * display's brightness and settings a serial, and a frame that changes either
+ * while it's displayed shows a picture of its own. */
+static uint32 Versions;          /* (the last version handed out) */
+static uint32 FBVersion[2];
+static uint32 DisplaySerial;
+static bool FrameChanged;
+static uint32 ShownKey[2];       /* FBVersion of the buffer shown and DisplaySerial, as this frame started */
+static uint32 FramePicture, LastFramePicture;
+
+uint32 vbgo_vip_last_frame_picture(void) { return LastFramePicture; }
+
+static void NewContents(int fb)
+{
+   FBVersion[fb] = ++Versions;
+   if(fb == DisplayFB)
+      FrameChanged = true;
+}
+
+static void DisplayChanged(void)
+{
+   DisplaySerial++;
+   FrameChanged = true;
+}
+
+/* At a frame's start (after the buffers swapped): the picture of the frame
+ * that just ended, and the one this frame starts showing. With the instant
+ * display hack the frame's output is drawn right here, from the buffers as
+ * they are now; else it was drawn column by column while it ran. */
+static void StartFramePicture(void)
+{
+   const bool sameKey = ShownKey[0] == FBVersion[DisplayFB] && ShownKey[1] == DisplaySerial;
+   if(InstantDisplayHack)
+      LastFramePicture = sameKey ? LastFramePicture : ++Versions;
+   else
+      LastFramePicture = FrameChanged ? ++Versions : FramePicture;
+   if(FrameChanged || !sameKey)
+      FramePicture = ++Versions;
+   ShownKey[0] = FBVersion[DisplayFB];
+   ShownKey[1] = DisplaySerial;
+   FrameChanged = false;
+}
 
 static void ForgetPasses(void)
 {
    DrawSerial++;
+   NewContents(0);
+   NewContents(1);
+   DisplayChanged();
    PassClean[0] = PassClean[1] = false;
    PassRepeats = false;
 }
@@ -402,7 +448,12 @@ static void BeginPass(void)
    PassClean[DrawingFB] = false;
    PassTouched[DrawingFB] = false;
    if(PassRepeats)
+   {
       vbgo_tiletrack_share_pass(DrawingFB, src);
+      FBVersion[DrawingFB] = FBVersion[src];
+   }
+   else
+      NewContents(DrawingFB);
 }
 
 static void CopyRepeatedBlock(void)
@@ -621,6 +672,8 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
          break; /* Display control, read-only. */
 
       case 0x22:
+         if(DPCTRL != (V & 0x703) || (V & 1))
+            DisplayChanged();
          DPCTRL = V & (0x703); /* Display-control, write-only */
          if(V & 1)
          {
@@ -631,21 +684,29 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
          break;
 
       case 0x24:
+         if(BRTA != (V & 0xFF))
+            DisplayChanged();
          BRTA = V & 0xFF;	/* BRTA */
          RecalcBrightnessCache();
          break;
 
       case 0x26:
+         if(BRTB != (V & 0xFF))
+            DisplayChanged();
          BRTB = V & 0xFF;	/* BRTB */
          RecalcBrightnessCache();
          break;
 
       case 0x28:
+         if(BRTC != (V & 0xFF))
+            DisplayChanged();
          BRTC = V & 0xFF;	/* BRTC */
          RecalcBrightnessCache();
          break;
 
       case 0x2A:
+         if(REST != (V & 0xFF))
+            DisplayChanged();
          REST = V & 0xFF;	/* REST */
          RecalcBrightnessCache();
          break;
@@ -669,6 +730,8 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
             if(PassRepeats)
                vbgo_tiletrack_resume_pass(DrawingFB, DrawingBlock);
             PassRepeats = false;
+            NewContents(DrawingFB);
+            FrameChanged = true;
             DrawingFB         = DisplayFB;
             DisplayFB        ^= 1;
             DrawingActive     = 0;
@@ -801,6 +864,7 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
          {
             PassClean[(A >> 15) & 1] = false;
             PassTouched[(A >> 15) & 1] = true;
+            NewContents((A >> 15) & 1);
             FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF] = V;
          }
          break;
@@ -808,7 +872,11 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
       case 0x2:
       case 0x3:
          if(VIP_MA16R8(DRAM, A & 0x1FFFF) != V)
+         {
             DrawSerial++;
+            if((A & 0x1FFFF) >= 0x1DC00 && (A & 0x1FFFF) < 0x1E000)
+               DisplayChanged();
+         }
          VIP_MA16W8(DRAM, A & 0x1FFFF, V);
          break;
 
@@ -849,6 +917,7 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
          {
             PassClean[(A >> 15) & 1] = false;
             PassTouched[(A >> 15) & 1] = true;
+            NewContents((A >> 15) & 1);
             StoreU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF], V);
          }
          break;
@@ -856,7 +925,11 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
       case 0x2:
       case 0x3:
          if(VIP_MA16R16(DRAM, A & 0x1FFFF) != V)
+         {
             DrawSerial++;
+            if((A & 0x1FFFF) >= 0x1DC00 && (A & 0x1FFFF) < 0x1E000)
+               DisplayChanged();
+         }
          VIP_MA16W16(DRAM, A & 0x1FFFF, V);
          break;
       case 0x4:
@@ -1399,7 +1472,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
             MDFN_ALIGN(8) uint8 DrawingBuffers[2][512 * 8];	/* Don't decrease this from 512 unless you adjust vip_draw.inc(including areas that draw off-visible >= 384 and >= -7 for speed reasons) */
 
             if(skip && InstantDisplayHack && AllowDrawSkip)
-               PassTouched[DrawingFB] = true;
+               PassTouched[DrawingFB] = true, NewContents(DrawingFB);
             else if(PassRepeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB])
                CopyRepeatedBlock();
             else
@@ -1408,6 +1481,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                if(PassRepeats)
                {
                   /* (its inputs changed: the rest is drawn) */
+                  NewContents(DrawingFB);
                   vbgo_tiletrack_resume_pass(DrawingFB, DrawingBlock);
                   PassRepeats = false;
                   PassAlreadyCopied = false;
@@ -1521,6 +1595,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
 
                   GameFrameCounter = 0;
                }
+               StartFramePicture();
 
                if(!skip && InstantDisplayHack)
                {
