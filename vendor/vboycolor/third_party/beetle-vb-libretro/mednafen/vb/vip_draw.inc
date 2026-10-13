@@ -3,6 +3,10 @@
 #define BGM_AFFINE	0x2
 #define BGM_OBJ		0x3
 
+/* What the block being drawn reads (see BlockInputs in vip.c). */
+#define USE_CHR(c) (UsedChr[(c) >> 5] |= 1u << ((c) & 31))
+#define USE_ROW(h) (UsedRows[((h) & 0xFFFF) >> 11] |= 1u << ((((h) & 0xFFFF) >> 6) & 31))
+
 
 static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, bool overplane, uint16 overplane_char, uint32 SourceX, uint32 SourceY, uint32 scx, uint32 scy, uint16 DestX, uint16 DestY, uint16 DestWidth, uint16 DestHeight)
 {
@@ -43,6 +47,10 @@ static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, b
  SourceY &= SourceY_Mask;
  BGMap_Base |= (((SourceY >> 3) & 0x3F) * 0x40) | (((SourceY << 3) & ~0xFFF) << scx);
 
+ USE_ROW(overplane_char);
+ for(x = 0; x < (int)BGMap_XCount; x++)
+  USE_ROW(BGMap_Base | (x << 12));
+
  for(x = start_x; x <= final_x; x++)
  {
   unsigned int char_sub_y;
@@ -70,6 +78,7 @@ static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, b
   {
    uint32 pixels = CHR16[char_no * 8 + char_sub_y];
 
+   USE_CHR(char_no);
    if(bgsc & 0x2000)
    {
     if((pixels >> 14) & 3) target[0 + x] = GPLT_Cache[palette_selector][(pixels >> 14) & 3];
@@ -101,6 +110,7 @@ static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, b
    unsigned int char_sub_x = hflip_xor ^ (SourceX & 0x7);
    uint8 pixel = (CHR16[char_no * 8 + char_sub_y] >> (char_sub_x * 2)) & 0x3;
 
+   USE_CHR(char_no);
    if(pixel)
     target[x] = GPLT_Cache[palette_selector][pixel];
    SourceX++;
@@ -174,6 +184,8 @@ static void DrawAffine(uint8 *target, uint16 RealY, bool lr, uint32 ParamBase, u
  if(final_x > 383)
   final_x = 383;
 
+ memset(UsedRows, 0xFF, sizeof(uint32) * (1024 / 32));
+
 if(dy == 0)	/* Optimization for no rotation. */
 {
  int x;
@@ -206,6 +218,7 @@ if(dy == 0)	/* Optimization for no rotation. */
   char_sub_x = hflip_xor ^ ((SourceX >> 8) & 0xE);
 
   pixel = (CHR16[((bgsc & 0x7FF) * 8) | char_sub_y] >> char_sub_x) & 0x3;
+  USE_CHR(bgsc & 0x7FF);
 
   if(pixel)
    target[x] = GPLT_Cache[bgsc >> 14][pixel];
@@ -248,6 +261,7 @@ else
   char_sub_x = hflip_xor ^ ((SourceX >> 9) & 0x7);
 
   pixel = (CHR16[char_no * 8 + char_sub_y] >> (char_sub_x * 2)) & 0x3;
+  USE_CHR(char_no);
 
   if(pixel)
    target[x] = GPLT_Cache[palette_selector][pixel];
@@ -313,6 +327,7 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, in
   jlron[1] = (bool)(oam_ptr[1] & 0x4000);
   char_no = oam_ptr[3] & 0x7FF;
   pixels_save = CHR16[char_no * 8 + char_sub_y];
+  USE_CHR(char_no);
 
   for(lr = 0; lr < 2; lr++)
   {
@@ -437,7 +452,10 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
     if(lron[lr])
     {
      if(bgm == 1)	/* HBias */
+     {
+      USE_ROW(param_base + (((RealY - DestY) * 2) | lr));
       srcX += (int16)DRAM[(param_base + (((RealY - DestY) * 2) | lr)) & 0xFFFF];
+     }
 
      DrawBG(fb[lr], RealY, lr, bgmap_base, over, overplane_char, (int32)(int16)srcX, (int32)(int16)srcY, scx, scy, DestX, DestY, window_width, window_height);
     }

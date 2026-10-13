@@ -37,6 +37,13 @@ static uint16_t s_worlds[VBGO_TT_SLOTS][VBGO_WORLD_HALFWORDS];
 static uint16_t s_oam[VBGO_TT_SLOTS][VBGO_OAM_HALFWORDS];
 static int s_have_attrs[VBGO_TT_SLOTS];
 static unsigned s_flat[VBGO_TT_SLOTS]; /* flat sprite palettes as its pass started (see the view) */
+/* Per slot and block: the stamp of the pass whose tags it holds there (0:
+ * none), so a block a pass keeps from this buffer's last one can take the
+ * new stamp instead of being drawn again (vbgo_tiletrack_keep_block). */
+#define VBGO_TT_BLOCKS (VBGO_TT_HEIGHT / 8)
+static uint16_t s_block_stamp[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
+static uint16_t s_prev_stamp[2]; /* per frame buffer: its last pass's stamp, as its pass started */
+static uint16_t s_block_was;     /* the block begun last: its slot's stamp before */
 
 /* Per frame buffer: its slot, whether it has tags, and whether the CPU wrote
  * into it since its pass (or a reset since). */
@@ -80,7 +87,10 @@ static void NextStamp(int keep)
       int k;
       for (k = 0; k < VBGO_TT_SLOTS; k++)
          if (k != keep)
+         {
             memset(s_tags[k], 0, sizeof(s_tags[k]));
+            memset(s_block_stamp[k], 0, sizeof(s_block_stamp[k]));
+         }
       memset(s_have, 0, sizeof(s_have));
       s_next_stamp = 1;
    }
@@ -109,13 +119,22 @@ static void Unshare(unsigned fb)
    from = s_slot[fb];
    to = FreeSlot();
    memcpy(s_tags[to], s_tags[from], sizeof(s_tags[to]));
+   memcpy(s_block_stamp[to], s_block_stamp[from], sizeof(s_block_stamp[to]));
    CopySlotInfo(to, from);
    s_slot[fb] = to;
+}
+
+/* New tracking settings: no tags drawn before can stand for this pass's. */
+static void ForgetBlocks(void)
+{
+   s_settings_serial++;
+   memset(s_block_stamp, 0, sizeof(s_block_stamp));
 }
 
 static void StartPass(unsigned fb, const uint16_t *chr_ram, const uint16_t *dram)
 {
    int c, slot;
+   s_prev_stamp[fb] = s_have[fb] ? s_stamp[s_slot[fb]] : 0;
    if (s_slot[fb] == s_slot[fb ^ 1])
       s_slot[fb] = FreeSlot();
    slot = s_slot[fb];
@@ -154,7 +173,7 @@ void vbgo_tiletrack_set_enabled(bool enabled)
       memset(s_disp, 0, sizeof(s_disp));
    }
    if (vbgo_tt_on != (enabled ? 1 : 0))
-      s_settings_serial++;
+      ForgetBlocks();
    vbgo_tt_on = enabled ? 1 : 0;
 }
 
@@ -163,6 +182,7 @@ bool vbgo_tiletrack_is_enabled(void) { return vbgo_tt_on != 0; }
 void vbgo_tiletrack_reset(void)
 {
    memset(s_tags, 0, sizeof(s_tags));
+   memset(s_block_stamp, 0, sizeof(s_block_stamp));
    memset(s_have, 0, sizeof(s_have));
    s_slot[0] = 0;
    s_slot[1] = 1;
@@ -176,13 +196,14 @@ void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr)
 {
    Unshare(fb & 1);
    memset(s_tags[s_slot[fb & 1]][lr & 1], 0, sizeof(s_tags[0][0]));
+   memset(s_block_stamp[s_slot[fb & 1]], 0, sizeof(s_block_stamp[0]));
    s_cpu[fb & 1] = 1;
 }
 
 void vbgo_tiletrack_set_fill_mode(int mode)
 {
    if (vbgo_tt_fill != mode)
-      s_settings_serial++;
+      ForgetBlocks();
    vbgo_tt_fill = mode;
 }
 
@@ -190,7 +211,7 @@ int vbgo_tiletrack_fill_mode(void) { return vbgo_tt_fill; }
 
 void vbgo_tiletrack_set_fill_cells(const uint8_t *bits)
 {
-   s_settings_serial++;
+   ForgetBlocks();
    if (bits)
       memcpy(vbgo_tt_fill_cells, bits, sizeof(vbgo_tt_fill_cells));
    else
@@ -221,6 +242,41 @@ void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *
    vbgo_tt_dst[0] = &s_tags[s_slot[fb]][0][block_no * 8];
    vbgo_tt_dst[1] = &s_tags[s_slot[fb]][1][block_no * 8];
    vbgo_tt_world = 0;
+   if (block_no < VBGO_TT_BLOCKS)
+   {
+      /* (drawn or kept, the block's tags are this pass's from here on) */
+      s_block_was = s_block_stamp[s_slot[fb]][block_no] == s_prev_stamp[fb] ? s_prev_stamp[fb] : 0;
+      s_block_stamp[s_slot[fb]][block_no] = s_stamp[s_slot[fb]];
+   }
+   else
+      s_block_was = 0;
+}
+
+/* A tag's stamp as a halfword of its own (its top 16 bits). */
+typedef uint16_t __attribute__((__may_alias__)) StampHalf;
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define STAMP_HALF 0
+#else
+#define STAMP_HALF 3
+#endif
+
+bool vbgo_tiletrack_keep_block(void)
+{
+   const uint16_t now = (uint16_t)(vbgo_tt_stamp_bits >> 48);
+   unsigned e, x, k;
+   if (!vbgo_tt_on)
+      return true;
+   if (!s_block_was)
+      return false;
+   for (e = 0; e < 2; e++)
+   {
+      StampHalf *stamp = (StampHalf *)vbgo_tt_dst[e] + STAMP_HALF;
+      for (x = 0; x < VBGO_TT_WIDTH; x++, stamp += VBGO_TT_COLUMN * 4)
+         for (k = 0; k < 8 * 4; k += 4)
+            if (stamp[k] == s_block_was)
+               stamp[k] = now;
+   }
+   return true;
 }
 
 bool vbgo_tiletrack_pass_reusable(unsigned src_fb)
@@ -259,6 +315,8 @@ void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
       s_slot[fb] = to;
    }
    s_stamp[to] = s_next_stamp;
+   for (e = 0; e < block_no && e < VBGO_TT_BLOCKS; e++)
+      s_block_stamp[to][e] = s_block_stamp[from][e] == old_stamp ? s_next_stamp : s_block_stamp[from][e];
    /* (the blocks it repeated: the other buffer's tags, as this pass's) */
    for (e = 0; e < 2; e++)
       for (x = 0; x < VBGO_TT_WIDTH; x++)
@@ -299,6 +357,8 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
          continue;
       for (p = 0; p < 4; p++)
          s_tags[s_slot[fb & 1]][lr & 1][column * VBGO_TT_COLUMN + row + p] = 0;
+      if (row / 8 < VBGO_TT_BLOCKS)
+         s_block_stamp[s_slot[fb & 1]][row / 8] = 0;
    }
 }
 

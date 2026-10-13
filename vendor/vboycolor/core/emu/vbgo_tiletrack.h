@@ -255,6 +255,11 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
  * changed since that pass started): whether src_fb's tags can stand for it,
  * sharing them for the pass into fb, and - if its inputs change partway -
  * fb's own tags from block_no on (the blocks before as src_fb's). */
+/* After vbgo_tiletrack_begin_block, for a block the VIP doesn't draw because
+ * it would draw what this buffer's last pass did (the frame buffer still holds
+ * it): keeps that pass's tags for it as this pass's. False if they're gone
+ * (the block must be drawn after all). */
+bool vbgo_tiletrack_keep_block(void);
 bool vbgo_tiletrack_pass_reusable(unsigned src_fb);
 void vbgo_tiletrack_share_pass(unsigned fb, unsigned src_fb);
 void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no);

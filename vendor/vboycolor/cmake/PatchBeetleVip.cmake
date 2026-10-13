@@ -102,13 +102,6 @@ function(vbgo_generate_patched_vip VB_CORE_DIR OUT_DIR)
         [=[static uint8 FB[2][2][0x6000];
 const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBoyGo */]=]
         "vip.c (the frame buffers)")
-    # Each block of 8 lines: tell the tracker where the block's pixels go
-    # (it writes its tags straight into its own frame buffer copy).
-    _vbgo_replace_once(VIP
-        [=[               VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);]=]
-        [=[               vbgo_tiletrack_begin_block(DrawingBuffers[0], CHR_RAM, DRAM, DrawingBlock, DrawingFB, &JPLT_Cache[0][0]); /* VirtualBoyGo */
-               VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);]=]
-        "vip.c (VIP_DrawBlock call)")
     # Displayed column -> output tags (side-by-side is the only 3D mode the
     # frontend uses; this function is what writes it).
     _vbgo_replace_once(VIP

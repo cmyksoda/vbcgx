@@ -385,6 +385,24 @@ static bool PassClean[2];    /* that pass drew with unchanged inputs, and the CP
 static bool PassTouched[2];  /* the CPU wrote into the buffer during its pass */
 static bool PassRepeats;     /* the pass in progress copies the other buffer's */
 static bool PassAlreadyCopied; /* ... whose blocks this buffer already holds */
+static uint32 PassStartedAt; /* DrawSerial as the pass in progress started */
+/* A block whose inputs haven't changed since this buffer last drew it still
+ * holds that drawing, so it's kept instead of drawn again. Drawing notes what
+ * a block reads (vip_draw.inc); writes note when, in DrawSerial terms. */
+static uint32 GlobalChangedAt;    /* world attributes, palettes, sprite groups, background color */
+static uint32 RowChangedAt[1024]; /* DRAM, per 64 halfwords */
+static uint32 ChrChangedAt[2048];
+static uint32 ObjChangedAt[32];   /* sprite attributes, per 8 rows the sprite was or is on */
+typedef struct
+{
+   bool valid;     /* the buffer holds this drawing (the CPU hasn't written over it) */
+   uint32 drawnAt; /* DrawSerial when drawn, or last found unchanged */
+   uint32 passAt;  /* ... and as that pass started (the tile tracker's blank tiles are the pass's) */
+   uint32 chr[2048 / 32], rows[1024 / 32];
+} BlockInputs;
+static BlockInputs Blocks[2][28];
+static uint32 UnusedInputs[2048 / 32];
+static uint32 *UsedChr = UnusedInputs, *UsedRows = UnusedInputs; /* the block being drawn's */
 /* What each frame shows, to tell a frame that shows the same picture as the
  * last: each buffer's contents get a fresh version when drawn or written, the
  * display's brightness and settings a serial, and a frame that changes either
@@ -429,9 +447,12 @@ static void StartFramePicture(void)
    FrameChanged = false;
 }
 
+static void ForgetBlocks(void);
+
 static void ForgetPasses(void)
 {
    DrawSerial++;
+   ForgetBlocks();
    NewContents(0);
    NewContents(1);
    DisplayChanged();
@@ -439,9 +460,76 @@ static void ForgetPasses(void)
    PassRepeats = false;
 }
 
+static void ForgetBlocks(void)
+{
+   int fb, b;
+   for(fb = 0; fb < 2; fb++)
+      for(b = 0; b < 28; b++)
+         Blocks[fb][b].valid = false;
+}
+
+/* The serial runs for hours, but not forever. */
+static void RestartSerials(void)
+{
+   memset(RowChangedAt, 0, sizeof(RowChangedAt));
+   memset(ChrChangedAt, 0, sizeof(ChrChangedAt));
+   memset(ObjChangedAt, 0, sizeof(ObjChangedAt));
+   GlobalChangedAt = 0;
+   DrawSerial = 0;
+   ForgetPasses();
+}
+
+static void ObjRowsChanged(uint32 jy, uint32 at)
+{
+   ObjChangedAt[(jy & 0xFF) >> 3] = at;
+   ObjChangedAt[((jy + 7) & 0xFF) >> 3] = at;
+}
+
+/* DRAM's halfword at byte address a is about to become v. */
+static void DramChanging(uint32 a, uint16 v)
+{
+   const uint32 h = a >> 1;
+   const uint32 at = ++DrawSerial;
+   RowChangedAt[h >> 6] = at;
+   if(h >= (0x1D800 >> 1) && h < (0x1DC00 >> 1))
+      GlobalChangedAt = at;
+   else if(h >= (0x1E000 >> 1))
+   {
+      /* (a sprite's: the rows it's on, and will be on) */
+      ObjRowsChanged(DRAM[(h & ~3u) + 2], at);
+      if((h & 3) == 2)
+         ObjRowsChanged(v, at);
+   }
+}
+
+static bool BlockUnchanged(const BlockInputs *block)
+{
+   int i;
+   if(!block->valid || GlobalChangedAt > block->drawnAt || ObjChangedAt[DrawingBlock] > block->drawnAt)
+      return false;
+   for(i = 0; i < 1024 / 32; i++)
+   {
+      uint32 m;
+      for(m = block->rows[i]; m; m &= m - 1)
+         if(RowChangedAt[i * 32 + __builtin_ctz(m)] > block->drawnAt)
+            return false;
+   }
+   for(i = 0; i < 2048 / 32; i++)
+   {
+      uint32 m;
+      for(m = block->chr[i]; m; m &= m - 1)
+         if(ChrChangedAt[i * 32 + __builtin_ctz(m)] > block->passAt)
+            return false;
+   }
+   return true;
+}
+
 static void BeginPass(void)
 {
    const int src = !DrawingFB;
+   if(DrawSerial >= 0xF0000000u)
+      RestartSerials();
+   PassStartedAt = DrawSerial;
    PassRepeats = PassClean[src] && PassSerial[src] == DrawSerial && vbgo_tiletrack_pass_reusable(src);
    PassAlreadyCopied = PassRepeats && PassClean[DrawingFB] && PassSerial[DrawingFB] == PassSerial[src];
    PassSerial[DrawingFB] = DrawSerial;
@@ -749,7 +837,7 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
       case 0x4c:
       case 0x4e:
          if(SPT[(A >> 1) & 3] != (V & 0x3FF))
-            DrawSerial++;
+            GlobalChangedAt = ++DrawSerial;
          SPT[(A >> 1) & 3] = V & 0x3FF;
          break;
 
@@ -758,7 +846,7 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
       case 0x64:
       case 0x66:
          if(GPLT[(A >> 1) & 3] != (V & 0xFC))
-            DrawSerial++;
+            GlobalChangedAt = ++DrawSerial;
          GPLT[(A >> 1) & 3] = V & 0xFC;
          Recalc_GPLT_Cache((A >> 1) & 3);
          break;
@@ -768,14 +856,14 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
       case 0x6c:
       case 0x6e:
          if(JPLT[(A >> 1) & 3] != (V & 0xFC))
-            DrawSerial++;
+            GlobalChangedAt = ++DrawSerial;
          JPLT[(A >> 1) & 3] = V & 0xFC;
          Recalc_JPLT_Cache((A >> 1) & 3);
          break;
 
       case 0x70:
          if(BKCOL != (V & 0x3))
-            DrawSerial++;
+            GlobalChangedAt = ++DrawSerial;
          BKCOL = V & 0x3;
          break;
    }
@@ -857,7 +945,7 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
          {
             const uint32 a = (A & 0x1FFF) | ((A >> 2) & 0x6000);
             if(VIP_MA16R8(CHR_RAM, a) != V)
-               DrawSerial++;
+               ChrChangedAt[a >> 4] = ++DrawSerial;
             VIP_MA16W8(CHR_RAM, a, V);
          }
          else
@@ -865,6 +953,8 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
             PassClean[(A >> 15) & 1] = false;
             PassTouched[(A >> 15) & 1] = true;
             NewContents((A >> 15) & 1);
+            if((A & 63) < 56)
+               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false;
             FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF] = V;
          }
          break;
@@ -873,7 +963,8 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
       case 0x3:
          if(VIP_MA16R8(DRAM, A & 0x1FFFF) != V)
          {
-            DrawSerial++;
+            const uint16 old = VIP_MA16R16(DRAM, A & 0x1FFFE);
+            DramChanging(A & 0x1FFFF, (A & 1) ? ((old & 0x00FF) | (V << 8)) : ((old & 0xFF00) | V));
             if((A & 0x1FFFF) >= 0x1DC00 && (A & 0x1FFFF) < 0x1E000)
                DisplayChanged();
          }
@@ -893,7 +984,7 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
          if(A >= 0x8000)
          {
             if(VIP_MA16R8(CHR_RAM, A & 0x7FFF) != V)
-               DrawSerial++;
+               ChrChangedAt[(A & 0x7FFF) >> 4] = ++DrawSerial;
             VIP_MA16W8(CHR_RAM, A & 0x7FFF, V);
          }
          break;
@@ -910,7 +1001,7 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
          {
             const uint32 a = (A & 0x1FFF) | ((A >> 2) & 0x6000);
             if(VIP_MA16R16(CHR_RAM, a) != V)
-               DrawSerial++;
+               ChrChangedAt[a >> 4] = ++DrawSerial;
             VIP_MA16W16(CHR_RAM, a, V);
          }
          else
@@ -918,6 +1009,8 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
             PassClean[(A >> 15) & 1] = false;
             PassTouched[(A >> 15) & 1] = true;
             NewContents((A >> 15) & 1);
+            if((A & 63) < 56)
+               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false;
             StoreU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF], V);
          }
          break;
@@ -926,7 +1019,7 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
       case 0x3:
          if(VIP_MA16R16(DRAM, A & 0x1FFFF) != V)
          {
-            DrawSerial++;
+            DramChanging(A & 0x1FFFF, V);
             if((A & 0x1FFFF) >= 0x1DC00 && (A & 0x1FFFF) < 0x1E000)
                DisplayChanged();
          }
@@ -943,7 +1036,7 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
          if(A >= 0x8000)
          {
             if(VIP_MA16R16(CHR_RAM, A & 0x7FFF) != V)
-               DrawSerial++;
+               ChrChangedAt[(A & 0x7FFF) >> 4] = ++DrawSerial;
             VIP_MA16W16(CHR_RAM, A & 0x7FFF, V);
          }
          break;
@@ -1471,10 +1564,11 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
          {
             MDFN_ALIGN(8) uint8 DrawingBuffers[2][512 * 8];	/* Don't decrease this from 512 unless you adjust vip_draw.inc(including areas that draw off-visible >= 384 and >= -7 for speed reasons) */
 
+            BlockInputs *block = &Blocks[DrawingFB][DrawingBlock];
             if(skip && InstantDisplayHack && AllowDrawSkip)
-               PassTouched[DrawingFB] = true, NewContents(DrawingFB);
+               PassTouched[DrawingFB] = true, NewContents(DrawingFB), block->valid = false;
             else if(PassRepeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB])
-               CopyRepeatedBlock();
+               CopyRepeatedBlock(), block->valid = false;
             else
             {
                int lr;
@@ -1486,26 +1580,39 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   PassRepeats = false;
                   PassAlreadyCopied = false;
                }
-               VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
-
-               for(lr = 0; lr < 2; lr++)
+               vbgo_tiletrack_begin_block(DrawingBuffers[0], CHR_RAM, DRAM, DrawingBlock, DrawingFB, &JPLT_Cache[0][0]);
+               if(BlockUnchanged(block) && vbgo_tiletrack_keep_block())
+                  block->drawnAt = DrawSerial, block->passAt = PassStartedAt;
+               else
                {
-                  int x;
-                  uint8 *FB_Target = FB[DrawingFB][lr] + DrawingBlock * 2;
+                  memset(block->chr, 0, sizeof(block->chr));
+                  memset(block->rows, 0, sizeof(block->rows));
+                  UsedChr = block->chr;
+                  UsedRows = block->rows;
+                  VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
 
-                  for(x = 0; x < 384; x++)
+                  for(lr = 0; lr < 2; lr++)
                   {
-                     FB_Target[64 * x + 0] = (DrawingBuffers[lr][8 + x + 512 * 0] << 0)
-                        | (DrawingBuffers[lr][8 + x + 512 * 1] << 2)
-                        | (DrawingBuffers[lr][8 + x + 512 * 2] << 4)
-                        | (DrawingBuffers[lr][8 + x + 512 * 3] << 6);
+                     int x;
+                     uint8 *FB_Target = FB[DrawingFB][lr] + DrawingBlock * 2;
 
-                     FB_Target[64 * x + 1] = (DrawingBuffers[lr][8 + x + 512 * 4] << 0) 
-                        | (DrawingBuffers[lr][8 + x + 512 * 5] << 2)
-                        | (DrawingBuffers[lr][8 + x + 512 * 6] << 4) 
-                        | (DrawingBuffers[lr][8 + x + 512 * 7] << 6);
+                     for(x = 0; x < 384; x++)
+                     {
+                        FB_Target[64 * x + 0] = (DrawingBuffers[lr][8 + x + 512 * 0] << 0)
+                           | (DrawingBuffers[lr][8 + x + 512 * 1] << 2)
+                           | (DrawingBuffers[lr][8 + x + 512 * 2] << 4)
+                           | (DrawingBuffers[lr][8 + x + 512 * 3] << 6);
 
+                        FB_Target[64 * x + 1] = (DrawingBuffers[lr][8 + x + 512 * 4] << 0)
+                           | (DrawingBuffers[lr][8 + x + 512 * 5] << 2)
+                           | (DrawingBuffers[lr][8 + x + 512 * 6] << 4)
+                           | (DrawingBuffers[lr][8 + x + 512 * 7] << 6);
+                     }
                   }
+                  block->valid = true;
+                  block->drawnAt = DrawSerial;
+                  block->passAt = PassStartedAt;
+                  UsedChr = UsedRows = UnusedInputs;
                }
             }
 
