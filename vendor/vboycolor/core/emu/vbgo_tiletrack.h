@@ -167,34 +167,9 @@ extern uint64_t vbgo_tt_stamp_bits;
 extern const uint8_t *vbgo_tt_blank;
 extern uint8_t vbgo_tt_fill_cells[8192];
 
-/* Where a pixel the core writes at target_ptr (inside the block's drawing
- * buffers) goes in the tag buffer, or NULL if it's off screen. */
-static inline uint64_t *vbgo_tt_slot(const void *target_ptr)
-{
-   const ptrdiff_t i = (const uint8_t *)target_ptr - vbgo_tt_block_base;
-   const unsigned x = (unsigned)((i & 511) - 8);
-   return x < VBGO_TT_WIDTH ? &vbgo_tt_dst[(i >> 12) & 1][x * VBGO_TT_COLUMN + ((i >> 9) & 7)] : (uint64_t *)0;
-}
-
 #define VBGO_TT_CELL_BITS(cell) (((uint64_t)1 << 27) | ((uint64_t)(cell) << 28))
 /* Sprites: no cell, but which OBJ drew the pixel (the same in both eyes). */
 #define VBGO_TT_OBJ_BITS(obj) ((uint64_t)((obj) & 0x3FF) << 28)
-
-/* A drawn (non-transparent) pixel. cell_bits: VBGO_TT_CELL_BITS(cell), or
- * VBGO_TT_OBJ_BITS(obj) for sprites. */
-#define VBGO_TT_TAG(target_ptr, chr, sx, sy, pal, obj, pv, cell_bits)                                         \
-   do                                                                                                       \
-   {                                                                                                        \
-      if (vbgo_tt_on)                                                                                       \
-      {                                                                                                     \
-         uint64_t *vbgo_d_ = vbgo_tt_slot(target_ptr);                                                      \
-         if (vbgo_d_)                                                                                       \
-            *vbgo_d_ = vbgo_tt_stamp_bits | (cell_bits) |                                                   \
-                       (uint64_t)((uint32_t)(chr) | ((uint32_t)(sx) << 11) | ((uint32_t)(sy) << 14) |       \
-                                  ((uint32_t)(pal) << 17) | ((uint32_t)(obj) << 19) | ((uint32_t)(pv) << 20) | \
-                                  (vbgo_tt_world << 22));                                                    \
-      }                                                                                                     \
-   } while (0)
 
 /* Background (map) drawing - DrawBG/DrawAffine - only ever draws pixels 0-383
  * of one row, so its tags are found once per call: pixel x of the row
