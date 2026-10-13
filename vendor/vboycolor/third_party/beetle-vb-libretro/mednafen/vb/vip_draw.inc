@@ -260,23 +260,35 @@ else
 
 static int obj_search_which;
 
-static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2])
+/* The OBJ group's sprites (in drawing order) with a row in the block that
+ * starts at row block_y: the only ones DrawOBJ can draw on its 8 rows. */
+static int GatherOBJ(uint16 *list, uint16 block_y)
 {
  int32 oam;
- const uint16 *CHR16 = CHR_RAM;
-
- int32 start_oam;
- int32 end_oam;
-
- start_oam = SPT[obj_search_which];
-
- end_oam = 1023;
- if(obj_search_which)
-  end_oam = SPT[obj_search_which - 1];
+ int count = 0;
+ const int32 start_oam = SPT[obj_search_which];
+ const int32 end_oam = obj_search_which ? SPT[obj_search_which - 1] : 1023;
 
  oam = start_oam;
  do
  {
+  const uint32 jy = DRAM[(0x1E000 + (oam * 8) + 4) >> 1];
+
+  if(((block_y - jy + 7) & 0xFF) < 15)
+   list[count++] = oam;
+ } while( (oam = (oam - 1) & 1023) != end_oam);
+
+ return count;
+}
+
+static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, int count)
+{
+ int k;
+ const uint16 *CHR16 = CHR_RAM;
+
+ for(k = 0; k < count; k++)
+ {
+  const int32 oam = list[k];
   int lr;
   uint32 pixels_save;
   uint32 char_no;
@@ -344,7 +356,7 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2])
    }
 
   }
- } while( (oam = (oam - 1) & 1023) != end_oam);
+ }
 
 }
 
@@ -352,6 +364,8 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2])
 void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
 {
  int y, world, lr;
+ uint16 obj_list[1024];
+ int obj_count = 0;
  for( y = 0; y < 8; y++)
  {
   memset(fb_l + y * 512, BKCOL, 384);
@@ -386,12 +400,15 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
   if(end)
    break;
 
+  if(bgm == BGM_OBJ)
+   obj_count = GatherOBJ(obj_list, block_no * 8);
+
   for(y = 0; y < 8; y++)
   {
    uint8 *fb[2] = { &fb_l[y * 512], &fb_r[y * 512] };
 
    if(bgm == BGM_OBJ)
-    DrawOBJ(fb, (block_no * 8) + y, lron);
+    DrawOBJ(fb, (block_no * 8) + y, lron, obj_list, obj_count);
    else if(bgm == BGM_AFFINE)
    {
     for(lr = 0; lr < 2; lr++)

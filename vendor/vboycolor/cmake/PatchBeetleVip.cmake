@@ -266,7 +266,8 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
         [=[      if(pixels & 3)
       {
        *target = JPLT_Cache[palette_selector][pixels & 3];
-       VBGO_TT_TAG(target, char_no, 8 - meow, char_sub_y, palette_selector, 1, pixels & 3, VBGO_TT_OBJ_BITS(oam)); /* VirtualBoyGo */
+       if(vbgo_orow && (unsigned)(target - fb[lr]) < 384) /* VirtualBoyGo */
+        vbgo_orow[(target - fb[lr]) * VBGO_TT_COLUMN] = vbgo_obits | (uint64_t)(((8 - meow) << 11) | ((pixels & 3) << 20));
       }
       target--;]=]
         "vip_draw.inc (DrawOBJ flipped store)")
@@ -277,11 +278,22 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
         [=[      if(pixels & 3)
       {
        *target = JPLT_Cache[palette_selector][pixels & 3];
-       VBGO_TT_TAG(target, char_no, 8 - meow, char_sub_y, palette_selector, 1, pixels & 3, VBGO_TT_OBJ_BITS(oam)); /* VirtualBoyGo */
+       if(vbgo_orow && (unsigned)(target - fb[lr]) < 384) /* VirtualBoyGo */
+        vbgo_orow[(target - fb[lr]) * VBGO_TT_COLUMN] = vbgo_obits | (uint64_t)(((8 - meow) << 11) | ((pixels & 3) << 20));
       }
       target++;]=]
         "vip_draw.inc (DrawOBJ store)")
     # Which world (layer) is drawing.
+    _vbgo_replace_once(DRAW
+        [=[    uint8 *target = &fb[lr][x];
+]=]
+        [=[    uint8 *target = &fb[lr][x];
+    /* VirtualBoyGo: this sprite row's tags - all but the pixel's place in the tile and its value */
+    uint64_t *const vbgo_orow = vbgo_tt_row(fb[lr]);
+    const uint64_t vbgo_obits = vbgo_tt_call_bits() | VBGO_TT_OBJ_BITS(oam) |
+                                (uint64_t)(char_no | (char_sub_y << 14) | (palette_selector << 17) | (1u << 19));
+]=]
+        "vip_draw.inc (DrawOBJ sprite row)")
     _vbgo_replace_once(DRAW
         [=[  if(end)
    break;
