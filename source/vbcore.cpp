@@ -58,15 +58,7 @@ static void Video(const void *data, unsigned w, unsigned h, size_t pitch)
 {
     if (!data || w > 768 || h > 448) return;
     if (vbWidth != w || vbHeight != h) VBSetGeometry(w, h, 0);
-    if (pitch == w * 4) {
-        platform->getVideo()->getEmulatorVideo()->presentFrame((const uint8_t *)data);
-        return;
-    }
-    static std::vector<uint8_t> tight;
-    tight.resize(w * h * 4);
-    for (unsigned y = 0; y < h; ++y)
-        memcpy(tight.data() + y * w * 4, (const uint8_t *)data + y * pitch, w * 4);
-    platform->getVideo()->getEmulatorVideo()->presentFrame(tight.data());
+    platform->getVideo()->getEmulatorVideo()->presentFrame((const uint8_t *)data, pitch);
 }
 static size_t Audio(const int16_t *data, size_t frames)
 {
@@ -103,4 +95,10 @@ void SetPalette() { optionsChanged = true; }
 void RunVBFrame() { retro_run(); }
 void PowerNES() { retro_reset(); audioPhase = 0; }
 void ResetNES() { audioPhase = 0; }
-void CloseVBGame() { if (romLoaded) retro_unload_game(); romLoaded = false; audioPhase = 0; }
+void CloseVBGame()
+{
+    platform->getVideo()->getEmulatorVideo()->forgetFrame();
+    if (romLoaded) retro_unload_game();
+    romLoaded = false;
+    audioPhase = 0;
+}

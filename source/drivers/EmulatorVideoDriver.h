@@ -6,6 +6,7 @@
  ***************************************************************************/
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 #include "VideoDriver.h"
 
@@ -16,9 +17,11 @@ class EmulatorVideoDriver
 
 		virtual void init(VideoDriver* videoDriver) = 0;
 		virtual void resetVideo() = 0;
-		virtual void presentFrame(const uint8_t* buffer) = 0;
+		virtual void presentFrame(const uint8_t* buffer, size_t pitch) = 0;
 		virtual void presentStereoFrame(const uint8_t* bufferLeft, const uint8_t* bufferRight) = 0;
 		virtual void readFrameRGB24(uint8_t* dst) = 0;
+		// The last presented frame belongs to the core, which frees it with the game
+		virtual void forgetFrame() {}
 
 		// Maps a UI-canvas pointer position (IR pointer / touch, in the same canvas coordinates as 
 		// InputPadData::cursor_x/y) to a pixel of the emulated console's framebuffer, following the 

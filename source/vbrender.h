@@ -2,9 +2,9 @@
 #include <algorithm>
 #include <cstdint>
 
-// Coverage reduction protects thin lines when either stereo layout exceeds
-// the output resolution. GX receives RGBA8 tiles with explicit byte order.
-inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned sourceH,
+// Coverage reduction protects thin lines when the frame exceeds the output
+// resolution. GX receives RGBA8 tiles with explicit byte order.
+inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned sourceH, size_t pitch,
     uint8_t *tiled, unsigned w, unsigned h)
 {
     if (w == sourceW && h == sourceH) {
@@ -13,7 +13,7 @@ inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned source
                 uint8_t *ar = tiled;
                 uint8_t *gb = tiled + 32;
                 for (unsigned y = 0; y < 4; ++y) {
-                    const uint8_t *src = bgrx + ((by + y) * w + bx) * 4;
+                    const uint8_t *src = bgrx + (by + y) * pitch + bx * 4;
                     for (unsigned x = 0; x < 4; ++x) {
                         *ar++ = 255;
                         *ar++ = src[2];
@@ -36,7 +36,7 @@ inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned source
             unsigned r = 0, g = 0, b = 0, count = 0;
             for (unsigned sy = y0; sy < y1; ++sy) {
                 for (unsigned sx = x0; sx < x1; ++sx) {
-                    const uint8_t *pixel = bgrx + (sy * sourceW + sx) * 4;
+                    const uint8_t *pixel = bgrx + sy * pitch + sx * 4;
                     b += pixel[0]; g += pixel[1]; r += pixel[2]; ++count;
                 }
             }

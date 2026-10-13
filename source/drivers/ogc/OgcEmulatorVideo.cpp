@@ -23,10 +23,11 @@ void OgcEmulatorVideo::resetVideo()
     videoDriver->startGameVideo();
     platform->getAudio()->getEmulatorAudio()->updateSampleRate(48000);
 }
-void OgcEmulatorVideo::presentFrame(const uint8_t *buffer)
+void OgcEmulatorVideo::presentFrame(const uint8_t *buffer, size_t pitch)
 {
     videoDriver->waitForBufferReady();
-    frame.assign(buffer, buffer + vbWidth * vbHeight * 4);
+    shown = buffer;
+    shownPitch = pitch;
     auto *mode = videoDriver->getVideoMode();
     float aspect = vbAspect;
     if (EmuSettings.videoAspectRatioCorrection == VIDEO_ASPECT_RATIO_CORRECTION_16_9)
@@ -46,7 +47,7 @@ void OgcEmulatorVideo::presentFrame(const uint8_t *buffer)
         textureW = w; textureH = h;
     }
     if (!texture) { videoDriver->presentBuffer(); return; }
-    ReduceVBFrame(buffer, vbWidth, vbHeight, (uint8_t *)texture, w, h);
+    ReduceVBFrame(buffer, vbWidth, vbHeight, pitch, (uint8_t *)texture, w, h);
     DCFlushRange(texture, w * h * 4);
     GX_InvalidateTexAll();
     GXTexObj tex;
@@ -72,7 +73,14 @@ void OgcEmulatorVideo::presentFrame(const uint8_t *buffer)
 }
 void OgcEmulatorVideo::readFrameRGB24(uint8_t *dst)
 {
-    for (size_t i = 0; i < frame.size() / 4; ++i) {
-        dst[i * 3] = frame[i * 4 + 2]; dst[i * 3 + 1] = frame[i * 4 + 1]; dst[i * 3 + 2] = frame[i * 4];
+    if (!shown) {
+        memset(dst, 0, vbWidth * vbHeight * 3);
+        return;
+    }
+    for (unsigned y = 0; y < vbHeight; ++y) {
+        const uint8_t *src = shown + y * shownPitch;
+        for (unsigned x = 0; x < vbWidth; ++x, src += 4, dst += 3) {
+            dst[0] = src[2]; dst[1] = src[1]; dst[2] = src[0];
+        }
     }
 }
