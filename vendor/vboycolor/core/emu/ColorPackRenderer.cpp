@@ -1107,7 +1107,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                         }
                         brightest = std::max<unsigned>(brightest, rawPixel >> 26);
                         // ... and the rest: as the last run with this key in this eye, if any.
-                        CachedRun &cached = m_runCache[(runKey * 0x9E3779B97F4A7C15ull) >> (64 - kRunCacheBits)];
+                        const uint32_t runHash = (static_cast<uint32_t>(runKey) ^ static_cast<uint32_t>(runKey >> 32)) * 2654435761u;
+                        CachedRun &cached = m_runCache[runHash >> (32 - kRunCacheBits)];
                         if (cached.at == runAt && cached.key == runKey)
                             run = cached.run;
                         else
