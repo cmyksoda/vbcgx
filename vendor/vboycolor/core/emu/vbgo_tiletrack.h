@@ -241,9 +241,16 @@ static inline void vbgo_tt_tag_row8(uint64_t *d, unsigned pixels, int flipped, u
    }
    if (!fills)
    {
-      for (k = 0; k < 8 && pixels; k++, d += VBGO_TT_COLUMN, pixels >>= 2)
-         if (pixels & 3)
-            *d = bits | (uint64_t)(((k ^ x7) << 11) | ((pixels & 3) << 20));
+      /* (unrolled: screen pixel k is d[k * VBGO_TT_COLUMN]) */
+#define VBGO_TT_PUT(k)                                                                         \
+   if ((pixels >> (2 * (k))) & 3)                                                               \
+      d[(k) * VBGO_TT_COLUMN] = bits | (uint64_t)((((k) ^ x7) << 11) | (((pixels >> (2 * (k))) & 3) << 20));
+      if (pixels)
+      {
+         VBGO_TT_PUT(0) VBGO_TT_PUT(1) VBGO_TT_PUT(2) VBGO_TT_PUT(3)
+         VBGO_TT_PUT(4) VBGO_TT_PUT(5) VBGO_TT_PUT(6) VBGO_TT_PUT(7)
+      }
+#undef VBGO_TT_PUT
       return;
    }
    for (k = 0; k < 8; k++, d += VBGO_TT_COLUMN, pixels >>= 2)
