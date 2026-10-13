@@ -233,25 +233,32 @@ static inline void vbgo_tt_tag_row8(uint64_t *d, unsigned pixels, int flipped, u
    const int fills = ((pixels | (pixels >> 1)) & 0x5555) != 0x5555 && vbgo_tt_fills_from(chr, cell);
    const unsigned x7 = flipped ? 7 : 0;
    unsigned k;
+   if (!fills)
+   {
+      /* (unrolled: screen pixel k is d[k * VBGO_TT_COLUMN], tile pixel n = k, or 7 - k flipped) */
+#define VBGO_TT_PUT(k, n)                                                                      \
+   if ((pixels >> (2 * (n))) & 3)                                                               \
+      d[(k) * VBGO_TT_COLUMN] = bits | (uint64_t)(((n) << 11) | (((pixels >> (2 * (n))) & 3) << 20));
+      if (!pixels)
+         return;
+      if (flipped)
+      {
+         VBGO_TT_PUT(0, 7) VBGO_TT_PUT(1, 6) VBGO_TT_PUT(2, 5) VBGO_TT_PUT(3, 4)
+         VBGO_TT_PUT(4, 3) VBGO_TT_PUT(5, 2) VBGO_TT_PUT(6, 1) VBGO_TT_PUT(7, 0)
+      }
+      else
+      {
+         VBGO_TT_PUT(0, 0) VBGO_TT_PUT(1, 1) VBGO_TT_PUT(2, 2) VBGO_TT_PUT(3, 3)
+         VBGO_TT_PUT(4, 4) VBGO_TT_PUT(5, 5) VBGO_TT_PUT(6, 6) VBGO_TT_PUT(7, 7)
+      }
+#undef VBGO_TT_PUT
+      return;
+   }
    if (flipped) /* screen order: reverse the 8 2-bit fields */
    {
       pixels = ((pixels >> 2) & 0x3333) | ((pixels & 0x3333) << 2);
       pixels = ((pixels >> 4) & 0x0F0F) | ((pixels & 0x0F0F) << 4);
       pixels = ((pixels >> 8) & 0x00FF) | ((pixels & 0x00FF) << 8);
-   }
-   if (!fills)
-   {
-      /* (unrolled: screen pixel k is d[k * VBGO_TT_COLUMN]) */
-#define VBGO_TT_PUT(k)                                                                         \
-   if ((pixels >> (2 * (k))) & 3)                                                               \
-      d[(k) * VBGO_TT_COLUMN] = bits | (uint64_t)((((k) ^ x7) << 11) | (((pixels >> (2 * (k))) & 3) << 20));
-      if (pixels)
-      {
-         VBGO_TT_PUT(0) VBGO_TT_PUT(1) VBGO_TT_PUT(2) VBGO_TT_PUT(3)
-         VBGO_TT_PUT(4) VBGO_TT_PUT(5) VBGO_TT_PUT(6) VBGO_TT_PUT(7)
-      }
-#undef VBGO_TT_PUT
-      return;
    }
    for (k = 0; k < 8; k++, d += VBGO_TT_COLUMN, pixels >>= 2)
    {
