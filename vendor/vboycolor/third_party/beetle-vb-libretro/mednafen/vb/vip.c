@@ -1816,7 +1816,11 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
             else if(PassRepeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB])
             {
                CopyRepeatedBlock();
-               block->valid = false;
+               /* (it holds the other buffer's drawing now, with what that read) */
+               if(Blocks[!DrawingFB][DrawingBlock].valid)
+                  *block = Blocks[!DrawingFB][DrawingBlock];
+               else
+                  block->valid = false;
                memcpy(CellContent[DrawingFB][DrawingBlock], CellContent[!DrawingFB][DrawingBlock], sizeof(CellContent[0][0]));
             }
             else

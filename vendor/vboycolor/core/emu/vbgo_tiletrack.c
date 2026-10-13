@@ -168,8 +168,7 @@ static void StartPass(unsigned fb, const uint16_t *chr_ram, const uint16_t *dram
 {
    int c, slot;
    s_prev_stamp[fb] = s_have[fb] ? s_stamp[s_slot[fb]] : 0;
-   if (s_slot[fb] == s_slot[fb ^ 1])
-      s_slot[fb] = FreeSlot();
+   Unshare(fb); /* (a slot of its own, holding the tags its last pass repeated) */
    slot = s_slot[fb];
    s_prev_valid = s_prev_stamp[fb] && s_stamp[slot] == s_prev_stamp[fb] && s_have_attrs[slot];
    if (s_prev_valid)
