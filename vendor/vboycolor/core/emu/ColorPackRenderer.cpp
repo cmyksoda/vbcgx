@@ -619,6 +619,79 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
     const bool haveCells = pack && !m_cellStart.empty();
     const TileColorPack::ContextTile *contexts = pack ? pack->ContextTiles().data() : nullptr;
     const bool haveContexts = pack && !m_markerGrid[0].empty();
+    const bool pairs = pack && m_pairCount > 0;
+    // (only where the game's CPU drew - else every pixel shown came from tiles)
+    const bool depth = m_auto && ((have[0] && view[0].cpu_drawn) || (have[1] && view[1].cpu_drawn) || !have[0] || !have[1]);
+    // The bands kept from each eye's buffer as it was last painted (see m_bands).
+    const int buffer = have[0] ? (view[0].fb & 1) : 0, rightBuffer = have[1] ? (view[1].fb & 1) : 0;
+    std::array<Band, kBands> &bands = m_bands[0][buffer];
+    std::vector<BandColumn> &bandColumns = m_bandColumns[0][buffer];
+    bandColumns.resize(static_cast<size_t>(kBands) * VBGO_TT_WIDTH);
+    std::array<Band, kBands> &rightBands = m_bands[1][rightBuffer];
+    std::vector<BandColumn> &rightColumns = m_bandColumns[1][rightBuffer];
+    rightColumns.resize(static_cast<size_t>(kBands) * VBGO_TT_WIDTH);
+    {
+        PaintState state;
+        state.pack = pack;
+        state.automatic = m_auto;
+        state.pairs = pairs;
+        state.autoWorlds = m_autoWorldsUsed;
+        state.figures = m_figuresUsed;
+        state.shade = shade.version;
+        state.fbWidth = fbWidth;
+        state.eyeOffset = eyeOffset[0];
+        state.fadeReference = m_fadeReference;
+        state.flat = have[0] ? view[0].flat_obj_palettes : 0;
+        std::copy(bg, bg + 3, state.bg);
+        for (unsigned w = 0; w < 32; ++w)
+        {
+            state.worlds[w * 4] = m_worlds[w].eyes;
+            state.worlds[w * 4 + 1] = m_worlds[w].type;
+            state.worlds[w * 4 + 2] = static_cast<uint8_t>(m_worlds[w].partner);
+            state.worlds[w * 4 + 3] = m_worlds[w].colors;
+        }
+        state.pairOfLeft = m_pairOfLeft;
+        state.pairOfRight = m_pairOfRight;
+        state.spritePairOf = m_spritePairOf;
+        if (!(state == m_paintStateWas))
+        {
+            m_paintStateWas = state;
+            ++m_paintState;
+        }
+    }
+    uint32_t keep = 0;
+    if (have[0] && !depth && view[0].clut && view[0].band_version && view[0].band_chr)
+    {
+        uint32_t ambiguous[2048 / 32] = {};
+        if (pack)
+        {
+            ResolveSlots(view[0].hashes);
+            for (unsigned c = 0; c < 2048; ++c)
+                ambiguous[c >> 5] |= static_cast<uint32_t>(m_slots[c].ambiguous) << (c & 31);
+        }
+        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+        {
+            const Band &band = bands[b];
+            const uint32_t version = view[0].band_version[b];
+            if (!version || band.version != version || band.clut != view[0].clut || band.state != m_paintState)
+                continue;
+            uint32_t ambiguousHere = 0;
+            for (unsigned i = 0; i < 2048 / 32; ++i)
+                ambiguousHere |= view[0].band_chr[b * (2048 / 32) + i] & ambiguous[i];
+            if (!ambiguousHere)
+                keep |= 1u << b;
+        }
+    }
+    // (the right eye: its slow runs' columns are always worked out again, so ambiguous tiles don't matter)
+    uint32_t keepRight = 0;
+    if (have[1] && !depth && view[1].clut && view[1].band_version)
+        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+        {
+            const Band &band = rightBands[b];
+            const uint32_t version = view[1].band_version[b];
+            if (version && band.version == version && band.clut == view[1].clut && band.state == m_paintState)
+                keepRight |= 1u << b;
+        }
     ContextGroupBits *markers = nullptr; // this frame's marker grid (Near reads it and the two before it)
     uint8_t *markerLayers = nullptr;
     if (haveContexts)
@@ -650,9 +723,26 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                 any |= m_slotHasMarkers[c];
                 markerSlots[c >> 5] |= static_cast<uint32_t>(m_slotHasMarkers[c]) << (c & 31);
             }
-            // Band by band, where the drawing used a marker's tile (a grid cell's pixels still in column order).
-            for (uint32_t band = 0; any && band < static_cast<uint32_t>(kBands); ++band)
+            // Band by band, where the drawing used a marker's tile (a grid cell's pixels still in column
+            // order); a kept band's cells as they came out when it was last painted.
+            for (uint32_t band = 0; band < static_cast<uint32_t>(kBands); ++band)
             {
+                Band &cache = bands[band];
+                const unsigned row = band * kGridW;
+                if (keep >> band & 1)
+                {
+                    for (unsigned gx = 0; gx < static_cast<unsigned>(kGridW); ++gx)
+                    {
+                        markers[row + gx] |= cache.markers[gx];
+                        if (markerLayers && cache.markerLayers[gx] != 0xFF)
+                            markerLayers[row + gx] = cache.markerLayers[gx];
+                    }
+                    continue;
+                }
+                cache.markers.fill(ContextGroupBits{});
+                cache.markerLayers.fill(0xFF);
+                if (!any)
+                    continue;
                 if (v.band_chr)
                 {
                     uint32_t used = 0;
@@ -688,8 +778,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                             continue;
                         const unsigned cell = (y >> 3) * kGridW + (x >> 3);
                         markers[cell] |= bits;
+                        cache.markers[x >> 3] |= bits;
                         if (!sprite && markerLayers)
-                            markerLayers[cell] = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
+                            markerLayers[cell] = cache.markerLayers[x >> 3] = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
                     }
                 }
             }
@@ -737,7 +828,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
     }
     // Pairs: the left pictures' colors per block and shade, the tiles they
     // use, their pixels of tiles colored per map cell.
-    const bool pairs = pack && m_pairCount > 0;
     if (pairs)
     {
         m_leftPairHashes.assign(4096, 0);
@@ -832,78 +922,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
     RunSetUp setUp{pack, haveCells, markers != nullptr, haveContexts, pairs, leftPairSlot.data(), 0};
     bool reestimated = false;
 
-    // (only where the game's CPU drew - else every pixel shown came from tiles)
-    const bool depth = m_auto && ((have[0] && view[0].cpu_drawn) || (have[1] && view[1].cpu_drawn) || !have[0] || !have[1]);
-    // The bands kept from each eye's buffer as it was last painted (see m_bands).
-    const int buffer = have[0] ? (view[0].fb & 1) : 0, rightBuffer = have[1] ? (view[1].fb & 1) : 0;
-    std::array<Band, kBands> &bands = m_bands[0][buffer];
-    std::vector<BandColumn> &bandColumns = m_bandColumns[0][buffer];
-    bandColumns.resize(static_cast<size_t>(kBands) * VBGO_TT_WIDTH);
-    std::array<Band, kBands> &rightBands = m_bands[1][rightBuffer];
-    std::vector<BandColumn> &rightColumns = m_bandColumns[1][rightBuffer];
-    rightColumns.resize(static_cast<size_t>(kBands) * VBGO_TT_WIDTH);
-    {
-        PaintState state;
-        state.pack = pack;
-        state.automatic = m_auto;
-        state.pairs = pairs;
-        state.autoWorlds = m_autoWorldsUsed;
-        state.figures = m_figuresUsed;
-        state.shade = shade.version;
-        state.fbWidth = fbWidth;
-        state.eyeOffset = eyeOffset[0];
-        state.fadeReference = m_fadeReference;
-        state.flat = have[0] ? view[0].flat_obj_palettes : 0;
-        std::copy(bg, bg + 3, state.bg);
-        for (unsigned w = 0; w < 32; ++w)
-        {
-            state.worlds[w * 4] = m_worlds[w].eyes;
-            state.worlds[w * 4 + 1] = m_worlds[w].type;
-            state.worlds[w * 4 + 2] = static_cast<uint8_t>(m_worlds[w].partner);
-            state.worlds[w * 4 + 3] = m_worlds[w].colors;
-        }
-        state.pairOfLeft = m_pairOfLeft;
-        state.pairOfRight = m_pairOfRight;
-        state.spritePairOf = m_spritePairOf;
-        if (!(state == m_paintStateWas))
-        {
-            m_paintStateWas = state;
-            ++m_paintState;
-        }
-    }
-    uint32_t keep = 0;
-    if (have[0] && !depth && view[0].clut && view[0].band_version && view[0].band_chr)
-    {
-        uint32_t ambiguous[2048 / 32] = {};
-        if (pack)
-        {
-            ResolveSlots(view[0].hashes);
-            for (unsigned c = 0; c < 2048; ++c)
-                ambiguous[c >> 5] |= static_cast<uint32_t>(m_slots[c].ambiguous) << (c & 31);
-        }
-        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-        {
-            const Band &band = bands[b];
-            const uint32_t version = view[0].band_version[b];
-            if (!version || band.version != version || band.clut != view[0].clut || band.state != m_paintState)
-                continue;
-            uint32_t ambiguousHere = 0;
-            for (unsigned i = 0; i < 2048 / 32; ++i)
-                ambiguousHere |= view[0].band_chr[b * (2048 / 32) + i] & ambiguous[i];
-            if (!ambiguousHere)
-                keep |= 1u << b;
-        }
-    }
-    // (the right eye: its slow runs' columns are always worked out again, so ambiguous tiles don't matter)
-    uint32_t keepRight = 0;
-    if (have[1] && !depth && view[1].clut && view[1].band_version)
-        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-        {
-            const Band &band = rightBands[b];
-            const uint32_t version = view[1].band_version[b];
-            if (version && band.version == version && band.clut == view[1].clut && band.state == m_paintState)
-                keepRight |= 1u << b;
-        }
     for (unsigned b = 0; b < static_cast<unsigned>(kBands);)
     {
         unsigned end = b;

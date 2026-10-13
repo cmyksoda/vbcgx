@@ -130,6 +130,8 @@ private:
         unsigned brightest = 0;
         std::array<int16_t, 32> left{}, right{}, top{}, bottom{};
         std::vector<uint32_t> pairSlots; // left eye: chr | pairs << 11; right eye: chr | (pair + 1) << 11
+        std::array<ContextGroupBits, VBGO_TT_WIDTH / 8> markers{}; // (left eye: the marker pre-pass's grid cells)
+        std::array<uint8_t, VBGO_TT_WIDTH / 8> markerLayers{};
     };
     std::array<std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2>, 2> m_bands; // [eye][buffer]
     std::array<std::array<std::vector<BandColumn>, 2>, 2> m_bandColumns;
