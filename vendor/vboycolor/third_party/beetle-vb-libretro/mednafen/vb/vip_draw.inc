@@ -41,6 +41,14 @@ static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, b
  if(final_x > 383)
   final_x = 383;
 
+ if(start_x < ClipX0)
+ {
+  SourceX += ClipX0 - start_x;
+  start_x = ClipX0;
+ }
+ if(final_x > ClipX1)
+  final_x = ClipX1;
+
  if(start_x > final_x)
   return;
 
@@ -186,6 +194,15 @@ static void DrawAffine(uint8 *target, uint16 RealY, bool lr, uint32 ParamBase, u
 
  if(final_x > 383)
   final_x = 383;
+
+ if(start_x < ClipX0)
+ {
+  SourceX += dx * (ClipX0 - start_x);
+  SourceY += dy * (ClipX0 - start_x);
+  start_x = ClipX0;
+ }
+ if(final_x > ClipX1)
+  final_x = ClipX1;
 
  memset(UsedRows, 0xFF, sizeof(uint32) * (1024 / 32));
 

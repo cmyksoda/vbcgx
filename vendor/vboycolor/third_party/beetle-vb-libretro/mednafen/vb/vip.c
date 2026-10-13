@@ -439,6 +439,7 @@ static uint32 NewContent(void)
 static uint32 UnusedInputs[2048 / 32];
 static uint32 *UsedChr = UnusedInputs, *UsedRows = UnusedInputs, *UsedBgChr = UnusedInputs; /* the block being drawn's */
 static BlockInputs *Drawing; /* (its sprites go here) */
+static int ClipX0 = 0, ClipX1 = 383; /* the columns VIP_DrawBlock draws (a block's changed cells) */
 static uint64 UnusedObjs, *UsedObjs = &UnusedObjs;
 #define OBJS_START 1469598103934665603ull
 
@@ -452,6 +453,7 @@ static uint64 HashObjList(uint64 h, int world, const uint16 *list, int count)
 }
 
 static uint64 ObjListsHash(uint32 block_no);
+static uint64 GatherBlockSprites(uint32 block_no, BlockInputs *into);
 
 static void NoteSprites(int world, const uint16 *list, int count)
 {
@@ -1264,12 +1266,16 @@ void VIP_ResetTS(void)
 
 #include "vip_draw.inc"
 
-/* The sprite lists VIP_DrawBlock would gather for the block now. */
-static uint64 ObjListsHash(uint32 block_no)
+/* The sprite lists VIP_DrawBlock would gather for the block now (hashed, and
+ * into's sprites). */
+static uint64 GatherBlockSprites(uint32 block_no, BlockInputs *into)
 {
    uint16 list[1024];
+   BlockInputs *const was = Drawing;
    uint64 h = OBJS_START;
    int world;
+   Drawing = into;
+   into->sprites = 0;
    obj_search_which = 3;
    for(world = 31; world >= 0; world--)
    {
@@ -1278,12 +1284,21 @@ static uint64 ObjListsHash(uint32 block_no)
          break;
       if(((control >> 12) & 3) == BGM_OBJ)
       {
-         h = HashObjList(h, world, list, GatherOBJ(list, block_no * 8));
+         const int count = GatherOBJ(list, block_no * 8);
+         h = HashObjList(h, world, list, count);
+         NoteSprites(world, list, count);
          if(obj_search_which)
             obj_search_which--;
       }
    }
+   Drawing = was;
    return h;
+}
+
+static uint64 ObjListsHash(uint32 block_no)
+{
+   static BlockInputs scratch;
+   return GatherBlockSprites(block_no, &scratch);
 }
 
 static INLINE void CopyFBColumnToTarget_Anaglyph_BASE(const bool DisplayActive_arg, const int lr)
@@ -1721,6 +1736,22 @@ static void CopyFBColumnToTarget_HLI(void)
       CopyFBColumnToTarget_HLI_BASE(DisplayActive, 1, 1 ^ VB3DReverse);
 }
 
+/* Columns x0-x1 of the block just drawn into the drawing buffer's frame buffer. */
+static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1)
+{
+   int lr, x;
+   for(lr = 0; lr < 2; lr++)
+   {
+      const uint8 *rows = buffers[lr] + 8;
+      uint8 *to = FB[DrawingFB][lr] + DrawingBlock * 2;
+      for(x = x0; x <= x1; x++)
+      {
+         to[64 * x + 0] = rows[x + 512 * 0] | (rows[x + 512 * 1] << 2) | (rows[x + 512 * 2] << 4) | (rows[x + 512 * 3] << 6);
+         to[64 * x + 1] = rows[x + 512 * 4] | (rows[x + 512 * 5] << 2) | (rows[x + 512 * 6] << 4) | (rows[x + 512 * 7] << 6);
+      }
+   }
+}
+
 v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
 {
    int32 clocks = timestamp - last_ts;
@@ -1771,14 +1802,21 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                else
                {
                   /* (what the buffer held, to tell which cells come out the same) */
-                  static SpriteDrawn wasSprite[MAX_BLOCK_SPRITES];
-                  const uint32 wasDrawnAt = block->drawnAt, wasPassAt = block->passAt;
-                  const int wasSprites = change == 1 ? block->sprites : -1;
+                  static BlockInputs now; /* (only its sprites changed: their lists now) */
+                  const uint64 all = (1ull << 48) - 1;
                   uint8 before[2][384 * 2];
                   const bool hadDrawing = block->valid;
-                  uint64 same = 0, unchanged = 0;
-                  if(wasSprites > 0)
-                     memcpy(wasSprite, block->sprite, sizeof(SpriteDrawn) * wasSprites);
+                  uint64 same = 0, unchanged = change == 0 ? all : 0, dirty = all;
+                  bool partial = false;
+                  int c;
+                  if(change == 1)
+                  {
+                     now.objs = GatherBlockSprites(DrawingBlock, &now);
+                     dirty = SpriteChangedCells(block, block->sprites, block->drawnAt, block->passAt, &now) & all;
+                     unchanged = ~dirty & all;
+                     /* (the cells it covers drawn again, the rest kept) */
+                     partial = hadDrawing && dirty != all && vbgo_tiletrack_keep_cells(unchanged);
+                  }
                   if(hadDrawing)
                      for(lr = 0; lr < 2; lr++)
                      {
@@ -1787,40 +1825,50 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                         for(x = 0; x < 384; x++)
                            before[lr][x * 2] = from[64 * x], before[lr][x * 2 + 1] = from[64 * x + 1];
                      }
-                  vbgo_tiletrack_block_drawing(change == 2);
-                  memset(block->chr, 0, sizeof(block->chr));
-                  memset(block->rows, 0, sizeof(block->rows));
-                  memset(block->bgChr, 0, sizeof(block->bgChr));
-                  block->objs = OBJS_START;
-                  block->sprites = 0;
-                  UsedChr = block->chr;
-                  UsedRows = block->rows;
-                  UsedBgChr = block->bgChr;
-                  UsedObjs = &block->objs;
-                  Drawing = block;
-                  VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
-
-                  for(lr = 0; lr < 2; lr++)
+                  if(partial)
                   {
-                     int x;
-                     uint8 *FB_Target = FB[DrawingFB][lr] + DrawingBlock * 2;
-
-                     for(x = 0; x < 384; x++)
+                     block->objs = now.objs;
+                     block->sprites = now.sprites;
+                     memcpy(block->sprite, now.sprite, sizeof(SpriteDrawn) * (now.sprites > 0 ? now.sprites : 0));
+                     UsedChr = block->chr;
+                     UsedRows = block->rows;
+                     UsedBgChr = block->bgChr;
+                     for(c = 0; c < 48;)
                      {
-                        FB_Target[64 * x + 0] = (DrawingBuffers[lr][8 + x + 512 * 0] << 0)
-                           | (DrawingBuffers[lr][8 + x + 512 * 1] << 2)
-                           | (DrawingBuffers[lr][8 + x + 512 * 2] << 4)
-                           | (DrawingBuffers[lr][8 + x + 512 * 3] << 6);
-
-                        FB_Target[64 * x + 1] = (DrawingBuffers[lr][8 + x + 512 * 4] << 0)
-                           | (DrawingBuffers[lr][8 + x + 512 * 5] << 2)
-                           | (DrawingBuffers[lr][8 + x + 512 * 6] << 4)
-                           | (DrawingBuffers[lr][8 + x + 512 * 7] << 6);
+                        int end = c;
+                        while(end < 48 && (dirty >> end & 1))
+                           end++;
+                        if(end == c)
+                        {
+                           c++;
+                           continue;
+                        }
+                        ClipX0 = c * 8;
+                        ClipX1 = end * 8 - 1;
+                        VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
+                        PackBlock(DrawingBuffers, ClipX0, ClipX1);
+                        c = end;
                      }
+                     ClipX0 = 0;
+                     ClipX1 = 383;
+                  }
+                  else
+                  {
+                     vbgo_tiletrack_block_drawing(change == 2);
+                     memset(block->chr, 0, sizeof(block->chr));
+                     memset(block->rows, 0, sizeof(block->rows));
+                     memset(block->bgChr, 0, sizeof(block->bgChr));
+                     block->objs = OBJS_START;
+                     block->sprites = 0;
+                     UsedChr = block->chr;
+                     UsedRows = block->rows;
+                     UsedBgChr = block->bgChr;
+                     UsedObjs = &block->objs;
+                     Drawing = block;
+                     VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
+                     PackBlock(DrawingBuffers, 0, 383);
                   }
                   if(hadDrawing)
-                  {
-                     int c;
                      for(c = 0; c < 48; c++)
                      {
                         int x, differs = 0;
@@ -1832,10 +1880,8 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                         }
                         same |= (uint64)!differs << c;
                      }
-                  }
                   {
                      const uint32 fresh = NewContent();
-                     int c;
                      for(c = 0; c < 48; c++)
                         if(!(same >> c & 1) || !CellContent[DrawingFB][DrawingBlock][c])
                            CellContent[DrawingFB][DrawingBlock][c] = fresh;
@@ -1846,15 +1892,6 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   UsedChr = UsedRows = UsedBgChr = UnusedInputs;
                   UsedObjs = &UnusedObjs;
                   Drawing = NULL;
-                  if(change == 0)
-                     unchanged = ~0ull;
-                  else if(change == 1)
-                  {
-                     /* (a scratch BlockInputs view of the sprites it drew before) */
-                     static BlockInputs was;
-                     memcpy(was.sprite, wasSprite, sizeof(SpriteDrawn) * (wasSprites > 0 ? wasSprites : 0));
-                     unchanged = ~SpriteChangedCells(&was, wasSprites, wasDrawnAt, wasPassAt, block);
-                  }
                   vbgo_tiletrack_block_drawn(block->chr, BlockSettled(block), same, unchanged);
                }
             }

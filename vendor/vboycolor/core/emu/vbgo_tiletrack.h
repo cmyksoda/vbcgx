@@ -286,6 +286,8 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
  * it): keeps that pass's tags for it as this pass's. False if they're gone
  * (the block must be drawn after all). */
 bool vbgo_tiletrack_keep_block(void);
+/* The same for only some of its cells (bit per 8 columns), the rest drawn again. */
+bool vbgo_tiletrack_keep_cells(uint64_t cells);
 /* Before drawing the block begun last (rather than keeping it); compare: tell
  * the cells that came out the same by their tags (else only by unchanged). */
 void vbgo_tiletrack_block_drawing(bool compare);

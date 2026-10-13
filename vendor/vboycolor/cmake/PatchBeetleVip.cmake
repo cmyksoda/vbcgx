@@ -259,7 +259,7 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
         [=[      if(pixels & 3)
       {
        *target = JPLT_Cache[palette_selector][pixels & 3];
-       if(vbgo_orow && (unsigned)(target - fb[lr]) < 384) /* VirtualBoyGo */
+       if(vbgo_orow && (unsigned)(target - fb[lr] - ClipX0) <= (unsigned)(ClipX1 - ClipX0)) /* VirtualBoyGo */
         vbgo_orow[(target - fb[lr]) * VBGO_TT_COLUMN] = vbgo_obits | (uint64_t)(((8 - meow) << 11) | ((pixels & 3) << 20));
       }
       target--;]=]
@@ -271,7 +271,7 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
         [=[      if(pixels & 3)
       {
        *target = JPLT_Cache[palette_selector][pixels & 3];
-       if(vbgo_orow && (unsigned)(target - fb[lr]) < 384) /* VirtualBoyGo */
+       if(vbgo_orow && (unsigned)(target - fb[lr] - ClipX0) <= (unsigned)(ClipX1 - ClipX0)) /* VirtualBoyGo */
         vbgo_orow[(target - fb[lr]) * VBGO_TT_COLUMN] = vbgo_obits | (uint64_t)(((8 - meow) << 11) | ((pixels & 3) << 20));
       }
       target++;]=]

@@ -336,6 +336,26 @@ bool vbgo_tiletrack_keep_block(void)
    return true;
 }
 
+bool vbgo_tiletrack_keep_cells(uint64_t cells)
+{
+   const uint16_t now = (uint16_t)(vbgo_tt_stamp_bits >> 48);
+   unsigned e, x, k;
+   if (!vbgo_tt_on)
+      return true;
+   if (!s_block_was)
+      return false;
+   for (e = 0; e < 2; e++)
+   {
+      StampHalf *stamp = (StampHalf *)vbgo_tt_dst[e] + STAMP_HALF;
+      for (x = 0; x < VBGO_TT_WIDTH; x++, stamp += VBGO_TT_COLUMN * 4)
+         if (cells >> (x >> 3) & 1)
+            for (k = 0; k < 8 * 4; k += 4)
+               if (stamp[k] == s_block_was)
+                  stamp[k] = now;
+   }
+   return true;
+}
+
 void vbgo_tiletrack_block_drawing(bool compare)
 {
    unsigned e, x;
