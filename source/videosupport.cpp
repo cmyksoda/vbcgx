@@ -14,7 +14,10 @@ void SyncSpeed()
     const unsigned period = 19891;
     unsigned elapsed = SystemTime::diffMicrosecs(lastFrame, SystemTime::now());
     if (elapsed < period) usleep(period - elapsed);
-    lastFrame = SystemTime::now();
+    // Keep the emulation deadline steady when a video frame misses a retrace.
+    lastFrame += microsecs_to_ticks(period);
+    if (elapsed > period * 5)
+        lastFrame = SystemTime::now();
 }
 void ClearScreenshot()
 {
