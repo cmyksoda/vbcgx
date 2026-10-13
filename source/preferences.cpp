@@ -201,9 +201,6 @@ preparePrefsData ()
 	createXMLSection("Controller", "Controller Settings");
 
 	createXMLSetting("controller", "Controller", toStr(EmuSettings.controller));
-	createXMLSetting("turboModeEnabled", "Turbo Mode Enabled", BtoStr(EmuSettings.turboModeEnabled));
-	createXMLSetting("turboModeButton", "Turbo Mode Button", toStr(EmuSettings.turboModeButton));
-	createXMLSetting("gamepadMenuToggle", "Gamepad Menu Toggle", toStr(EmuSettings.gamepadMenuToggle));
 
 	createXMLController(btnmap[CTRL_PAD][INPUT_HW_GAMECUBE], "btnmapping_pad_gcpad", "Virtual Boy Pad - GameCube Controller");
 	createXMLController(btnmap[CTRL_PAD][INPUT_HW_CLASSIC], "btnmapping_pad_classic", "Virtual Boy Pad - Classic Controller");
@@ -381,9 +378,6 @@ decodePrefsData ()
 
 	loadXMLSetting(&EmuSettings.controller, "controller");
 	loadXMLSetting(&EmuSettings.crosshair, "crosshair");
-	loadXMLSetting(&EmuSettings.turboModeEnabled, "turboModeEnabled");
-	loadXMLSetting(&EmuSettings.turboModeButton, "turboModeButton");
-	loadXMLSetting(&EmuSettings.gamepadMenuToggle, "gamepadMenuToggle");
 
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_GAMECUBE], "btnmapping_pad_gcpad");
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_CLASSIC], "btnmapping_pad_classic");
@@ -574,9 +568,6 @@ void DefaultSettings()
 	sprintf (EmuSettings.artworkFolder, "%s/%s", APPFOLDER, loadFolder[LOADFOLDER_ARTWORK].name); // Path to artwork files
 	EmuSettings.autoLoad = AUTOLOAD_RAM;
 	EmuSettings.autoSave = AUTOSAVE_RAM;
-	EmuSettings.turboModeEnabled = true;
-	EmuSettings.turboModeButton = 0; // Default is Right Analog Stick (0)
-	EmuSettings.gamepadMenuToggle = GAMEPAD_MENU_TOGGLE_DEFAULT;
 }
 
 /****************************************************************************

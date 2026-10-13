@@ -119,13 +119,6 @@ enum {
 };
 
 enum {
-	GAMEPAD_MENU_TOGGLE_DEFAULT = 0,
-	GAMEPAD_MENU_TOGGLE_HOME_RIGHTSTICK,
-	GAMEPAD_MENU_TOGGLE_LRSTART_12PLUS,
-	GAMEPAD_MENU_TOGGLE_LENGTH
-};
-
-enum {
 	TIMING_NTSC = 0,
 	TIMING_PAL,
 	TIMING_AUTOMATIC,
@@ -165,24 +158,6 @@ enum
 	LANG_TURKISH,
 	LANG_SWEDISH,
 	LANG_LENGTH
-};
-
-enum {
-	TURBO_BUTTON_RSTICK = 0,
-	TURBO_BUTTON_A,
-	TURBO_BUTTON_B,
-	TURBO_BUTTON_X,
-	TURBO_BUTTON_Y,
-	TURBO_BUTTON_L,
-	TURBO_BUTTON_R,
-	TURBO_BUTTON_ZL,
-	TURBO_BUTTON_ZR,
-	TURBO_BUTTON_Z,
-	TURBO_BUTTON_C,
-	TURBO_BUTTON_1,
-	TURBO_BUTTON_2,
-	TURBO_BUTTON_PLUS,
-	TURBO_BUTTON_MINUS,
 };
 
 struct SEmuSettings
@@ -231,9 +206,6 @@ struct SEmuSettings
 	int 	language;
 	int		previewImage;
 	bool	hideSramSaving;
-	bool	turboModeEnabled;
-	int		turboModeButton;
-	int		gamepadMenuToggle;
 };
 
 void ExitApp();

@@ -3,7 +3,6 @@
 #include <libretro.h>
 extern bool romLoaded;
 extern unsigned char *nesrom;
-extern int turbomode;
 void InitVBCore();
 void RunVBFrame();
 void PowerNES();
