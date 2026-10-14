@@ -48,6 +48,41 @@ inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned source
         }
         return;
     }
+    if (w == sourceW && h < sourceH && h <= 512) {
+        // (240p: full width, fewer rows - each output row averages a run of source rows)
+        unsigned rowFrom[512], rowCount[512];
+        for (unsigned y = 0; y < h; ++y) {
+            const unsigned y0 = y * sourceH / h;
+            rowFrom[y] = y0;
+            rowCount[y] = std::max(y0 + 1, (y + 1) * sourceH / h) - y0;
+        }
+        for (unsigned by = 0; by < h; by += 4) {
+            for (unsigned bx = 0; bx < w; bx += 4) {
+                ZeroLine32(tiled);
+                ZeroLine32(tiled + 32);
+                for (unsigned y = 0; y < 4; ++y) {
+                    const unsigned count = rowCount[by + y];
+                    const uint8_t *src = bgrx + rowFrom[by + y] * pitch + bx * 4;
+                    uint8_t *ar = tiled + y * 8, *gb = tiled + 32 + y * 8;
+                    for (unsigned x = 0; x < 4; ++x, src += 4) {
+                        unsigned r = src[2], g = src[1], b = src[0];
+                        for (unsigned k = 1; k < count; ++k) {
+                            const uint8_t *more = src + k * pitch;
+                            r += more[2]; g += more[1]; b += more[0];
+                        }
+                        if (count == 2)
+                            r >>= 1, g >>= 1, b >>= 1;
+                        else if (count > 2)
+                            r /= count, g /= count, b /= count;
+                        ar[x * 2] = 255; ar[x * 2 + 1] = r;
+                        gb[x * 2] = g; gb[x * 2 + 1] = b;
+                    }
+                }
+                tiled += 64;
+            }
+        }
+        return;
+    }
     for (unsigned y = 0; y < h; ++y) {
         const unsigned y0 = y * sourceH / h;
         const unsigned y1 = std::max(y0 + 1, (y + 1) * sourceH / h);
