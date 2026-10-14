@@ -1738,17 +1738,23 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8
     // per row, per shade 1-3, a guarded bit row.
     std::array<int8_t, 32> layerSlot[2], spriteSlot;
     layerSlot[0].fill(-1), layerSlot[1].fill(-1), spriteSlot.fill(-1);
+    uint32_t wanted[2] = {0, 0}; // (the worlds a cell must show to count; ~0: every cell, sprites can't be told)
     for (int k = 0; k < count; ++k)
     {
         const Pair &pair = m_pairs[todo[k]];
         if (pair.sprites)
+        {
             spriteSlot[pair.left] = static_cast<int8_t>(k);
+            wanted[0] = wanted[1] = ~0u;
+        }
         else
         {
             for (int w = 0; w < 32; ++w)
                 if (pair.leftWorlds >> w & 1)
                     layerSlot[0][w] = static_cast<int8_t>(k);
             layerSlot[1][pair.right] = static_cast<int8_t>(k);
+            wanted[0] |= pair.leftWorlds;
+            wanted[1] |= 1u << pair.right;
         }
     }
     const size_t eyeRows = static_cast<size_t>(VBGO_TT_HEIGHT) * 3 * kGuardedRow;
@@ -1768,6 +1774,7 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8
                         : spriteSlot[world] >= 0 ? static_cast<int8_t>(spriteSlot[world] | 0x40)
                                                  : -1;
         }
+        const uint32_t *worldsHere = view[eye].cell_worlds;
         for (int x = 0; x < VBGO_TT_WIDTH; ++x)
         {
             const uint64_t *column = view[eye].columns[x];
@@ -1784,6 +1791,11 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8
             for (int b = 0; b < kBands; ++b)
             {
                 const uint64_t stamp = view[eye].band_stamp[b];
+                if (worldsHere && !(worldsHere[b * kGridW + (x >> 3)] & wanted[eye]))
+                {
+                    at += 8 * 2 * 3 * kGuardedRow;
+                    continue;
+                }
                 for (int y = b * 8; y < b * 8 + 8; ++y, at += 2 * 3 * kGuardedRow)
                 {
                     const uint64_t t = column[y];
