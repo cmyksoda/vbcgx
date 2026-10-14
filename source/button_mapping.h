@@ -13,7 +13,7 @@
 #define BTN_MAP_H
 
 const char ctrlrName[6][32] =
-{ "GameCube Controller", "Wiimote", "Nunchuk + Wiimote", "Classic Controller", "Wii U Pro Controller", "Wii U Gamepad" };
+{ "GameCube Controller", "Wiimote", "Wiimote & Nunchuk", "Classic Controller", "Wii U Pro Controller", "Wii U Gamepad" };
 
 typedef struct _btn_map {
 	uint32_t btn;					// button 'id'

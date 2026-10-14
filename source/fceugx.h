@@ -208,7 +208,6 @@ struct SEmuSettings
 	int		exitAction;
 	int		musicVolume;
 	int		sfxVolume;
-	bool	rumble;
 	int 	language;
 	int		previewImage;
 	bool	hideSramSaving;

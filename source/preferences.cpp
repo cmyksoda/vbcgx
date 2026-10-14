@@ -199,7 +199,6 @@ preparePrefsData ()
 	createXMLSetting("exitAction", "Exit Action", toStr(EmuSettings.exitAction));
 	createXMLSetting("musicVolume", "Music Volume", toStr(EmuSettings.musicVolume));
 	createXMLSetting("sfxVolume", "Sound Effects Volume", toStr(EmuSettings.sfxVolume));
-	createXMLSetting("rumble", "Rumble", BtoStr(EmuSettings.rumble));
 	createXMLSetting("language", "Language", toStr(EmuSettings.language));
 	createXMLSetting("previewImage", "Preview Image", toStr(EmuSettings.previewImage));
 	createXMLSetting("hideSramSaving", "Hide RAM Saving", BtoStr(EmuSettings.hideSramSaving));
@@ -212,7 +211,7 @@ preparePrefsData ()
 	createXMLController(btnmap[CTRL_PAD][INPUT_HW_CLASSIC], "btnmapping_pad_classic", "Virtual Boy Pad - Classic Controller");
 	createXMLController(btnmap[CTRL_PAD][INPUT_HW_WUPC], "btnmapping_pad_wupc", "Virtual Boy Pad - Wii U Pro Controller");
 	createXMLController(btnmap[CTRL_PAD][INPUT_HW_DRC], "btnmapping_pad_wiidrc", "Virtual Boy Pad - Wii U Gamepad");
-	createXMLController(btnmap[CTRL_PAD][INPUT_HW_NUNCHUK], "btnmapping_pad_nunchuk", "Virtual Boy Pad - Nunchuk + Wiimote");
+	createXMLController(btnmap[CTRL_PAD][INPUT_HW_NUNCHUK], "btnmapping_pad_nunchuk", "Virtual Boy Pad - Wiimote & Nunchuk");
 
 	int datasize = mxmlSaveString(xml, (char *)savebuffer, SAVEBUFFERSIZE, XMLSaveCallback);
 
@@ -300,7 +299,6 @@ static void loadXMLController(uint32_t controller[], const char * name)
 
 void ApplySettings() {
 	platform->getInput()->setWiimoteOrientation(EmuSettings.wiimoteOrientation);
-	platform->getInput()->setRumbleEnabled(EmuSettings.rumble);
 	GuiSound::setDefaultVolume(VOLUME_TYPE::MUSIC, EmuSettings.musicVolume);
 	GuiSound::setDefaultVolume(VOLUME_TYPE::SFX, EmuSettings.sfxVolume);
 	platform->getVideo()->startMenuVideo();
@@ -380,7 +378,6 @@ decodePrefsData ()
 	loadXMLSetting(&EmuSettings.exitAction, "exitAction");
 	loadXMLSetting(&EmuSettings.musicVolume, "musicVolume");
 	loadXMLSetting(&EmuSettings.sfxVolume, "sfxVolume");
-	loadXMLSetting(&EmuSettings.rumble, "rumble");
 	loadXMLSetting(&EmuSettings.language, "language");
 	loadXMLSetting(&EmuSettings.previewImage, "previewImage");
 	loadXMLSetting(&EmuSettings.hideSramSaving, "hideSramSaving");
@@ -406,6 +403,23 @@ decodePrefsData ()
  * Attempts to correct at least some invalid settings - the ones that
  * might cause crashes
  ***************************************************************************/
+// Whether this Wii and its cable can show an output mode at all (a CRT on S-video loses
+// the signal in 480p, and a 60 Hz TV in the PAL modes)
+bool VideoModeAvailable(int mode)
+{
+#ifdef HW_RVL
+	const bool pal = CONF_GetVideo() == CONF_VIDEO_PAL;
+	switch(mode)
+	{
+		case VIDEOMODE_PROGRESSIVE: return VIDEO_HaveComponentCable();
+		case VIDEOMODE_PAL:
+		case VIDEOMODE_PAL60:
+		case VIDEOMODE_240P_PAL: return pal;
+	}
+#endif
+	return true;
+}
+
 void FixInvalidSettings()
 {
 	if(!isValidLoadDevice(EmuSettings.loadDevice))
@@ -452,7 +466,7 @@ void FixInvalidSettings()
 		EmuSettings.videoAspectRatioCorrection = SCALING_MAINTAIN_ASPECT;
 	if(!(EmuSettings.videoFixedRatio >= 0 && EmuSettings.videoFixedRatio <= VIDEO_FIXED_RATIO_MAX))
 		EmuSettings.videoFixedRatio = 0;
-	if(!(EmuSettings.videoMode >= VIDEOMODE_AUTO && EmuSettings.videoMode < VIDEOMODE_LENGTH))
+	if(!(EmuSettings.videoMode >= VIDEOMODE_AUTO && EmuSettings.videoMode < VIDEOMODE_LENGTH) || !VideoModeAvailable(EmuSettings.videoMode))
 		EmuSettings.videoMode = VIDEOMODE_AUTO;
 #if defined(HW_RVL) || defined(HW_DOL) || defined(__WIIU__)
 	if(!(EmuSettings.videoUpscalingFilter >= UPSCALE_NONE && EmuSettings.videoUpscalingFilter < NUM_UPSCALE_FILTERS))
@@ -549,7 +563,6 @@ void DefaultSettings()
 #endif
 	EmuSettings.musicVolume = 20;
 	EmuSettings.sfxVolume = 40;
-	EmuSettings.rumble = true;
 	EmuSettings.previewImage = PREVIEWIMAGE_COVER;
 	EmuSettings.hideSramSaving = false;
 

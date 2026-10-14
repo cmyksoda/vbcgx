@@ -13,6 +13,7 @@
 bool SavePrefs();
 bool SavePrefsAndWait();
 void FixInvalidSettings();
+bool VideoModeAvailable(int mode);
 void DefaultSettings();
 void ApplySettings();
 bool LoadPrefs();

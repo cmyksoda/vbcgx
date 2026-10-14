@@ -417,7 +417,7 @@ static void CreditsWindow()
 	txt[i] = new GuiText("Credits", 30, MenuPaletteCurrent().textOnAccent);
 	txt[i]->setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP); txt[i]->setPosition(0,y); i++; y+=56;
 
-	txt[i] = new GuiText("Official Site: https://github.com/dborth/fceugx", 20, MenuPaletteCurrent().label);
+	txt[i] = new GuiText("Official Site: https://github.com/cmyksoda/vboycolorgx", 20, MenuPaletteCurrent().label);
 	txt[i]->setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP); txt[i]->setPosition(0,y); i++; y+=32;
 
 	GuiText::setPresets(20, MenuPaletteCurrent().label, 0, GUI_TEXT_JUSTIFY_LEFT | GUI_TEXT_ALIGN_TOP, ALIGN_H::LEFT, ALIGN_V::TOP);
@@ -3538,7 +3538,9 @@ static int MenuVBOptions(bool colors)
             } else {
                 switch (ret) {
                 case 0:
-                    EmuSettings.videoMode = (EmuSettings.videoMode + 1) % VIDEOMODE_LENGTH;
+                    do
+                        EmuSettings.videoMode = (EmuSettings.videoMode + 1) % VIDEOMODE_LENGTH;
+                    while (!VideoModeAvailable(EmuSettings.videoMode));
                     if (is240p() && EmuSettings.videoFixedRatio > 1) EmuSettings.videoFixedRatio = 1;
                     platform->getVideo()->startMenuVideo();
                     break;
@@ -4113,7 +4115,6 @@ static int MenuSettingsMenu()
 	sprintf(options.name[i++], "Wiimote Orientation");
 	sprintf(options.name[i++], "Music Volume");
 	sprintf(options.name[i++], "Sound Effects Volume");
-	sprintf(options.name[i++], "Rumble");
 	sprintf(options.name[i++], "Language");
 	sprintf(options.name[i++], "Preview Image");
 	sprintf(options.name[i++], "Hide RAM Saving");
@@ -4193,10 +4194,6 @@ static int MenuSettingsMenu()
 				GuiSound::setDefaultVolume(VOLUME_TYPE::SFX, EmuSettings.sfxVolume);
 				break;
 			case 4:
-				EmuSettings.rumble = !EmuSettings.rumble;
-				platform->getInput()->setRumbleEnabled(EmuSettings.rumble);
-				break;
-			case 5:
 				EmuSettings.language++;
 
 				if(EmuSettings.language == LANG_TRAD_CHINESE) // skip (not supported)
@@ -4204,12 +4201,12 @@ static int MenuSettingsMenu()
 				else if(EmuSettings.language >= LANG_LENGTH)
 					EmuSettings.language = LANG_JAPANESE;
 				break;
-			case 6:
+			case 5:
 				EmuSettings.previewImage++;
 				if(EmuSettings.previewImage >= PREVIEWIMAGE_LENGTH)
 					EmuSettings.previewImage = PREVIEWIMAGE_SCREENSHOT;
 				break;
-			case 7:
+			case 6:
 				EmuSettings.hideSramSaving = !EmuSettings.hideSramSaving;
 				break;
 		}
@@ -4253,45 +4250,40 @@ static int MenuSettingsMenu()
 			else
 				sprintf(options.value[3], "Mute");
 
-			if (EmuSettings.rumble)
-				sprintf (options.value[4], "Enabled");
-			else
-				sprintf (options.value[4], "Disabled");
-
 			if (EmuSettings.hideSramSaving)
-				sprintf (options.value[7], "On");
+				sprintf (options.value[6], "On");
 			else
-				sprintf (options.value[7], "Off");
+				sprintf (options.value[6], "Off");
 
 			switch(EmuSettings.language)
 			{
-				case LANG_JAPANESE:			sprintf(options.value[5], "Japanese"); 	break;
-				case LANG_ENGLISH:			sprintf(options.value[5], "English"); 	break;
-				case LANG_GERMAN:			sprintf(options.value[5], "German"); 	break;
-				case LANG_FRENCH:			sprintf(options.value[5], "French"); 	break;
-				case LANG_SPANISH:			sprintf(options.value[5], "Spanish"); 	break;
-				case LANG_ITALIAN:			sprintf(options.value[5], "Italian"); 	break;
-				case LANG_DUTCH:			sprintf(options.value[5], "Dutch"); 	break;
-				case LANG_SIMP_CHINESE:		sprintf(options.value[5], "Chinese (Simplified)"); 	break;
-				case LANG_TRAD_CHINESE:		sprintf(options.value[5], "Chinese (Traditional)"); break;
-				case LANG_KOREAN:			sprintf(options.value[5], "Korean"); 	break;
-				case LANG_PORTUGUESE:		sprintf(options.value[5], "Portuguese"); break;
-				case LANG_BRAZILIAN_PORTUGUESE: sprintf(options.value[5], "Brazilian Portuguese"); break;
-				case LANG_CATALAN:			sprintf(options.value[5], "Catalan"); 	break;
-				case LANG_TURKISH:			sprintf(options.value[5], "Turkish"); 	break;
-				case LANG_SWEDISH:			sprintf(options.value[5], "Swedish"); 	break;
+				case LANG_JAPANESE:			sprintf(options.value[4], "Japanese"); 	break;
+				case LANG_ENGLISH:			sprintf(options.value[4], "English"); 	break;
+				case LANG_GERMAN:			sprintf(options.value[4], "German"); 	break;
+				case LANG_FRENCH:			sprintf(options.value[4], "French"); 	break;
+				case LANG_SPANISH:			sprintf(options.value[4], "Spanish"); 	break;
+				case LANG_ITALIAN:			sprintf(options.value[4], "Italian"); 	break;
+				case LANG_DUTCH:			sprintf(options.value[4], "Dutch"); 	break;
+				case LANG_SIMP_CHINESE:		sprintf(options.value[4], "Chinese (Simplified)"); 	break;
+				case LANG_TRAD_CHINESE:		sprintf(options.value[4], "Chinese (Traditional)"); break;
+				case LANG_KOREAN:			sprintf(options.value[4], "Korean"); 	break;
+				case LANG_PORTUGUESE:		sprintf(options.value[4], "Portuguese"); break;
+				case LANG_BRAZILIAN_PORTUGUESE: sprintf(options.value[4], "Brazilian Portuguese"); break;
+				case LANG_CATALAN:			sprintf(options.value[4], "Catalan"); 	break;
+				case LANG_TURKISH:			sprintf(options.value[4], "Turkish"); 	break;
+				case LANG_SWEDISH:			sprintf(options.value[4], "Swedish"); 	break;
 			}
 
 			switch(EmuSettings.previewImage)
 			{
 				case 0:
-					sprintf(options.value[6], "Screenshots");
+					sprintf(options.value[5], "Screenshots");
 					break;
 				case 1:
-					sprintf(options.value[6], "Covers");
+					sprintf(options.value[5], "Covers");
 					break;
 				case 2:
-					sprintf(options.value[6], "Artwork");
+					sprintf(options.value[5], "Artwork");
 					break;
 			}
 
