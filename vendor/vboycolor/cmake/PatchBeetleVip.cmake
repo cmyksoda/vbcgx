@@ -157,6 +157,49 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
    bgsc = BGMap[vbgo_cell];
   }]=]
         "vip_draw.inc (DrawBG map read)")
+    # Blank-tile runs found in a character's first row, for its other rows in the same block
+    # (same map row, same start and clip): per world and eye.
+    _vbgo_replace_once(DRAW
+        [=[static void DrawBG(uint8 *target, uint16 RealY,]=]
+        [=[/* VirtualBoyGo: where runs of blank tiles end, by the 8-pixel column they start at */
+typedef struct { uint32 serial, sx, base, mask; int32 x0, x1; uint32 known[2]; uint16 end[48]; } VbgoBlankRuns;
+static VbgoBlankRuns vbgo_blank_runs[64];
+static uint32 vbgo_runs_serial = 1;
+static VbgoBlankRuns *vbgo_runs; /* (the call's; at file scope, so the drawing loop keeps its registers) */
+
+static void DrawBG(uint8 *target, uint16 RealY,]=]
+        "vip_draw.inc (DrawBG blank-run cache)")
+    _vbgo_replace_once(DRAW
+        [=[  USE_ROW(BGMap_Base | (x << 12));
+
+ for(x = start_x; x <= final_x; x++)
+ {]=]
+        [=[  USE_ROW(BGMap_Base | (x << 12));
+
+ vbgo_runs = NULL; /* VirtualBoyGo */
+ if(vbgo_row && !overplane)
+ {
+  VbgoBlankRuns *const r = &vbgo_blank_runs[(vbgo_tt_world & 31) * 2 + (lr ? 1 : 0)];
+  if(r->serial != vbgo_runs_serial || r->sx != SourceX || r->base != BGMap_Base || r->mask != SourceX_Mask ||
+     r->x0 != start_x || r->x1 != final_x)
+  {
+   r->serial = vbgo_runs_serial, r->sx = SourceX, r->base = BGMap_Base, r->mask = SourceX_Mask;
+   r->x0 = start_x, r->x1 = final_x;
+   r->known[0] = r->known[1] = 0;
+  }
+  vbgo_runs = r;
+ }
+
+ for(x = start_x; x <= final_x; x++)
+ {]=]
+        "vip_draw.inc (DrawBG blank-run lookup)")
+    _vbgo_replace_once(DRAW
+        [=[ obj_search_which = 3;
+]=]
+        [=[ obj_search_which = 3;
+ vbgo_runs_serial++; /* VirtualBoyGo: (the block's memory may differ from the last one's) */
+]=]
+        "vip_draw.inc (VIP_DrawBlock serial)")
     # The unrolled 8-pixel path (a whole character row at once) tags its 8
     # pixels afterwards - pixel k shows in-tile x k, or 7 - k when the
     # character is flipped horizontally; transparent ones may become fills.
@@ -176,8 +219,19 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
    {
     /* (a map entry that can't fill anywhere: the same entry again is the same blank row) */
     const uint32 blank_bgsc = (!vbgo_row || !vbgo_tt_fill || vbgo_tt_blank[char_no]) ? bgsc : 0x10000;
-    if(!overplane)
+    /* (a blank tile is blank in every row: where its run ends is known from the character's first row) */
+    const int vbgo_run_known = vbgo_runs && vbgo_tt_blank[char_no];
+    if(vbgo_run_known && (vbgo_runs->known[x >> 8] >> ((x >> 3) & 31) & 1))
     {
+     const int32 to = vbgo_runs->end[x >> 3];
+     SourceX = (SourceX + (uint32)(to - x)) & SourceX_Mask;
+     x = to;
+     vbgo_cell = (BGMap_Base | ((SourceX << 3) & ~0xFFF) | ((SourceX >> 3) & 0x3F)) & 0xFFFF;
+     bgsc = BGMap[vbgo_cell];
+    }
+    else if(!overplane)
+    {
+     const int32 from = x;
      /* (along a map's row of 64 cells the next cell is the next halfword) */
      unsigned c = (SourceX >> 3) & 0x3F;
      uint32 row_start = (BGMap_Base | ((SourceX << 3) & ~0xFFF)) & 0xFFFF;
@@ -190,6 +244,8 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
       bgsc = BGMap[row_start | c];
      } while(bgsc == blank_bgsc && (x + 15) <= final_x);
      vbgo_cell = row_start | c;
+     if(vbgo_run_known)
+      vbgo_runs->end[from >> 3] = (uint16)x, vbgo_runs->known[from >> 8] |= 1u << ((from >> 3) & 31);
     }
     else
      do
