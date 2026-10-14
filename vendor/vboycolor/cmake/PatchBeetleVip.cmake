@@ -162,6 +162,39 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
     # character is flipped horizontally; transparent ones may become fills.
     # Background drawing only draws pixels 0-383 of the call's row, so its
     # tags go straight to the row's tags (vbgo_row) - no per-pixel lookup.
+    # Runs of blank character rows (no pixels, no fills) draw and tag nothing:
+    # step over them without the rest of the loop. Same marks, same everything.
+    _vbgo_replace_once(DRAW
+        [=[    USE_BG_CHR(char_no);
+    used_chr = char_no;
+   }
+   if(pixels)]=]
+        [=[    USE_BG_CHR(char_no);
+    used_chr = char_no;
+   }
+   while(!pixels && (x + 15) <= final_x && !(vbgo_row && vbgo_tt_fills_from(char_no, vbgo_cell))) /* VirtualBoyGo */
+   {
+    x += 8;
+    SourceX = (SourceX + 8) & SourceX_Mask;
+    bgsc = bgsc_overplane;
+    vbgo_cell = overplane_char & 0xFFFF;
+    if(SourceX < SourceX_Size && SourceY < SourceY_Size)
+    {
+     vbgo_cell = (BGMap_Base | ((SourceX << 3) & ~0xFFF) | ((SourceX >> 3) & 0x3F)) & 0xFFFF;
+     bgsc = BGMap[vbgo_cell];
+    }
+    char_no = bgsc & 0x7FF;
+    palette_selector = bgsc >> 14;
+    char_sub_y = ((bgsc & 0x1000) ? 7 : 0) ^ (SourceY & 0x7);
+    pixels = CHR16[char_no * 8 + char_sub_y];
+    if(char_no != used_chr)
+    {
+     USE_BG_CHR(char_no);
+     used_chr = char_no;
+    }
+   }
+   if(pixels)]=]
+        "vip_draw.inc (DrawBG blank character rows)")
     _vbgo_replace_once(DRAW
         [=[   x += 7;
    SourceX += 8;]=]
