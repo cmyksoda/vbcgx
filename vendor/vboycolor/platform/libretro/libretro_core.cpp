@@ -699,12 +699,18 @@ namespace
         else
         {
             // By brightness (the core draws red: its red is the brightness).
+            // (Beetle writes 0x00RRGGBB words, so red's byte depends on the CPU's byte order)
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+            constexpr unsigned kRedByte = 1;
+#else
+            constexpr unsigned kRedByte = 2;
+#endif
             for (unsigned y = 0; y < h; ++y)
             {
                 const uint8_t *in = raw + y * rowBytes;
                 uint32_t *out = reinterpret_cast<uint32_t *>(&colored[y * rowBytes]);
                 for (unsigned x = 0; x < VBGO_TT_WIDTH; ++x)
-                    out[x] = g_brightness[in[x * 4 + 2]];
+                    out[x] = g_brightness[in[x * 4 + kRedByte]];
             }
         }
         g_video(colored.data(), VBGO_TT_WIDTH, h, rowBytes);
