@@ -174,15 +174,20 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
    }
    while(!pixels && (x + 15) <= final_x && !(vbgo_row && vbgo_tt_fills_from(char_no, vbgo_cell))) /* VirtualBoyGo */
    {
-    x += 8;
-    SourceX = (SourceX + 8) & SourceX_Mask;
-    bgsc = bgsc_overplane;
-    vbgo_cell = overplane_char & 0xFFFF;
-    if(SourceX < SourceX_Size && SourceY < SourceY_Size)
+    /* (a map entry that can't fill anywhere: the same entry again is the same blank row) */
+    const uint32 blank_bgsc = (!vbgo_row || !vbgo_tt_fill || vbgo_tt_blank[char_no]) ? bgsc : 0x10000;
+    do
     {
-     vbgo_cell = (BGMap_Base | ((SourceX << 3) & ~0xFFF) | ((SourceX >> 3) & 0x3F)) & 0xFFFF;
-     bgsc = BGMap[vbgo_cell];
-    }
+     x += 8;
+     SourceX = (SourceX + 8) & SourceX_Mask;
+     bgsc = bgsc_overplane;
+     vbgo_cell = overplane_char & 0xFFFF;
+     if(!overplane || (SourceX < SourceX_Size && SourceY < SourceY_Size))
+     {
+      vbgo_cell = (BGMap_Base | ((SourceX << 3) & ~0xFFF) | ((SourceX >> 3) & 0x3F)) & 0xFFFF;
+      bgsc = BGMap[vbgo_cell];
+     }
+    } while(bgsc == blank_bgsc && (x + 15) <= final_x);
     char_no = bgsc & 0x7FF;
     palette_selector = bgsc >> 14;
     char_sub_y = ((bgsc & 0x1000) ? 7 : 0) ^ (SourceY & 0x7);
