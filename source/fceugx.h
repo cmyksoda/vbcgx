@@ -197,9 +197,7 @@ struct SEmuSettings
 
 	bool	crosshair;
 	bool	spriteLimit;
-	bool	gameGenie;
 	int		timing;
-	int		controller;
 	int		wiimoteOrientation;
 	int		exitAction;
 	int		musicVolume;

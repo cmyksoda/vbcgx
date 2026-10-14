@@ -148,7 +148,6 @@ preparePrefsData ()
 	createXMLSetting("lastFileLoaded", "Last File Loaded", EmuSettings.lastFileLoaded);
 	createXMLSetting("saveFolder", "Save Folder", EmuSettings.saveFolder);
 	createXMLSetting("appendAuto", "Append Auto to .SAV Files", BtoStr(EmuSettings.appendAuto));
-	createXMLSetting("gameGenie", "Game Genie", BtoStr(EmuSettings.gameGenie));
 	createXMLSetting("screenshotsFolder", "Screenshots Folder", EmuSettings.screenshotsFolder);
 	createXMLSetting("coverFolder", "Covers Folder", EmuSettings.coverFolder);
 	createXMLSetting("artworkFolder", "Artwork Folder", EmuSettings.artworkFolder);
@@ -204,7 +203,6 @@ preparePrefsData ()
 
 	createXMLSection("Controller", "Controller Settings");
 
-	createXMLSetting("controller", "Controller", toStr(EmuSettings.controller));
 
 	createXMLController(btnmap[CTRL_PAD][INPUT_HW_GAMECUBE], "btnmapping_pad_gcpad", "Virtual Boy Pad - GameCube Controller");
 	createXMLController(btnmap[CTRL_PAD][INPUT_HW_CLASSIC], "btnmapping_pad_classic", "Virtual Boy Pad - Classic Controller");
@@ -329,7 +327,6 @@ decodePrefsData ()
 	loadXMLSetting(EmuSettings.lastFileLoaded, "lastFileLoaded", sizeof(EmuSettings.lastFileLoaded));
 	loadXMLSetting(EmuSettings.saveFolder, "saveFolder", sizeof(EmuSettings.saveFolder));
 	loadXMLSetting(&EmuSettings.appendAuto, "appendAuto");
-	loadXMLSetting(&EmuSettings.gameGenie, "gameGenie");
 	loadXMLSetting(EmuSettings.screenshotsFolder, "screenshotsFolder", sizeof(EmuSettings.screenshotsFolder));
 	loadXMLSetting(EmuSettings.coverFolder, "coverFolder", sizeof(EmuSettings.coverFolder));
 	loadXMLSetting(EmuSettings.artworkFolder, "artworkFolder", sizeof(EmuSettings.artworkFolder));
@@ -382,7 +379,6 @@ decodePrefsData ()
 
 	// Controller Settings
 
-	loadXMLSetting(&EmuSettings.controller, "controller");
 	loadXMLSetting(&EmuSettings.crosshair, "crosshair");
 
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_GAMECUBE], "btnmapping_pad_gcpad");
@@ -456,8 +452,6 @@ void FixInvalidSettings()
 		EmuSettings.sfxVolume = 40;
 	if(EmuSettings.language < 0 || EmuSettings.language >= LANG_LENGTH)
 		EmuSettings.language = LANG_ENGLISH;
-	if(EmuSettings.controller > CTRL_PAD4 || EmuSettings.controller < CTRL_ZAPPER)
-		EmuSettings.controller = CTRL_PAD;
 	if(!(EmuSettings.videoHardwareSoften >= VIDEO_HW_SOFTEN_OFF && EmuSettings.videoHardwareSoften < VIDEO_HW_SOFTEN_LENGTH))
 		EmuSettings.videoHardwareSoften = VIDEO_HW_SOFTEN_AUTO;
 	if(!(EmuSettings.videoAspectRatioCorrection >= SCALING_MAINTAIN_ASPECT && EmuSettings.videoAspectRatioCorrection < SCALING_LENGTH))
@@ -547,10 +541,8 @@ void DefaultSettings()
 	EmuSettings.tintRed = 100, EmuSettings.tintGreen = 0, EmuSettings.tintBlue = 0;
     EmuSettings.colorPacks = true;
     EmuSettings.timing = TIMING_AUTOMATIC;
-	EmuSettings.controller = CTRL_PAD;
 	EmuSettings.crosshair = true; // show zapper crosshair
 	EmuSettings.spriteLimit = true; // enforce 8 sprite limit
-	EmuSettings.gameGenie = false;
 
 	EmuSettings.wiimoteOrientation = WIIMOTE_ORIENTATION_VERTICAL;
 	EmuSettings.autoloadGame = false;

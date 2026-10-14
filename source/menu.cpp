@@ -33,7 +33,6 @@
 #include "menu.h"
 #include "fceuload.h"
 #include "filelist.h"
-#include "cheatmgr.h"
 #include "libgui/Gui.h"
 #include "menuart.h"
 #include "utils/decompress.h"
@@ -1432,85 +1431,6 @@ static int MenuGameSelection()
 }
 
 /****************************************************************************
- * ControllerWindowUpdate
- *
- * Callback for controller window. Responds to clicks on window elements.
- ***************************************************************************/
-static void ControllerWindowUpdate(void * ptr, int dir)
-{
-	GuiButton * b = (GuiButton *)ptr;
-	if(b->getState() == STATE::CLICKED)
-	{
-		EmuSettings.controller += dir;
-
-		if(EmuSettings.controller > CTRL_PAD4)
-			EmuSettings.controller = CTRL_ZAPPER;
-		else if(EmuSettings.controller < CTRL_ZAPPER)
-			EmuSettings.controller = CTRL_PAD4;
-
-		settingText->setText(ctrlName[EmuSettings.controller]);
-		b->resetState();
-	}
-}
-
-/****************************************************************************
- * ControllerWindowLeftClick / ControllerWindowRightsClick
- *
- * Callbacks for controller window arrows. Responds arrow clicks.
- ***************************************************************************/
-static void ControllerWindowLeftClick(void * ptr) { ControllerWindowUpdate(ptr, -1); }
-static void ControllerWindowRightClick(void * ptr) { ControllerWindowUpdate(ptr, +1); }
-
-/****************************************************************************
- * ControllerWindow
- *
- * Opens a window to allow the user to select the controller to be used.
- ***************************************************************************/
-static void ControllerWindow()
-{
-	GuiWindow * w = new GuiWindow(300,250);
-	w->setAlignment(ALIGN_H::CENTRE, ALIGN_V::MIDDLE);
-
-	GuiTrigger trigLeft;
-	trigLeft.setButtonOnlyInFocusTrigger(-1, INPUT_BTN_LEFT);
-
-	GuiTrigger trigRight;
-	trigRight.setButtonOnlyInFocusTrigger(-1, INPUT_BTN_RIGHT);
-
-	MenuArrowImage arrowLeftImg(ARROW::LEFT);
-	GuiButton arrowLeftBtn(MENU_ARROW_HIT_SHORT, MENU_ARROW_HIT_LONG);
-	arrowLeftBtn.setImage(&arrowLeftImg);
-	arrowLeftBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
-	arrowLeftBtn.setTrigger(trigA);
-	arrowLeftBtn.setTrigger(&trigLeft);
-	arrowLeftBtn.setSelectable(false);
-	arrowLeftBtn.setUpdateCallback(ControllerWindowLeftClick);
-
-	MenuArrowImage arrowRightImg(ARROW::RIGHT);
-	GuiButton arrowRightBtn(MENU_ARROW_HIT_SHORT, MENU_ARROW_HIT_LONG);
-	arrowRightBtn.setImage(&arrowRightImg);
-	arrowRightBtn.setAlignment(ALIGN_H::RIGHT, ALIGN_V::MIDDLE);
-	arrowRightBtn.setTrigger(trigA);
-	arrowRightBtn.setTrigger(&trigRight);
-	arrowRightBtn.setSelectable(false);
-	arrowRightBtn.setUpdateCallback(ControllerWindowRightClick);
-
-	settingText = new GuiText(ctrlName[EmuSettings.controller], 22, MenuPaletteCurrent().label);
-
-	int currentController = EmuSettings.controller;
-
-	w->append(&arrowLeftBtn);
-	w->append(&arrowRightBtn);
-	w->append(settingText);
-
-	if(!SettingWindow("Controller",w))
-		EmuSettings.controller = currentController; // undo changes
-
-	delete(w);
-	delete(settingText);
-}
-
-/****************************************************************************
  * MenuGame
  *
  * Menu displayed when returning to the menu from in-game.
@@ -2302,8 +2222,6 @@ static int MenuGameSettings()
 	MenuIconData iconMappings(icon_settings_vbcontroller_png);
 	MenuIconData iconVideo(icon_settings_video_png);
 	MenuIconData iconEmulation(icon_settings_colors3d_png);
-	MenuIconData iconController(icon_game_controllers_png);
-	MenuIconData iconCheats(icon_game_cheats_png);
 	MenuIconData iconScreenshot(icon_settings_screenshot_png);
 
 	GuiTrigger trigHome;
@@ -2356,20 +2274,6 @@ static int MenuGameSettings()
 	videoBtn.setTrigger(trigA);
 	videoBtn.setEffectGrow();
 
-	GuiText controllerBtnTxt("Button Mappings", 22, MenuPaletteCurrent().label);
-	MenuButtonShape controllerBtnImg(MenuButtonShape::LARGE);
-	GuiImage controllerBtnIcon(&iconController);
-	GuiButton controllerBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
-	controllerBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	controllerBtn.setPosition(-200, 250);
-	controllerBtn.setLabel(&controllerBtnTxt);
-	controllerBtn.setImage(&controllerBtnImg);
-	controllerBtn.setIcon(&controllerBtnIcon);
-	controllerBtn.setSoundOver(&btnSoundOver);
-	controllerBtn.setSoundClick(&btnSoundClick);
-	controllerBtn.setTrigger(trigA);
-	controllerBtn.setEffectGrow();
-
 	GuiText screenshotBtnTxt("Screenshot", 22, MenuPaletteCurrent().label);
 	MenuButtonShape screenshotBtnImg(MenuButtonShape::LARGE);
 	GuiImage screenshotBtnIcon(&iconScreenshot);
@@ -2383,20 +2287,6 @@ static int MenuGameSettings()
 	screenshotBtn.setSoundClick(&btnSoundClick);
 	screenshotBtn.setTrigger(trigA);
 	screenshotBtn.setEffectGrow();
-
-	GuiText cheatsBtnTxt("Cheats", 22, MenuPaletteCurrent().label);
-	MenuButtonShape cheatsBtnImg(MenuButtonShape::LARGE);
-	GuiImage cheatsBtnIcon(&iconCheats);
-	GuiButton cheatsBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
-	cheatsBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	cheatsBtn.setPosition(200, 250);
-	cheatsBtn.setLabel(&cheatsBtnTxt);
-	cheatsBtn.setImage(&cheatsBtnImg);
-	cheatsBtn.setIcon(&cheatsBtnIcon);
-	cheatsBtn.setSoundOver(&btnSoundOver);
-	cheatsBtn.setSoundClick(&btnSoundClick);
-	cheatsBtn.setTrigger(trigA);
-	cheatsBtn.setEffectGrow();
 
 	GuiText closeBtnTxt("Close", 20, MenuPaletteCurrent().label);
 	MenuButtonShape closeBtnImg(MenuButtonShape::SMALL);
@@ -2453,18 +2343,6 @@ static int MenuGameSettings()
 		{
 			selection = MENU_GAMESETTINGS_EMULATION;
 		}
-		else if(controllerBtn.getState() == STATE::CLICKED)
-		{
-			ControllerWindow();
-		}
-		else if(cheatsBtn.getState() == STATE::CLICKED)
-		{
-			cheatsBtn.resetState();
-			if(false)
-				selection = MENU_GAMESETTINGS_CHEATS;
-			else
-				InfoPrompt("Cheats file not found!");
-		}
 		else if(screenshotBtn.getState() == STATE::CLICKED)
 		{
 			if (WindowPrompt("Preview Screenshot", "Save a new Preview Screenshot? Current Screenshot image will be overwritten.", "OK", "Cancel"))
@@ -2501,15 +2379,6 @@ static int MenuGameSettings()
 
 	return selection;
 }
-
-/****************************************************************************
- * MenuGameCheats
- *
- * Displays a list of cheats available, and allows the user to enable/disable
- * them.
- ***************************************************************************/
-
-static int MenuGameCheats() { return MENU_GAMESETTINGS; }
 
 /****************************************************************************
  * MenuSettingsMappings
@@ -3508,11 +3377,6 @@ static int MenuSettingsEmulation() { return MenuVBOptions(true); }
 static int MenuSettings()
 {
 	int selection = MENU_NONE;
-	char gameGenieTxt[10];
-
-	if(!false) sprintf(gameGenieTxt, "DISABLED");
-	else if(EmuSettings.gameGenie) sprintf(gameGenieTxt, "ON");
-	else sprintf(gameGenieTxt, "OFF");
 
 	GuiText titleTxt("Settings", 26, MenuPaletteCurrent().textOnAccent);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
@@ -3523,7 +3387,6 @@ static int MenuSettings()
 	MenuIconData iconFile(icon_settings_file_png);
 	MenuIconData iconMenu(icon_settings_menu_png);
 	MenuIconData iconNetwork(icon_settings_network_png);
-	MenuIconData iconCheats(icon_game_cheats_png);
 	MenuIconData iconCredits(icon_credits_png);
 
 	GuiTrigger trigB;
@@ -3578,24 +3441,6 @@ static int MenuSettings()
 	networkBtn.setSoundClick(&btnSoundClick);
 	networkBtn.setTrigger(trigA);
 	networkBtn.setEffectGrow();
-
-	GuiText cheatsBtnTxt("Game Genie", 22, MenuPaletteCurrent().label);
-	GuiText cheatsBtnTxt2(gameGenieTxt, 18, MenuPaletteCurrent().label);
-	cheatsBtnTxt.setPosition(0, -16);
-	cheatsBtnTxt2.setPosition(0, +8);
-	MenuButtonShape cheatsBtnImg(MenuButtonShape::LARGE);
-	GuiImage cheatsBtnIcon(&iconCheats);
-	GuiButton cheatsBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
-	cheatsBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	cheatsBtn.setPosition(0, 250);
-	cheatsBtn.setLabel(&cheatsBtnTxt, 0);
-	cheatsBtn.setLabel(&cheatsBtnTxt2, 1);
-	cheatsBtn.setImage(&cheatsBtnImg);
-	cheatsBtn.setIcon(&cheatsBtnIcon);
-	cheatsBtn.setSoundOver(&btnSoundOver);
-	cheatsBtn.setSoundClick(&btnSoundClick);
-	cheatsBtn.setTrigger(trigA);
-	cheatsBtn.setEffectGrow();
 
 	GuiText creditsBtnTxt("Credits", 22, MenuPaletteCurrent().label);
 	creditsBtnTxt.setWrap(true, MENU_BTN_LARGE_W-20);
@@ -3670,22 +3515,6 @@ static int MenuSettings()
 		{
 			creditsBtn.resetState();
 			CreditsWindow();
-		}
-		else if(cheatsBtn.getState() == STATE::CLICKED)
-		{
-			cheatsBtn.resetState();
-
-			if(!false)
-			{
-				ErrorPrompt("Game Genie ROM not found!");
-			}
-			else
-			{
-				EmuSettings.gameGenie = !EmuSettings.gameGenie;
-				if (EmuSettings.gameGenie) sprintf(gameGenieTxt, "ON");
-				else sprintf(gameGenieTxt, "OFF");
-				cheatsBtnTxt2.setText(gameGenieTxt);
-			}
 		}
 		else if(backBtn.getState() == STATE::CLICKED)
 		{
@@ -4603,7 +4432,7 @@ void MainMenu (int selection)
 		bgMusic->play(); // startup music
 
 	auto isSettings = [](int m) {
-		return (m >= MENU_SETTINGS && m <= MENU_SETTINGS_NETWORK) || (m >= MENU_GAMESETTINGS && m <= MENU_GAMESETTINGS_CHEATS);
+		return (m >= MENU_SETTINGS && m <= MENU_SETTINGS_NETWORK) || (m >= MENU_GAMESETTINGS && m <= MENU_GAMESETTINGS_EMULATION);
 	};
 	while(currentMenu != MENU_EXIT || !romLoaded)
 	{
@@ -4642,9 +4471,6 @@ void MainMenu (int selection)
 				break;
 			case MENU_GAMESETTINGS_EMULATION:
 				currentMenu = MenuSettingsEmulation();
-				break;
-			case MENU_GAMESETTINGS_CHEATS:
-				currentMenu = MenuGameCheats();
 				break;
 			case MENU_SETTINGS:
 				currentMenu = MenuSettings();
