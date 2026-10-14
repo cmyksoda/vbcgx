@@ -37,14 +37,14 @@ void OgcEmulatorVideo::presentFrame(const uint8_t *buffer, size_t pitch)
 #endif
     float logicalW, logicalH;
     if (EmuSettings.videoFixedRatio) {
-        // Whole output rows per Virtual Boy row, square pixels; 12:7 is wider than 4:3, so
-        // a picture too wide for the screen keeps its rows and fits the width.
+        // Whole output rows per Virtual Boy row and square pixels, as in VBA GX: a picture
+        // wider than the screen (12:7 at 1x in 240p on a 4:3 TV) runs off the sides.
         const float rowUnits = 480.0f / mode->efbHeight;
         int rows = EmuSettings.videoFixedRatio;
         while (rows > 1 && vbHeight * rows * rowUnits > 480.0f)
             --rows;
         logicalH = vbHeight * rows * rowUnits;
-        logicalW = std::min(640.0f, vbWidth * rows * rowUnits / (0.75f * tvAspect));
+        logicalW = vbWidth * rows * rowUnits / (0.75f * tvAspect);
     } else {
         const float maxStretch = EmuSettings.videoAspectRatioCorrection == SCALING_STRETCH_TO_FIT ? 1.6f
             : EmuSettings.videoAspectRatioCorrection == SCALING_PARTIAL_STRETCH ? 1.3f : 1.0f;
