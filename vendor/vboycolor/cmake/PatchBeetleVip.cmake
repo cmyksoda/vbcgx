@@ -210,6 +210,7 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
   {
    vbgo_cell = (BGMap_Base | ((SourceX >> 6) & ~0xFFF) | ((SourceX >> 12) & 0x3F)) & 0xFFFF; /* VirtualBoyGo */
    bgsc = BGMap[vbgo_cell];
+   USE_ROW(vbgo_cell);
   }]=]
         "vip_draw.inc (DrawAffine no-rotation map read)")
     _vbgo_replace_once(DRAW
@@ -231,6 +232,7 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
   }]=]
         [=[   vbgo_cell = (BGMap_Base | m_index | sub_index) & 0xFFFF; /* VirtualBoyGo */
    bgsc = BGMap[vbgo_cell];
+   USE_ROW(vbgo_cell);
   }
   else
    vbgo_cell = OverplaneChar & 0xFFFF; /* VirtualBoyGo */]=]

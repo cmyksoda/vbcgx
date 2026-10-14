@@ -154,6 +154,7 @@ static void DrawAffine(uint8 *target, uint16 RealY, bool lr, uint32 ParamBase, u
 
  if((uint16)(RealY - DestY) > DestHeight)
   return;
+ USE_ROW(ParamBase + 8 * (RealY - DestY)); /* (the line's 8-halfword group: one row) */
 
  SourceX = (int32)mx << 6;
  SourceY = (int32)my << 6;
@@ -204,7 +205,7 @@ static void DrawAffine(uint8 *target, uint16 RealY, bool lr, uint32 ParamBase, u
  if(final_x > ClipX1)
   final_x = ClipX1;
 
- memset(UsedRows, 0xFF, sizeof(uint32) * (1024 / 32));
+ USE_ROW(OverplaneChar);
 
 if(dy == 0)	/* Optimization for no rotation. */
 {
@@ -477,7 +478,8 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
     {
      if(bgm == 1)	/* HBias */
      {
-      USE_ROW(param_base + (((RealY - DestY) * 2) | lr));
+      if((uint16)(RealY - DestY) <= window_height) /* (DrawBG uses it only then) */
+       USE_ROW(param_base + (((RealY - DestY) * 2) | lr));
       srcX += (int16)DRAM[(param_base + (((RealY - DestY) * 2) | lr)) & 0xFFFF];
      }
 
