@@ -358,14 +358,6 @@ void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *
       s_block_was = 0;
 }
 
-/* A tag's stamp as a halfword of its own (its top 16 bits). */
-typedef uint16_t __attribute__((__may_alias__)) StampHalf;
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define STAMP_HALF 0
-#else
-#define STAMP_HALF 3
-#endif
-
 bool vbgo_tiletrack_keep_block(void)
 {
    if (!vbgo_tt_on)
@@ -379,20 +371,32 @@ bool vbgo_tiletrack_keep_block(void)
 bool vbgo_tiletrack_keep_cells(uint64_t cells)
 {
    const uint16_t now = (uint16_t)(vbgo_tt_stamp_bits >> 48);
-   unsigned e, x, k;
+   unsigned e, x, y;
    if (!vbgo_tt_on)
       return true;
    if (!s_block_was)
       return false;
-   for (e = 0; e < 2; e++)
+   if (__builtin_popcountll(cells) >= VBGO_TT_CELLS / 2)
    {
-      StampHalf *stamp = (StampHalf *)vbgo_tt_dst[e] + STAMP_HALF;
-      for (x = 0; x < VBGO_TT_WIDTH; x++, stamp += VBGO_TT_COLUMN * 4)
-         if (cells >> (x >> 3) & 1)
-            for (k = 0; k < 8 * 4; k += 4)
-               if (stamp[k] == s_band_was)
-                  stamp[k] = now;
+      /* (mostly kept: the cells drawn again start clear and take the band's stamp, the kept ones stay as they are) */
+      for (e = 0; e < 2; e++)
+         for (x = 0; x < VBGO_TT_WIDTH; x++)
+            if (!(cells >> (x >> 3) & 1))
+               memset(vbgo_tt_dst[e] + x * VBGO_TT_COLUMN, 0, 8 * sizeof(uint64_t));
+      s_band_stamp[s_block_slot][s_block_no] = s_band_was;
+      vbgo_tt_stamp_bits = (uint64_t)s_band_was << 48;
+      return true;
    }
+   /* (mostly drawn again: the kept cells' tags take this pass's stamp) */
+   for (e = 0; e < 2; e++)
+      for (x = 0; x < VBGO_TT_WIDTH; x++)
+         if (cells >> (x >> 3) & 1)
+         {
+            uint64_t *t = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
+            for (y = 0; y < 8; y++)
+               if ((t[y] >> 48) == s_band_was)
+                  t[y] = (t[y] & 0xFFFFFFFFFFFFull) | ((uint64_t)now << 48);
+         }
    return true;
 }
 
@@ -443,6 +447,7 @@ void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same
 {
    uint32_t *version, fresh = 0;
    unsigned c;
+   vbgo_tt_stamp_bits = (uint64_t)s_next_stamp << 48; /* (after keep_cells' drawing) */
    if (!vbgo_tt_on || s_block_slot < 0 || s_block_no >= VBGO_TT_BLOCKS)
       return;
    memcpy(s_block_chr[s_block_slot][s_block_no], chr, sizeof(s_block_chr[0][0]));
