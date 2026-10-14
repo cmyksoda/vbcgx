@@ -399,9 +399,12 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, in
 
 void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
 {
- int y, world, lr;
- uint16 obj_list[1024];
- int obj_count = 0;
+ /* Row by row, each row through every world back to front: each pixel gets the
+  * same writes in the same order, while the row's pixels and tags stay in the cache. */
+ static uint16 obj_lists[32][1024];
+ const uint16 *drawn[32];
+ int counts[32], drawn_count = 0, obj_lists_used = 0;
+ int y, world, lr, k;
  for( y = 0; y < 8; y++)
  {
   memset(fb_l + y * 512, BKCOL, 384);
@@ -413,9 +416,36 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
  for(world = 31; world >= 0; world--)
  {
   const uint16 *world_ptr = &DRAM[(0x1D800 + world * 0x20) >> 1];
+  bool end = world_ptr[0] & 0x40;
+  uint32 bgm = (world_ptr[0] >> 12) & 3;
+
+  if(end)
+   break;
+
+  counts[drawn_count] = 0;
+  if(bgm == BGM_OBJ)
+  {
+   uint16 *obj_list = obj_lists[obj_lists_used++];
+   const int obj_count = GatherOBJ(obj_list, block_no * 8);
+   *UsedObjs = HashObjList(*UsedObjs, world, obj_list, obj_count);
+   NoteSprites(world, obj_list, obj_count);
+   counts[drawn_count] = obj_count;
+   if(obj_search_which)
+    obj_search_which--;
+  }
+  drawn[drawn_count++] = world_ptr;
+ }
+
+ for(y = 0; y < 8; y++)
+ {
+  uint8 *fb[2] = { &fb_l[y * 512], &fb_r[y * 512] };
+  int obj_index = 0;
+
+  for(k = 0; k < drawn_count; k++)
+  {
+  const uint16 *world_ptr = drawn[k];
 
   uint32 bgmap_base = world_ptr[0] & 0xF;
-  bool end = world_ptr[0] & 0x40;
   bool over = world_ptr[0] & 0x80;
   uint32 scy = (world_ptr[0] >> 8) & 3;
   uint32 scx = (world_ptr[0] >> 10) & 3;
@@ -433,22 +463,10 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
   uint32 param_base = (world_ptr[9] & 0xFFF0);
   uint16 overplane_char = world_ptr[10];
 
-  if(end)
-   break;
-
-  if(bgm == BGM_OBJ)
-  {
-   obj_count = GatherOBJ(obj_list, block_no * 8);
-   *UsedObjs = HashObjList(*UsedObjs, world, obj_list, obj_count);
-   NoteSprites(world, obj_list, obj_count);
-  }
-
-  for(y = 0; y < 8; y++)
-  {
-   uint8 *fb[2] = { &fb_l[y * 512], &fb_r[y * 512] };
+  vbgo_tt_world = (int)((world_ptr - &DRAM[0x1D800 >> 1]) / 16);
 
    if(bgm == BGM_OBJ)
-    DrawOBJ(fb, (block_no * 8) + y, lron, obj_list, obj_count);
+    DrawOBJ(fb, (block_no * 8) + y, lron, obj_lists[obj_index++], counts[k]);
    else if(bgm == BGM_AFFINE)
    {
     for(lr = 0; lr < 2; lr++)
@@ -487,12 +505,5 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
     }
    }
   }
-
-  if(bgm == BGM_OBJ)
-   if(obj_search_which)
-    obj_search_which--;
-
  }
-
-
 }

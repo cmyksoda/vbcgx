@@ -297,16 +297,6 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
                                 (uint64_t)(char_no | (char_sub_y << 14) | (palette_selector << 17) | (1u << 19));
 ]=]
         "vip_draw.inc (DrawOBJ sprite row)")
-    _vbgo_replace_once(DRAW
-        [=[  if(end)
-   break;
-]=]
-        [=[  if(end)
-   break;
-
-  vbgo_tt_world = world; /* VirtualBoyGo */
-]=]
-        "vip_draw.inc (VIP_DrawBlock world loop)")
 
     # vip.c #includes "vip_draw.inc"; a quoted include resolves next to the
     # including file first, so the generated vip.c picks up the generated
