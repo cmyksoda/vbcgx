@@ -3528,7 +3528,12 @@ static int MenuVBOptions(bool colors)
                 case kPacksRow: EmuSettings.colorPacks = !EmuSettings.colorPacks; break;
                 case kMulticolorRow: EmuSettings.currentPalette = (EmuSettings.currentPalette + 1) % ColorSchemes::kMulticolorCount; break;
                 case kGradientRow: EmuSettings.gradient = (EmuSettings.gradient + 1) % ColorSchemes::kGradientCount; break;
-                case kTintColorRow: EmuSettings.tintCustom = !EmuSettings.tintCustom; break;
+                case kTintColorRow: // Default (Red), the other presets, then Custom
+                    if (EmuSettings.tintCustom)
+                        EmuSettings.tintCustom = 0, EmuSettings.tint = 0;
+                    else if (++EmuSettings.tint >= ColorSchemes::kTintCount)
+                        EmuSettings.tintCustom = 1, EmuSettings.tint = 0;
+                    break;
                 case kCustomTintRow: CustomTintWindow(); break;
                 }
                 SetPalette();
@@ -3558,7 +3563,11 @@ static int MenuVBOptions(bool colors)
                     case kPacksRow: snprintf(v, 100, "%s", EmuSettings.colorPacks ? "On" : "Off"); break;
                     case kMulticolorRow: snprintf(v, 100, "%s", ColorSchemes::kMulticolorNames[EmuSettings.currentPalette]); break;
                     case kGradientRow: snprintf(v, 100, "%s", ColorSchemes::kGradientNames[EmuSettings.gradient]); break;
-                    case kTintColorRow: snprintf(v, 100, "%s", EmuSettings.tintCustom ? "Custom" : "Default (Red)"); break;
+                    case kTintColorRow:
+                        snprintf(v, 100, "%s", EmuSettings.tintCustom ? "Custom"
+                                               : EmuSettings.tint ? ColorSchemes::kTintNames[EmuSettings.tint]
+                                                                  : "Default (Red)");
+                        break;
                     case kCustomTintRow:
                         snprintf(v, 100, "%.2f, %.2f, %.2f", EmuSettings.tintRed / 100.0f, EmuSettings.tintGreen / 100.0f,
                                  EmuSettings.tintBlue / 100.0f);
@@ -4699,8 +4708,12 @@ void MainMenu (int selection)
 	if(currentMenu == MENU_GAMESELECTION)
 		bgMusic->play(); // startup music
 
+	auto isSettings = [](int m) {
+		return (m >= MENU_SETTINGS && m <= MENU_SETTINGS_NETWORK) || (m >= MENU_GAMESETTINGS && m <= MENU_GAMESETTINGS_CHEATS);
+	};
 	while(currentMenu != MENU_EXIT || !romLoaded)
 	{
+		const int shown = currentMenu;
 		switch (currentMenu)
 		{
 			case MENU_GAMESELECTION:
@@ -4760,6 +4773,9 @@ void MainMenu (int selection)
             currentMenu = MENU_GAME;
         }
 		lastMenu = currentMenu;
+
+		if (isSettings(shown) && !isSettings(currentMenu))
+			SavePrefs();
 
 		if(guiExiting)
 			break;

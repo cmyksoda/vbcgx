@@ -424,7 +424,7 @@ void FixInvalidSettings()
 
     if (EmuSettings.colorMode < 0 || EmuSettings.colorMode >= 5) EmuSettings.colorMode = 0;
     if (EmuSettings.gradient < 0 || EmuSettings.gradient >= ColorSchemes::kGradientCount) EmuSettings.gradient = 0;
-    EmuSettings.tint = 0; // (the preset tints gave way to Default (Red) and a custom color)
+    if (EmuSettings.tint < 0 || EmuSettings.tint >= ColorSchemes::kTintCount) EmuSettings.tint = 0;
     EmuSettings.tintCustom = EmuSettings.tintCustom ? 1 : 0;
     for (int *c : {&EmuSettings.tintRed, &EmuSettings.tintGreen, &EmuSettings.tintBlue})
         *c = std::min(std::max(*c, 0), 100);

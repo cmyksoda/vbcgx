@@ -30,7 +30,7 @@ static bool Environment(unsigned command, void *data)
         if (!strcmp(var->key, "vboycolor_colors")) var->value = colors[EmuSettings.colorMode];
         else if (!strcmp(var->key, "vboycolor_multicolor")) var->value = ColorSchemes::kMulticolorNames[EmuSettings.currentPalette];
         else if (!strcmp(var->key, "vboycolor_gradient")) var->value = ColorSchemes::kGradientNames[EmuSettings.gradient];
-        else if (!strcmp(var->key, "vboycolor_tint")) var->value = EmuSettings.tintCustom ? "Custom" : ColorSchemes::kTintNames[0];
+        else if (!strcmp(var->key, "vboycolor_tint")) var->value = EmuSettings.tintCustom ? "Custom" : ColorSchemes::kTintNames[EmuSettings.tint];
         else if (!strcmp(var->key, "vboycolor_tint_color")) {
             static char rgb[16];
             snprintf(rgb, sizeof(rgb), "%d,%d,%d", EmuSettings.tintRed, EmuSettings.tintGreen, EmuSettings.tintBlue);
