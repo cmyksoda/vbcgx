@@ -3272,17 +3272,209 @@ static void ScreenPositionWindow()
 /****************************************************************************
  * MenuSettingsVideo
  ***************************************************************************/
+/****************************************************************************
+ * CustomTintWindow
+ ***************************************************************************/
+//!The custom tint's Red, Green and Blue, as VBoy Color's rows: 0.00-1.00 in steps of 0.05,
+//!previewed as the Virtual Boy's 4 brightness levels. Up/Down picks a channel, Left/Right
+//!moves it (held: faster); the pointer clicks the arrows or a track.
+class TintSliders : public GuiWindow
+{
+	public:
+		TintSliders(int *values) : GuiWindow(400, 150), value(values)
+		{
+			static const char *names[3] = {"Red", "Green", "Blue"};
+			const MenuPalette &p = MenuPaletteCurrent();
+			swatch = new GuiShape(72, 72);
+			swatch->setCorners(GuiCorners(8.0f));
+			swatch->setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
+			swatch->setPosition(14, -14);
+			append(swatch);
+			for (int i = 0; i < 4; ++i)
+			{
+				shade[i] = new GuiShape(15, 15);
+				shade[i]->setCorners(GuiCorners(3.0f));
+				shade[i]->setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
+				shade[i]->setPosition(14 + i * 19, 42);
+				append(shade[i]);
+			}
+			for (int k = 0; k < 3; ++k)
+			{
+				const int y = -46 + k * 46;
+				label[k] = new GuiText(names[k], 20, p.label);
+				label[k]->setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
+				label[k]->setPosition(110, y);
+				append(label[k]);
+				arrowImg[k][0] = new MenuArrowImage(ARROW::LEFT);
+				arrowImg[k][1] = new MenuArrowImage(ARROW::RIGHT);
+				for (int d = 0; d < 2; ++d)
+				{
+					arrow[k][d] = new GuiButton(MENU_ARROW_HIT_SHORT, MENU_ARROW_HIT_LONG);
+					arrow[k][d]->setImage(arrowImg[k][d]);
+					arrow[k][d]->setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
+					arrow[k][d]->setPosition(d ? 326 : 168, y);
+					arrow[k][d]->setTrigger(trigA);
+					arrow[k][d]->setSelectable(false);
+					append(arrow[k][d]);
+				}
+				track[k] = new GuiShape(kTrackW, 10);
+				track[k]->setCapsule();
+				track[k]->setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
+				track[k]->setPosition(kTrackX, y);
+				append(track[k]);
+				knob[k] = new GuiShape(8, 20);
+				knob[k]->setCapsule();
+				knob[k]->setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
+				append(knob[k]);
+				trackHit[k] = new GuiButton(kTrackW, 30);
+				trackHit[k]->setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
+				trackHit[k]->setPosition(kTrackX, y);
+				trackHit[k]->setTrigger(trigA);
+				trackHit[k]->setSelectable(false);
+				append(trackHit[k]);
+				text[k] = new GuiText(nullptr, 20, p.label);
+				text[k]->setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
+				text[k]->setPosition(360, y);
+				append(text[k]);
+			}
+			refresh();
+		}
+		~TintSliders()
+		{
+			removeAll();
+			delete swatch;
+			for (GuiShape *s : shade)
+				delete s;
+			for (int k = 0; k < 3; ++k)
+			{
+				delete label[k], delete track[k], delete knob[k], delete trackHit[k], delete text[k];
+				for (int d = 0; d < 2; ++d)
+					delete arrow[k][d], delete arrowImg[k][d];
+			}
+		}
+		void update(InputController *c) override
+		{
+			// (before the window's own focus moves, which would use up the held repeat)
+			if (c && isFocused())
+			{
+				if (c->up()) row = (row + 2) % 3;
+				else if (c->down()) row = (row + 1) % 3;
+				if (c->left()) change(-kStep);
+				else if (c->right()) change(+kStep);
+				refresh();
+			}
+			GuiWindow::update(c);
+			if (!c)
+				return;
+			for (int k = 0; k < 3; ++k)
+			{
+				for (int d = 0; d < 2; ++d)
+					if (arrow[k][d]->getState() == STATE::CLICKED)
+					{
+						row = k;
+						change(d ? kStep : -kStep);
+						arrow[k][d]->resetState();
+					}
+				if (trackHit[k]->getState() == STATE::CLICKED)
+				{
+					row = k;
+					const float at = (c->getPadData().cursor_x - trackHit[k]->getLeft()) / (float)kTrackW;
+					value[k] = std::min(std::max((int)std::lround(at * 100.0f / kStep) * kStep, 0), 100);
+					trackHit[k]->resetState();
+					refresh();
+				}
+			}
+		}
+	private:
+		static constexpr int kStep = 5, kTrackX = 200, kTrackW = 120;
+		void change(int d)
+		{
+			value[row] = std::min(std::max(value[row] + d, 0), 100);
+			refresh();
+		}
+		static uint8_t Byte(float f) { return (uint8_t)std::lround(std::min(std::max(f, 0.0f), 1.0f) * 255.0f); }
+		void refresh()
+		{
+			// (VBoy Color's levels: the hardware's 0, 0x63 and 0x87 of 0xff, then the full color)
+			static const float kLevels[4] = {0.0f, 0x63 / 255.0f, 0x87 / 255.0f, 1.0f};
+			const MenuPalette &p = MenuPaletteCurrent();
+			const float r = value[0] / 100.0f, g = value[1] / 100.0f, b = value[2] / 100.0f;
+			swatch->setPaint(GuiPaint().color(MenuRGBA(Byte(r), Byte(g), Byte(b))).stroke(1.5f, p.outlineStrong));
+			for (int i = 0; i < 4; ++i)
+				shade[i]->setPaint(GuiPaint().color(MenuRGBA(Byte(r * kLevels[i]), Byte(g * kLevels[i]), Byte(b * kLevels[i])))
+				                       .stroke(1.0f, p.outline));
+			for (int k = 0; k < 3; ++k)
+			{
+				float lo[3] = {r, g, b}, hi[3] = {r, g, b};
+				lo[k] = 0.0f, hi[k] = 1.0f;
+				track[k]->setPaint(GuiPaint()
+				                       .gradient(MenuRGBA(Byte(lo[0]), Byte(lo[1]), Byte(lo[2])),
+				                                 MenuRGBA(Byte(hi[0]), Byte(hi[1]), Byte(hi[2])), 0.0f)
+				                       .stroke(1.5f, k == row ? p.accent : p.outlineStrong));
+				knob[k]->setPosition(kTrackX + value[k] * kTrackW / 100 - 4, -46 + k * 46);
+				knob[k]->setPaint(GuiPaint().color(p.textOnAccent).stroke(1.5f, k == row ? p.accent : p.outlineStrong));
+				label[k]->setColor(k == row ? p.accent : p.label);
+				char v[8];
+				snprintf(v, sizeof(v), "%.2f", value[k] / 100.0f);
+				text[k]->setText(v);
+			}
+		}
+		int *value;
+		int row = 0;
+		GuiShape *swatch, *shade[4], *track[3], *knob[3];
+		GuiText *label[3], *text[3];
+		MenuArrowImage *arrowImg[3][2];
+		GuiButton *arrow[3][2], *trackHit[3];
+};
+
+static void CustomTintWindow()
+{
+	int values[3] = {EmuSettings.tintRed, EmuSettings.tintGreen, EmuSettings.tintBlue};
+	TintSliders sliders(values);
+	sliders.setAlignment(ALIGN_H::CENTRE, ALIGN_V::MIDDLE);
+	sliders.setPosition(0, -8);
+	if (SettingWindow("Custom Tint Color", &sliders))
+	{
+		EmuSettings.tintRed = values[0];
+		EmuSettings.tintGreen = values[1];
+		EmuSettings.tintBlue = values[2];
+	}
+}
+
 static int MenuVBOptions(bool colors)
 {
     int selection = MENU_NONE;
     OptionList options;
     bool firstRun = true;
     const char *videoNames[] = {"Output Mode", "Aspect Ratio Correction", "Bilinear Filtering", "Screen Zoom", "Fixed Pixel Ratio", "Screen Position"};
-    const char *colorNames[] = {"Colors", "Color Packs", "Multicolor Palette", "Gradient", "Tint"};
-    options.length = colors ? 5 : 6;
-    for (int i = 0; i < options.length; ++i) {
-        snprintf(options.name[i], 100, "%s", colors ? colorNames[i] : videoNames[i]);
-        options.value[i][0] = 0;
+    enum { kColorsRow, kPacksRow, kMulticolorRow, kGradientRow, kTintColorRow, kCustomTintRow };
+    const char *colorNames[] = {"Colors", "Color Packs", "Multicolor Palette", "Gradient", "Tint Color", "Custom Tint Color"};
+    int rows[6], rowCount = 0;
+    // (a mode's own rows show only for it, right below the two every mode has)
+    auto layoutColorRows = [&]() {
+        rowCount = 0;
+        rows[rowCount++] = kColorsRow;
+        rows[rowCount++] = kPacksRow;
+        if (EmuSettings.colorMode == 2) rows[rowCount++] = kMulticolorRow;
+        if (EmuSettings.colorMode == 3) rows[rowCount++] = kGradientRow;
+        if (EmuSettings.colorMode == 4) {
+            rows[rowCount++] = kTintColorRow;
+            if (EmuSettings.tintCustom) rows[rowCount++] = kCustomTintRow;
+        }
+        options.length = rowCount;
+        for (int i = 0; i < rowCount; ++i) {
+            snprintf(options.name[i], 100, "%s", colorNames[rows[i]]);
+            options.value[i][0] = 0;
+        }
+    };
+    if (colors)
+        layoutColorRows();
+    else {
+        options.length = 6;
+        for (int i = 0; i < options.length; ++i) {
+            snprintf(options.name[i], 100, "%s", videoNames[i]);
+            options.value[i][0] = 0;
+        }
     }
 	GuiText titleTxt(colors ? "Game Settings - Colors" : "Game Settings - Video", 26, MenuPaletteCurrent().textOnAccent);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
@@ -3324,14 +3516,16 @@ static int MenuVBOptions(bool colors)
         int ret = optionBrowser.getClickedOption();
         if (ret >= 0) {
             if (colors) {
-                switch (ret) {
-                case 0: EmuSettings.colorMode = (EmuSettings.colorMode + 1) % 5; break;
-                case 1: EmuSettings.colorPacks = !EmuSettings.colorPacks; break;
-                case 2: EmuSettings.currentPalette = (EmuSettings.currentPalette + 1) % ColorSchemes::kMulticolorCount; break;
-                case 3: EmuSettings.gradient = (EmuSettings.gradient + 1) % ColorSchemes::kGradientCount; break;
-                case 4: EmuSettings.tint = (EmuSettings.tint + 1) % ColorSchemes::kTintCount; break;
+                switch (rows[ret]) {
+                case kColorsRow: EmuSettings.colorMode = (EmuSettings.colorMode + 1) % 5; break;
+                case kPacksRow: EmuSettings.colorPacks = !EmuSettings.colorPacks; break;
+                case kMulticolorRow: EmuSettings.currentPalette = (EmuSettings.currentPalette + 1) % ColorSchemes::kMulticolorCount; break;
+                case kGradientRow: EmuSettings.gradient = (EmuSettings.gradient + 1) % ColorSchemes::kGradientCount; break;
+                case kTintColorRow: EmuSettings.tintCustom = !EmuSettings.tintCustom; break;
+                case kCustomTintRow: CustomTintWindow(); break;
                 }
                 SetPalette();
+                layoutColorRows();
             } else {
                 switch (ret) {
                 case 0:
@@ -3350,11 +3544,20 @@ static int MenuVBOptions(bool colors)
             firstRun = false;
             if (colors) {
                 const char *modes[] = {"Game's Own", "Auto", "Multicolor", "Gradient", "Tint"};
-                snprintf(options.value[0], 100, "%s", modes[EmuSettings.colorMode]);
-                snprintf(options.value[1], 100, "%s", EmuSettings.colorPacks ? "On" : "Off");
-                snprintf(options.value[2], 100, "%s", ColorSchemes::kMulticolorNames[EmuSettings.currentPalette]);
-                snprintf(options.value[3], 100, "%s", ColorSchemes::kGradientNames[EmuSettings.gradient]);
-                snprintf(options.value[4], 100, "%s", ColorSchemes::kTintNames[EmuSettings.tint]);
+                for (int i = 0; i < rowCount; ++i) {
+                    char *v = options.value[i];
+                    switch (rows[i]) {
+                    case kColorsRow: snprintf(v, 100, "%s", modes[EmuSettings.colorMode]); break;
+                    case kPacksRow: snprintf(v, 100, "%s", EmuSettings.colorPacks ? "On" : "Off"); break;
+                    case kMulticolorRow: snprintf(v, 100, "%s", ColorSchemes::kMulticolorNames[EmuSettings.currentPalette]); break;
+                    case kGradientRow: snprintf(v, 100, "%s", ColorSchemes::kGradientNames[EmuSettings.gradient]); break;
+                    case kTintColorRow: snprintf(v, 100, "%s", EmuSettings.tintCustom ? "Custom" : "Default (Red)"); break;
+                    case kCustomTintRow:
+                        snprintf(v, 100, "%.2f, %.2f, %.2f", EmuSettings.tintRed / 100.0f, EmuSettings.tintGreen / 100.0f,
+                                 EmuSettings.tintBlue / 100.0f);
+                        break;
+                    }
+                }
             } else {
                 const char *modes[] = {"Automatic", "NTSC (480i)", "Progressive (480p)", "PAL (576i)", "PAL60 (480i)", "240p (60Hz)", "240p (50Hz)"};
                 snprintf(options.value[0], 100, "%s", modes[EmuSettings.videoMode]);

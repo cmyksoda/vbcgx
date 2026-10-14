@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <algorithm>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <mxml.h>
@@ -169,6 +170,10 @@ preparePrefsData ()
 	createXMLSetting("currentPalette", "Palette", toStr(EmuSettings.currentPalette));
     createXMLSetting("colorPacks", "Color Packs", BtoStr(EmuSettings.colorPacks));
     createXMLSetting("tint", "tint", toStr(EmuSettings.tint));
+    createXMLSetting("tintCustom", "Tint Color", toStr(EmuSettings.tintCustom));
+    createXMLSetting("tintRed", "Custom Tint Red", toStr(EmuSettings.tintRed));
+    createXMLSetting("tintGreen", "Custom Tint Green", toStr(EmuSettings.tintGreen));
+    createXMLSetting("tintBlue", "Custom Tint Blue", toStr(EmuSettings.tintBlue));
     createXMLSetting("gradient", "gradient", toStr(EmuSettings.gradient));
     createXMLSetting("colorMode", "colorMode", toStr(EmuSettings.colorMode));
 	createXMLSetting("videoBilinearFilter", "Bilinear Filtering", BtoStr(EmuSettings.videoBilinearFilter));
@@ -349,6 +354,10 @@ decodePrefsData ()
 	loadXMLSetting(&EmuSettings.currentPalette, "currentPalette");
     loadXMLSetting(&EmuSettings.colorPacks, "colorPacks");
     loadXMLSetting(&EmuSettings.tint, "tint");
+    loadXMLSetting(&EmuSettings.tintCustom, "tintCustom");
+    loadXMLSetting(&EmuSettings.tintRed, "tintRed");
+    loadXMLSetting(&EmuSettings.tintGreen, "tintGreen");
+    loadXMLSetting(&EmuSettings.tintBlue, "tintBlue");
     loadXMLSetting(&EmuSettings.gradient, "gradient");
     loadXMLSetting(&EmuSettings.colorMode, "colorMode");
 	loadXMLSetting(&EmuSettings.videoBilinearFilter, "videoBilinearFilter");
@@ -415,7 +424,10 @@ void FixInvalidSettings()
 
     if (EmuSettings.colorMode < 0 || EmuSettings.colorMode >= 5) EmuSettings.colorMode = 0;
     if (EmuSettings.gradient < 0 || EmuSettings.gradient >= ColorSchemes::kGradientCount) EmuSettings.gradient = 0;
-    if (EmuSettings.tint < 0 || EmuSettings.tint >= ColorSchemes::kTintCount) EmuSettings.tint = 0;
+    EmuSettings.tint = 0; // (the preset tints gave way to Default (Red) and a custom color)
+    EmuSettings.tintCustom = EmuSettings.tintCustom ? 1 : 0;
+    for (int *c : {&EmuSettings.tintRed, &EmuSettings.tintGreen, &EmuSettings.tintBlue})
+        *c = std::min(std::max(*c, 0), 100);
 	if(!(EmuSettings.currentPalette >= 0 && EmuSettings.currentPalette < ColorSchemes::kMulticolorCount))
 		EmuSettings.currentPalette = 0;
 	if(!(EmuSettings.videoZoomHor > 0.5 && EmuSettings.videoZoomHor < 1.5))
@@ -519,6 +531,8 @@ void DefaultSettings()
 	EmuSettings.videoFixedRatio = 0;
 
 	EmuSettings.colorMode = EmuSettings.gradient = EmuSettings.tint = 0;
+	EmuSettings.tintCustom = 0;
+	EmuSettings.tintRed = 100, EmuSettings.tintGreen = 0, EmuSettings.tintBlue = 0;
     EmuSettings.colorPacks = true;
     EmuSettings.timing = TIMING_AUTOMATIC;
 	EmuSettings.controller = CTRL_PAD;

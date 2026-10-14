@@ -194,6 +194,8 @@ struct SEmuSettings
 	int		videoYshift;
 	int		currentPalette;
     int colorMode, gradient, tint;
+    int tintCustom;                  // Tint Color: 0 Default (Red), 1 Custom
+    int tintRed, tintGreen, tintBlue; // the custom color, hundredths (0-100, steps of 5)
     bool colorPacks;
 	int		hideOverscan; // 0 = off, 1 = vertical, 2 = horizontal, 3 = both
 

@@ -120,11 +120,13 @@ namespace
         ColorMode colors = ColorMode::Game;
         int multicolor = 0, gradient = 0, tint = 0;
         bool packs = true;
+        bool customTint = false; // (tint "Custom": tintRgb instead of a preset)
+        float tintRgb[3] = {1.0f, 0.0f, 0.0f};
     } g_options;
 
     const char *const kColorsKey = "vboycolor_colors", *const kMulticolorKey = "vboycolor_multicolor",
                       *const kGradientKey = "vboycolor_gradient", *const kTintKey = "vboycolor_tint",
-                      *const kPacksKey = "vboycolor_packs";
+                      *const kPacksKey = "vboycolor_packs", *const kTintColorKey = "vboycolor_tint_color";
 
     // The option definitions handed to the frontend: ours, then the Beetle
     // VB options that still mean something here (3D and its palette are ours).
@@ -283,6 +285,14 @@ namespace
         o.multicolor = IndexOf(Variable(kMulticolorKey), ColorSchemes::kMulticolorNames, ColorSchemes::kMulticolorCount);
         o.gradient = IndexOf(Variable(kGradientKey), ColorSchemes::kGradientNames, ColorSchemes::kGradientCount);
         o.tint = IndexOf(Variable(kTintKey), ColorSchemes::kTintNames, ColorSchemes::kTintCount);
+        if (const char *v = Variable(kTintKey))
+            o.customTint = !std::strcmp(v, "Custom");
+        // (the frontend's own color: "r,g,b" in hundredths)
+        int rgb[3];
+        if (const char *v = Variable(kTintColorKey))
+            if (std::sscanf(v, "%d,%d,%d", &rgb[0], &rgb[1], &rgb[2]) == 3)
+                for (int i = 0; i < 3; ++i)
+                    o.tintRgb[i] = std::min(std::max(rgb[i], 0), 100) / 100.0f;
         if (const char *v = Variable(kPacksKey))
             o.packs = std::strcmp(v, "disabled") != 0;
         g_options = o;
@@ -625,7 +635,8 @@ namespace
         else
         {
             const ColorSchemes::Rgb &c = ColorSchemes::kTints[tint >= 0 ? tint : 0];
-            g_tint = ShadeRgb{c.r, c.g, c.b};
+            g_tint = g_options.customTint ? ShadeRgb{g_options.tintRgb[0], g_options.tintRgb[1], g_options.tintRgb[2]}
+                                          : ShadeRgb{c.r, c.g, c.b};
         }
         if (!g_shadeColors)
             BuildBrightnessTable();
