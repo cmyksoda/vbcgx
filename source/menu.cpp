@@ -232,11 +232,12 @@ struct Menu {
 		btnSoundOver(button_over_pcm, button_over_pcm_size, SOUND::PCM),
 		btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM)
 	{
-		logoTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
-		logoTxt.setPosition(84, -6);
+		// (under the logo, flush with its right edge: the artwork fills its own box)
+		logoTxt.setAlignment(ALIGN_H::RIGHT, ALIGN_V::BOTTOM);
+		logoTxt.setPosition(-6, 14);
 
 		btnLogo.setAlignment(ALIGN_H::RIGHT, ALIGN_V::TOP);
-		btnLogo.setPosition(-50, 24);
+		btnLogo.setPosition(-50, 10);
 		btnLogo.setImage(&logoImg);
 		btnLogo.setImageOver(&logoImgOver);
 		btnLogo.setLabel(&logoTxt);
@@ -1282,7 +1283,7 @@ static int MenuGameSelection()
 #endif
 
 	menu->btnLogo.setAlignment(ALIGN_H::RIGHT, ALIGN_V::TOP);
-	menu->btnLogo.setPosition(-50, 24);
+	menu->btnLogo.setPosition(-50, 10);
 	menu->mainWindow.appendWithAutoRemove(&titleTxt);
 	menu->mainWindow.appendWithAutoRemove(&gameBrowser);
 	menu->mainWindow.appendWithAutoRemove(&bgPreview);
