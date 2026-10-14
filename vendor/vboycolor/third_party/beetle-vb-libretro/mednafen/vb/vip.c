@@ -405,6 +405,7 @@ static uint32 WorldCellChangedAt[28][48]; /* (the same, per cell, for windows na
 static uint64 WorldDirty; /* (BlockChange: the cells only a world's change covers) */
 static uint32 WorldBlockChangedAt[32][28]; /* (per world: the blocks its change covers) */
 static uint32 ChangedWorlds; /* (BlockChange: the worlds changed there since it was drawn) */
+static bool SpritesChanged; /* (BlockChange: and its sprites, or their characters) */
 #define MAX_BLOCK_SPRITES 96
 typedef struct
 {
@@ -651,8 +652,8 @@ static void DramChanging(uint32 a, uint16 v)
 /* What changed since the block was drawn: 0 nothing, 1 only its sprites
  * (some moved, came or went, or show another tile), 2 more. */
 /* 0: nothing it reads changed; 1: only some cells (sprites, narrow worlds);
- * 3: only worlds as wide as the screen (drawn again, and worked out after:
- * see vbgo_tiletrack_world_cells); 2: anything else. */
+ * 3: worlds as wide as the screen, maybe sprites too (drawn again, and worked
+ * out after: see vbgo_tiletrack_world_cells); 2: anything else. */
 static int BlockChange(const BlockInputs *block)
 {
    int i, change = 0, wholeWorld;
@@ -691,8 +692,9 @@ static int BlockChange(const BlockInputs *block)
    if(wholeWorld || WorldDirty)
       for(i = 0; i < 32; i++)
          ChangedWorlds |= (uint32)(WorldBlockChangedAt[i][DrawingBlock] > block->drawnAt) << i;
+   SpritesChanged = change != 0;
    if(wholeWorld)
-      return change ? 2 : 3;
+      return 3;
    return change || WorldDirty ? 1 : 0;
 }
 
@@ -1946,6 +1948,16 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   }
                   else
                   {
+                     /* (the cells sprites changed in, before the drawing records them anew) */
+                     if(change == 3)
+                     {
+                        spriteDirty = 0;
+                        if(SpritesChanged)
+                        {
+                           now.objs = GatherBlockSprites(DrawingBlock, &now);
+                           spriteDirty = SpriteChangedCells(block, block->sprites, block->drawnAt, block->passAt, &now) & all;
+                        }
+                     }
                      vbgo_tiletrack_block_drawing(change == 2);
                      memset(block->chr, 0, sizeof(block->chr));
                      memset(block->rows, 0, sizeof(block->rows));
@@ -1963,7 +1975,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      {
                         const uint64 maybe = vbgo_tiletrack_world_cells(change == 3 ? ChangedWorlds : 0, all);
                         if(change == 3)
-                           unchanged = ~maybe & all;
+                           unchanged = ~(maybe | spriteDirty) & all;
                      }
                   }
                   if(partial)
