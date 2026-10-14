@@ -411,7 +411,7 @@ static void CreditsWindow()
 	MenuDialogShape creditsBoxImg(MENU_CREDITS_W, MENU_CREDITS_H, MENU_CREDITS_HEADER_H);
 	creditsWindowBox.append(&creditsBoxImg);
 
-	int numEntries = 24;
+	int numEntries = 26;
 	GuiText * txt[numEntries];
 
 	txt[i] = new GuiText("Credits", 30, MenuPaletteCurrent().textOnAccent);
@@ -429,6 +429,10 @@ static void CreditsWindow()
 	txt[i] = new GuiText("Menu sound");
 	txt[i]->setPosition(40,y); i++;
 	txt[i] = new GuiText("Peter de Man");
+	txt[i]->setPosition(335,y); i++; y+=24;
+	txt[i] = new GuiText("Menu music");
+	txt[i]->setPosition(40,y); i++;
+	txt[i] = new GuiText("abelouis (Looperman)");
 	txt[i]->setPosition(335,y); i++; y+=24;
 	txt[i] = new GuiText("Logo");
 	txt[i]->setPosition(40,y); i++;
