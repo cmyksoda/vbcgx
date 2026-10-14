@@ -15,6 +15,7 @@ static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, b
  const uint16 *CHR16 = CHR_RAM;
  const uint16 *BGMap = DRAM;
  uint32 BGMap_Base = bgmap_base_raw << 12;
+ uint32 used_chr = 0xFFFF; /* (the last character marked used: the marks only need setting once) */
  int32 start_x, final_x;
  const uint32 bgsc_overplane = DRAM[overplane_char];
  const uint32 BGMap_XCount = 1 << scx;
@@ -87,7 +88,11 @@ static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, b
   {
    uint32 pixels = CHR16[char_no * 8 + char_sub_y];
 
-   USE_BG_CHR(char_no);
+   if(char_no != used_chr)
+   {
+    USE_BG_CHR(char_no);
+    used_chr = char_no;
+   }
    if(pixels)
    {
     /* All eight shades at once, merged into the row under the drawn pixels. */
@@ -118,7 +123,11 @@ static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, b
    unsigned int char_sub_x = hflip_xor ^ (SourceX & 0x7);
    uint8 pixel = (CHR16[char_no * 8 + char_sub_y] >> (char_sub_x * 2)) & 0x3;
 
-   USE_BG_CHR(char_no);
+   if(char_no != used_chr)
+   {
+    USE_BG_CHR(char_no);
+    used_chr = char_no;
+   }
    if(pixel)
     target[x] = GPLT_Cache[palette_selector][pixel];
    SourceX++;
@@ -131,6 +140,7 @@ static void DrawAffine(uint8 *target, uint16 RealY, bool lr, uint32 ParamBase, u
 {
  const uint16 *CHR16 = CHR_RAM;
  const uint16 *BGMap = DRAM;
+ uint32 used_chr = 0xFFFF; /* (as in DrawBG) */
 
  const uint32 BGMap_XCount = 1 << scx;
  const uint32 BGMap_YCount = 1 << scy;
@@ -236,7 +246,11 @@ if(dy == 0)	/* Optimization for no rotation. */
   char_sub_x = hflip_xor ^ ((SourceX >> 8) & 0xE);
 
   pixel = (CHR16[((bgsc & 0x7FF) * 8) | char_sub_y] >> char_sub_x) & 0x3;
-  USE_BG_CHR(bgsc & 0x7FF);
+  if((bgsc & 0x7FF) != used_chr)
+  {
+   USE_BG_CHR(bgsc & 0x7FF);
+   used_chr = bgsc & 0x7FF;
+  }
 
   if(pixel)
    target[x] = GPLT_Cache[bgsc >> 14][pixel];
@@ -279,7 +293,11 @@ else
   char_sub_x = hflip_xor ^ ((SourceX >> 9) & 0x7);
 
   pixel = (CHR16[char_no * 8 + char_sub_y] >> (char_sub_x * 2)) & 0x3;
-  USE_BG_CHR(char_no);
+  if(char_no != used_chr)
+  {
+   USE_BG_CHR(char_no);
+   used_chr = char_no;
+  }
 
   if(pixel)
    target[x] = GPLT_Cache[palette_selector][pixel];
