@@ -108,30 +108,30 @@ struct MenuPalette {
 	PixelColor dim, screenDim;
 };
 
-//!VBoy Color GX: red highlights over black surfaces. Each of FCE Ultra GX's colors (in the
-//!comments) has one counterpart here: light surfaces turn dark and dark text turns red. Its
-//!white is both a surface and a text color, which a dark theme has to split.
+//!VBoy Color GX: red on black, in reds light enough to stay sharp on a TV. Each FCE Ultra GX
+//!color (in the comments) has one counterpart here; its white is both a surface and ink, which
+//!a dark theme has to split.
 static inline MenuPalette MenuPaletteDefault()
 {
 	MenuPalette p;
-	p.chromeLight      = MenuRGBA(56, 6, 12);       // 152, 30, 30
-	p.chromeDark       = MenuRGBA(7, 0, 2);         // 94, 2, 2
-	p.chromeEdge       = MenuRGBA(164, 20, 34);     // 184, 56, 56
-	p.backgroundTop    = MenuRGBA(11, 3, 6);        // 241, 241, 244
+	p.chromeLight      = MenuRGBA(76, 8, 14);       // 152, 30, 30
+	p.chromeDark       = MenuRGBA(34, 0, 5);        // 94, 2, 2
+	p.chromeEdge       = MenuRGBA(176, 24, 38);     // 184, 56, 56
+	p.backgroundTop    = MenuRGBA(10, 2, 5);        // 241, 241, 244
 	p.backgroundBottom = MenuRGBA(2, 0, 1);         // 213, 213, 220
-	p.accent           = MenuRGBA(255, 54, 70);     // 200, 32, 32
-	p.accentDark       = MenuRGBA(177, 17, 37);     // 146, 14, 14
-	p.accentTint       = MenuRGBA(30, 4, 10);       // 252, 232, 232
+	p.accent           = MenuRGBA(240, 40, 56);     // 200, 32, 32
+	p.accentDark       = MenuRGBA(255, 80, 86);     // 146, 14, 14
+	p.accentTint       = MenuRGBA(64, 10, 24);      // 252, 232, 232
 	p.glow             = MenuRGBA(255, 104, 116, 100); // 255, 214, 200, 170
-	p.surface          = MenuRGBA(8, 2, 4);         // 246, 246, 249
-	p.surfaceRaised    = MenuRGBA(17, 4, 8);        // 255, 255, 255 as a surface
-	p.outline          = MenuRGBA(42, 9, 16);       // 208, 208, 215
-	p.outlineStrong    = MenuRGBA(161, 37, 55);     // 166, 166, 175
-	p.text             = MenuRGBA(236, 68, 80);     // 30, 30, 34
-	p.label            = MenuRGBA(255, 77, 88);     // 0, 0, 0
-	p.textMuted        = MenuRGBA(198, 95, 110);    // 118, 118, 127
-	p.textOnAccent     = MenuRGBA(255, 138, 146);   // 255, 255, 255 as text
-	p.dim              = MenuRGBA(20, 4, 9, 150);   // 190, 202, 213, 112
+	p.surface          = MenuRGBA(22, 6, 10);       // 246, 246, 249
+	p.surfaceRaised    = MenuRGBA(32, 9, 14);       // 255, 255, 255 as a surface
+	p.outline          = MenuRGBA(54, 18, 26);      // 208, 208, 215
+	p.outlineStrong    = MenuRGBA(184, 44, 62);     // 166, 166, 175
+	p.text             = MenuRGBA(248, 128, 130);   // 30, 30, 34
+	p.label            = MenuRGBA(255, 150, 148);   // 0, 0, 0
+	p.textMuted        = MenuRGBA(196, 92, 102);    // 118, 118, 127
+	p.textOnAccent     = MenuRGBA(255, 222, 222);   // 255, 255, 255 as text
+	p.dim              = MenuRGBA(20, 4, 9, 160);   // 190, 202, 213, 112
 	p.screenDim        = MenuRGBA(6, 1, 3, 232);    // 50, 50, 50, 160
 	return p;
 }
