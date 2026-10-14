@@ -411,7 +411,7 @@ static void CreditsWindow()
 	MenuDialogShape creditsBoxImg(MENU_CREDITS_W, MENU_CREDITS_H, MENU_CREDITS_HEADER_H);
 	creditsWindowBox.append(&creditsBoxImg);
 
-	int numEntries = 26;
+	int numEntries = 27;
 	GuiText * txt[numEntries];
 
 	txt[i] = new GuiText("Credits", 30, MenuPaletteCurrent().textOnAccent);
@@ -422,47 +422,47 @@ static void CreditsWindow()
 
 	GuiText::setPresets(20, MenuPaletteCurrent().label, 0, GUI_TEXT_JUSTIFY_LEFT | GUI_TEXT_ALIGN_TOP, ALIGN_H::LEFT, ALIGN_V::TOP);
 
-	txt[i] = new GuiText("Coding & menu design");
+	txt[i] = new GuiText("Wii integration");
+	txt[i]->setPosition(40,y); i++;
+	txt[i] = new GuiText("cmyksoda");
+	txt[i]->setPosition(335,y); i++; y+=24;
+	txt[i] = new GuiText("VBoy Color / VirtualBoyGo");
+	txt[i]->setPosition(40,y); i++;
+	txt[i] = new GuiText("yuk27 / CidVonHighwind");
+	txt[i]->setPosition(335,y); i++; y+=24;
+	txt[i] = new GuiText("Beetle VB");
+	txt[i]->setPosition(40,y); i++;
+	txt[i] = new GuiText("Mednafen team");
+	txt[i]->setPosition(335,y); i++; y+=24;
+	txt[i] = new GuiText("FCE Ultra GX frontend");
 	txt[i]->setPosition(40,y); i++;
 	txt[i] = new GuiText("Tantric");
 	txt[i]->setPosition(335,y); i++; y+=24;
-	txt[i] = new GuiText("Menu sound");
+	txt[i] = new GuiText("FCE Ultra GX contributors");
 	txt[i]->setPosition(40,y); i++;
-	txt[i] = new GuiText("Peter de Man");
+	txt[i] = new GuiText("Zopenko, Askot, InfiniteBlue,");
+	txt[i]->setPosition(335,y); i++; y+=24;
+	txt[i] = new GuiText("SoftDev, dsbomb, others");
+	txt[i]->setPosition(335,y); i++; y+=24;
+	txt[i] = new GuiText("Menu artwork");
+	txt[i]->setPosition(40,y); i++;
+	txt[i] = new GuiText("the3seashells");
+	txt[i]->setPosition(335,y); i++; y+=24;
+	txt[i] = new GuiText("Logo (adapted)");
+	txt[i]->setPosition(40,y); i++;
+	txt[i] = new GuiText("Juan (VBoy Color)");
 	txt[i]->setPosition(335,y); i++; y+=24;
 	txt[i] = new GuiText("Menu music");
 	txt[i]->setPosition(40,y); i++;
 	txt[i] = new GuiText("abelouis (Looperman)");
 	txt[i]->setPosition(335,y); i++; y+=24;
-	txt[i] = new GuiText("Logo");
+	txt[i] = new GuiText("Menu sound");
 	txt[i]->setPosition(40,y); i++;
-	txt[i] = new GuiText("mvit");
+	txt[i] = new GuiText("Peter de Man");
 	txt[i]->setPosition(335,y); i++; y+=24;
-	txt[i] = new GuiText("Additional improvements");
+	txt[i] = new GuiText("libogc2 / devkitPPC");
 	txt[i]->setPosition(40,y); i++;
-	txt[i] = new GuiText("Zopenko, Askot,");
-	txt[i]->setPosition(335,y); i++; y+=24;
-	txt[i] = new GuiText("InfiniteBlue, others");
-	txt[i]->setPosition(335,y); i++; y+=24;
-
-	txt[i] = new GuiText("FCE Ultra GX GameCube");
-	txt[i]->setPosition(40,y); i++;
-	txt[i] = new GuiText("SoftDev, askot,");
-	txt[i]->setPosition(335,y); i++; y+=24;
-	txt[i] = new GuiText("dsbomb, others");
-	txt[i]->setPosition(335,y); i++; y+=24;
-	txt[i] = new GuiText("VBoy Color / Beetle VB");
-	txt[i]->setPosition(40,y); i++;
-	txt[i] = new GuiText("yuk27 / Mednafen team");
-	txt[i]->setPosition(335,y); i++; y+=24;
-	txt[i] = new GuiText("Wii integration");
-	txt[i]->setPosition(40,y); i++;
-	txt[i] = new GuiText("cmyksoda");
-	txt[i]->setPosition(335,y); i++; y+=24;
-
-	txt[i] = new GuiText("libogc / devkitPPC");
-	txt[i]->setPosition(40,y); i++;
-	txt[i] = new GuiText("shagkur & WinterMute");
+	txt[i] = new GuiText("shagkur, WinterMute, Extrems");
 	txt[i]->setPosition(335,y); i++;
 
 	char consoleDetails[40];
@@ -482,7 +482,7 @@ static void CreditsWindow()
 
 	txt[i] = new GuiText("This software is open source and may be copied, distributed, or modified");
 	txt[i]->setPosition(0, -32); i++;
-	txt[i] = new GuiText("under the terms of the GNU General Public License (GPL) Version 2.");
+	txt[i] = new GuiText("under the terms of the GNU General Public License (GPL) Version 3.");
 	txt[i]->setPosition(0, -20);
 
 	for(i=0; i < numEntries; i++)
