@@ -56,5 +56,7 @@ class OgcEmulatorAudio : public EmulatorAudioDriver
 		volatile int mixtail = 0;
 		volatile int isPlaying = 0;
 		int whichab = 0;
+		uint32_t lastSample = 0; // (the last sample a block played, and whether it ran out after it)
+		bool ranDry = false;
 		int samplerate = 0;
 };

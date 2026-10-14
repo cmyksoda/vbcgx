@@ -89,9 +89,27 @@ int OgcEmulatorAudio::mixerCollect(uint8_t* outbuffer, int len)
 	}
 
 	mixtail = tail;
-	const int bytes = done * sizeof(u32);
-	if (bytes < len)
-		memset(outbuffer + bytes, 0, len - bytes);
+
+	// A block that runs out eases from its last sample to silence, and the
+	// next one with sound eases back in: a step to zero and back would pop.
+	constexpr int kEase = 64;
+	auto scaled = [](u32 v, int num) {
+		const int hi = (int16_t)(v >> 16) * num / kEase, lo = (int16_t)(v & 0xFFFF) * num / kEase;
+		return ((u32)(uint16_t)hi << 16) | (uint16_t)lo;
+	};
+	if (done > 0 && ranDry)
+		for (int k = 0; k < done && k < kEase; ++k)
+			dst[k] = scaled(dst[k], k + 1);
+	if (done > 0)
+		lastSample = dst[done - 1];
+	ranDry = done < maxsamples;
+	for (int k = done; k < maxsamples; ++k)
+	{
+		const int left = kEase - 1 - (k - done);
+		dst[k] = left > 0 ? scaled(lastSample, left) : 0;
+	}
+	if (ranDry)
+		lastSample = 0;
 	return len;
 }
 
@@ -139,6 +157,8 @@ void OgcEmulatorAudio::resetAudio()
 	mixtail = 0;
 	whichab = 0;
 	isPlaying = 0;
+	lastSample = 0;
+	ranDry = false;
 }
 
 /****************************************************************************
