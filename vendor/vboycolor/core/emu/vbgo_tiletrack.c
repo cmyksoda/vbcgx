@@ -52,6 +52,7 @@ static uint16_t s_band_stamp[VBGO_TT_SLOTS][VBGO_TT_BLOCKS], s_band_pass[VBGO_TT
 #define VBGO_TT_CELLS (VBGO_TT_WIDTH / 8)
 static uint32_t s_block_chr[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][2048 / 32];
 static uint32_t s_cell_version[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
+static uint64_t s_cell_black[VBGO_TT_SLOTS][VBGO_TT_BLOCKS]; /* (cells all drawn in shade 0 - see BlackCell) */
 /* Per cell, the worlds its tags showed as last drawn (bit per world; all: unknown). */
 static uint32_t s_cell_worlds[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
 static uint32_t s_versions;
@@ -127,6 +128,7 @@ static void RestampSlot(int k)
       if (!valid)
       {
          memset(s_cell_version[k][b], 0, sizeof(s_cell_version[k][b]));
+         s_cell_black[k][b] = 0;
          memset(s_cell_worlds[k][b], 0xFF, sizeof(s_cell_worlds[k][b]));
       }
    }
@@ -148,6 +150,7 @@ static void NextStamp(int keep)
             memset(s_band_stamp[k], 0, sizeof(s_band_stamp[k]));
             memset(s_band_pass[k], 0, sizeof(s_band_pass[k]));
             memset(s_cell_version[k], 0, sizeof(s_cell_version[k]));
+            memset(s_cell_black[k], 0, sizeof(s_cell_black[0]));
             memset(s_cell_worlds[k], 0xFF, sizeof(s_cell_worlds[k]));
          }
       memset(s_have, 0, sizeof(s_have));
@@ -188,6 +191,7 @@ static void Unshare(unsigned fb)
    memcpy(s_band_pass[to], s_band_pass[from], sizeof(s_band_pass[to]));
    memcpy(s_block_chr[to], s_block_chr[from], sizeof(s_block_chr[to]));
    memcpy(s_cell_version[to], s_cell_version[from], sizeof(s_cell_version[to]));
+   memcpy(s_cell_black[to], s_cell_black[from], sizeof(s_cell_black[to]));
    memcpy(s_cell_worlds[to], s_cell_worlds[from], sizeof(s_cell_worlds[to]));
    CopySlotInfo(to, from);
    s_slot[fb] = to;
@@ -199,6 +203,7 @@ static void ForgetBlocks(void)
    s_settings_serial++;
    memset(s_block_stamp, 0, sizeof(s_block_stamp));
    memset(s_cell_version, 0, sizeof(s_cell_version));
+   memset(s_cell_black, 0, sizeof(s_cell_black));
    memset(s_cell_worlds, 0xFF, sizeof(s_cell_worlds));
 }
 
@@ -282,6 +287,7 @@ void vbgo_tiletrack_reset(void)
    memset(s_band_stamp, 0, sizeof(s_band_stamp));
    memset(s_band_pass, 0, sizeof(s_band_pass));
    memset(s_cell_version, 0, sizeof(s_cell_version));
+   memset(s_cell_black, 0, sizeof(s_cell_black));
    memset(s_cell_worlds, 0xFF, sizeof(s_cell_worlds));
    memset(s_have, 0, sizeof(s_have));
    s_slot[0] = 0;
@@ -298,6 +304,7 @@ void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr)
    memset(s_tags[s_slot[fb & 1]][lr & 1], 0, sizeof(s_tags[0][0]));
    memset(s_block_stamp[s_slot[fb & 1]], 0, sizeof(s_block_stamp[0]));
    memset(s_cell_version[s_slot[fb & 1]], 0, sizeof(s_cell_version[0]));
+   memset(s_cell_black[s_slot[fb & 1]], 0, sizeof(s_cell_black[0]));
    memset(s_cell_worlds[s_slot[fb & 1]], 0xFF, sizeof(s_cell_worlds[0]));
    s_cpu[fb & 1] = 1;
 }
@@ -443,9 +450,32 @@ static int SameCell(unsigned c)
    return 1;
 }
 
+/* Whether every pixel of cell c, both eyes, is drawn by this pass (not a fill) in
+ * shade 0: black at any brightness, so the colorizer passes over the whole cell. */
+static int BlackCell(unsigned c)
+{
+   const uint32_t now_stamp = (uint32_t)(vbgo_tt_stamp_bits >> 32);
+   const uint8_t *fbs = vbgo_vip_framebuffers() + (size_t)(s_last_fb & 1) * 2 * 0x6000 + s_block_no * 2;
+   unsigned e, x, y;
+   for (e = 0; e < 2; e++)
+      for (x = c * 8; x < c * 8 + 8; x++)
+         if (fbs[e * 0x6000 + 64 * x] | fbs[e * 0x6000 + 64 * x + 1])
+            return 0;
+   for (e = 0; e < 2; e++)
+      for (x = c * 8; x < c * 8 + 8; x++)
+      {
+         const uint64_t *is = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
+         for (y = 0; y < 8; y++)
+            if (((uint32_t)(is[y] >> 32) & 0xFFFF0000u) != now_stamp || !VBGO_TAG_PIXEL(is[y]))
+               return 0;
+      }
+   return 1;
+}
+
 void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same_pixels, uint64_t unchanged)
 {
    uint32_t *version, fresh = 0;
+   uint64_t was_black, black = 0;
    unsigned c;
    vbgo_tt_stamp_bits = (uint64_t)s_next_stamp << 48; /* (after keep_cells' drawing) */
    if (!vbgo_tt_on || s_block_slot < 0 || s_block_no >= VBGO_TT_BLOCKS)
@@ -461,9 +491,15 @@ void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same
          s_versions = 1;
       fresh = s_versions;
    }
+   was_black = s_cell_black[s_block_slot][s_block_no];
+   for (c = 0; c < VBGO_TT_CELLS; c++)
+      if ((same_pixels & ~unchanged) >> c & 1) /* (elsewhere 0: only a cell redrawn the same next time is asked) */
+         black |= (uint64_t)BlackCell(c) << c;
+   s_cell_black[s_block_slot][s_block_no] = black;
    for (c = 0; c < VBGO_TT_CELLS; c++)
       if (!(settled && s_block_was && version[c] &&
-            ((unchanged >> c & 1) || (s_old_valid && (same_pixels >> c & 1) && SameCell(c)))))
+            ((unchanged >> c & 1) || (s_old_valid && (same_pixels >> c & 1) && SameCell(c)) ||
+             ((same_pixels & was_black & black) >> c & 1))))
          version[c] = fresh;
    s_old_valid = 0;
 }
@@ -533,6 +569,7 @@ void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
          s_band_stamp[to][e] = s_band_stamp[from][e];
          memcpy(s_block_chr[to][e], s_block_chr[from][e], sizeof(s_block_chr[to][e]));
          memcpy(s_cell_version[to][e], s_cell_version[from][e], sizeof(s_cell_version[to][e]));
+         s_cell_black[to][e] = s_cell_black[from][e];
          memcpy(s_cell_worlds[to][e], s_cell_worlds[from][e], sizeof(s_cell_worlds[to][e]));
       }
    }
@@ -577,6 +614,7 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
       {
          s_block_stamp[s_slot[fb & 1]][row / 8] = 0;
          memset(s_cell_version[s_slot[fb & 1]][row / 8], 0, sizeof(s_cell_version[0][0]));
+         s_cell_black[s_slot[fb & 1]][row / 8] = 0;
          memset(s_cell_worlds[s_slot[fb & 1]][row / 8], 0xFF, sizeof(s_cell_worlds[0][0]));
       }
    }
