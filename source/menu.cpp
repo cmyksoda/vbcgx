@@ -3018,17 +3018,12 @@ static int MenuSettingsMappingsMap()
 
 			for(i=0; i < options.length; i++)
 			{
-				for(j=0; j < ctrlr_def[mapMenuCtrl].num_btns; j++)
+				options.value[i][0] = 0; // (unmapped, or a button this controller doesn't list)
+				for(j=0; j < ctrlr_def[mapMenuCtrl].num_btns && btnmap[mapMenuCtrlNES][mapMenuCtrl][i]; j++)
 				{
-					if(btnmap[mapMenuCtrlNES][mapMenuCtrl][i] == 0)
+					if(btnmap[mapMenuCtrlNES][mapMenuCtrl][i] == ctrlr_def[mapMenuCtrl].map[j].btn)
 					{
-						options.value[i][0] = 0;
-					}
-					else if(btnmap[mapMenuCtrlNES][mapMenuCtrl][i] ==
-						ctrlr_def[mapMenuCtrl].map[j].btn)
-					{
-						if(strcmp(options.value[i], ctrlr_def[mapMenuCtrl].map[j].name) != 0)
-							sprintf(options.value[i], ctrlr_def[mapMenuCtrl].map[j].name);
+						sprintf(options.value[i], "%s", ctrlr_def[mapMenuCtrl].map[j].name);
 						break;
 					}
 				}
@@ -3048,8 +3043,9 @@ static void ScreenZoomWindowUpdate(void * ptr, float h, float v)
 	GuiButton * b = (GuiButton *)ptr;
 	if(b->getState() == STATE::CLICKED)
 	{
-		EmuSettings.videoZoomHor += h;
-		EmuSettings.videoZoomVert += v;
+		// (the range the settings file accepts)
+		EmuSettings.videoZoomHor = std::min(std::max(EmuSettings.videoZoomHor + h, 0.5f), 1.5f);
+		EmuSettings.videoZoomVert = std::min(std::max(EmuSettings.videoZoomVert + v, 0.5f), 1.5f);
 
 		char zoom[10];
 		sprintf(zoom, "%.2f%%", EmuSettings.videoZoomHor*100);
@@ -3461,7 +3457,7 @@ static int MenuVBOptions(bool colors)
     auto layoutColorRows = [&]() {
         rowCount = 0;
         rows[rowCount++] = kColorsRow;
-        rows[rowCount++] = kPacksRow;
+        if (EmuSettings.colorMode < 3 && vboycolor_has_pack()) rows[rowCount++] = kPacksRow; // (Gradient and Tint don't use packs)
         if (EmuSettings.colorMode == 2) rows[rowCount++] = kMulticolorRow;
         if (EmuSettings.colorMode == 3) rows[rowCount++] = kGradientRow;
         if (EmuSettings.colorMode == 4) {
@@ -3474,6 +3470,7 @@ static int MenuVBOptions(bool colors)
             options.value[i][0] = 0;
         }
     };
+    auto is240p = []() { return EmuSettings.videoMode == VIDEOMODE_ORIGINAL_240P || EmuSettings.videoMode == VIDEOMODE_240P_PAL; };
     if (colors)
         layoutColorRows();
     else {
@@ -3542,12 +3539,13 @@ static int MenuVBOptions(bool colors)
                 switch (ret) {
                 case 0:
                     EmuSettings.videoMode = (EmuSettings.videoMode + 1) % VIDEOMODE_LENGTH;
+                    if (is240p() && EmuSettings.videoFixedRatio > 1) EmuSettings.videoFixedRatio = 1;
                     platform->getVideo()->startMenuVideo();
                     break;
                 case 1: EmuSettings.videoAspectRatioCorrection = (EmuSettings.videoAspectRatioCorrection + 1) % SCALING_LENGTH; break;
                 case 2: EmuSettings.videoBilinearFilter = !EmuSettings.videoBilinearFilter; break;
                 case 3: ScreenZoomWindow(); break;
-                case 4: EmuSettings.videoFixedRatio = (EmuSettings.videoFixedRatio + 1) % (VIDEO_FIXED_RATIO_MAX + 1); break;
+                case 4: EmuSettings.videoFixedRatio = (EmuSettings.videoFixedRatio + 1) % ((is240p() ? 1 : VIDEO_FIXED_RATIO_MAX) + 1); break;
                 case 5: ScreenPositionWindow(); break;
                 }
             }
@@ -3821,7 +3819,6 @@ static int MenuSettingsFile()
 	sprintf(options.name[i++], "Save Device");
 	sprintf(options.name[i++], "Load Folder");
 	sprintf(options.name[i++], "Save Folder");
-	sprintf(options.name[i++], "Cheats Folder");
 	sprintf(options.name[i++], "Screenshots Folder");
 	sprintf(options.name[i++], "Covers Folder");
 	sprintf(options.name[i++], "Artwork Folder");
@@ -3892,34 +3889,30 @@ static int MenuSettingsFile()
 				break;
 
 			case 4:
-				OnScreenKeyboard(EmuSettings.cheatFolder, MAXPATHLEN);
-				break;
-
-			case 5:
 				OnScreenKeyboard(EmuSettings.screenshotsFolder, MAXPATHLEN);
 				break;
 
-			case 6:
+			case 5:
 				OnScreenKeyboard(EmuSettings.coverFolder, MAXPATHLEN);
 				break;
 
-			case 7:
+			case 6:
 				OnScreenKeyboard(EmuSettings.artworkFolder, MAXPATHLEN);
 				break;
 
-			case 8:
+			case 7:
 				EmuSettings.autoLoad++;
 				if (EmuSettings.autoLoad > AUTOLOAD_STATE)
 					EmuSettings.autoLoad = AUTOLOAD_OFF;
 				break;
 
-			case 9:
+			case 8:
 				EmuSettings.autoSave++;
 				if (EmuSettings.autoSave > AUTOSAVE_BOTH)
 					EmuSettings.autoSave = AUTOSAVE_OFF;
 				break;
 
-			case 10:
+			case 9:
 				EmuSettings.appendAuto = !EmuSettings.appendAuto;
 				break;
 		}
@@ -3931,6 +3924,8 @@ static int MenuSettingsFile()
 			if (EmuSettings.loadDevice == DEVICE_AUTO) sprintf (options.value[0],"Auto Detect");
 			else if (EmuSettings.loadDevice == DEVICE_SD) sprintf (options.value[0],"SD");
 			else if (EmuSettings.loadDevice == DEVICE_USB) sprintf (options.value[0],"USB");
+			else if (EmuSettings.loadDevice == DEVICE_USB2) sprintf (options.value[0],"USB 2");
+			else if (EmuSettings.loadDevice == DEVICE_USB3) sprintf (options.value[0],"USB 3");
 			else if (EmuSettings.loadDevice == DEVICE_DVD) sprintf (options.value[0],"DVD");
 			else if (EmuSettings.loadDevice == DEVICE_SMB) sprintf (options.value[0],"Network Share");
 			else if (EmuSettings.loadDevice == DEVICE_SD_SLOTA) sprintf (options.value[0],"SD Gecko Slot A");
@@ -3941,6 +3936,8 @@ static int MenuSettingsFile()
 			if (EmuSettings.saveDevice == DEVICE_AUTO) sprintf (options.value[1],"Auto Detect");
 			else if (EmuSettings.saveDevice == DEVICE_SD) sprintf (options.value[1],"SD");
 			else if (EmuSettings.saveDevice == DEVICE_USB) sprintf (options.value[1],"USB");
+			else if (EmuSettings.saveDevice == DEVICE_USB2) sprintf (options.value[1],"USB 2");
+			else if (EmuSettings.saveDevice == DEVICE_USB3) sprintf (options.value[1],"USB 3");
 			else if (EmuSettings.saveDevice == DEVICE_SMB) sprintf (options.value[1],"Network Share");
 			else if (EmuSettings.saveDevice == DEVICE_SD_SLOTA) sprintf (options.value[1],"SD Gecko Slot A");
 			else if (EmuSettings.saveDevice == DEVICE_SD_SLOTB) sprintf (options.value[1],"SD Gecko Slot B");
@@ -3949,22 +3946,21 @@ static int MenuSettingsFile()
 
 			snprintf (options.value[2], 35, "%s", EmuSettings.loadFolder);
 			snprintf (options.value[3], 35, "%s", EmuSettings.saveFolder);
-			snprintf (options.value[4], 35, "%s", EmuSettings.cheatFolder);
-			snprintf (options.value[5], 35, "%s", EmuSettings.screenshotsFolder);
-			snprintf (options.value[6], 35, "%s", EmuSettings.coverFolder);
-			snprintf (options.value[7], 35, "%s", EmuSettings.artworkFolder);
+			snprintf (options.value[4], 35, "%s", EmuSettings.screenshotsFolder);
+			snprintf (options.value[5], 35, "%s", EmuSettings.coverFolder);
+			snprintf (options.value[6], 35, "%s", EmuSettings.artworkFolder);
 
-			if (EmuSettings.autoLoad == AUTOLOAD_OFF) sprintf (options.value[8],"Off");
-			else if (EmuSettings.autoLoad == AUTOLOAD_RAM) sprintf (options.value[8],"RAM");
-			else if (EmuSettings.autoLoad == AUTOLOAD_STATE) sprintf (options.value[8],"State");
+			if (EmuSettings.autoLoad == AUTOLOAD_OFF) sprintf (options.value[7],"Off");
+			else if (EmuSettings.autoLoad == AUTOLOAD_RAM) sprintf (options.value[7],"RAM");
+			else if (EmuSettings.autoLoad == AUTOLOAD_STATE) sprintf (options.value[7],"State");
 
-			if (EmuSettings.autoSave == AUTOSAVE_OFF) sprintf (options.value[9],"Off");
-			else if (EmuSettings.autoSave == AUTOSAVE_RAM) sprintf (options.value[9],"RAM");
-			else if (EmuSettings.autoSave == AUTOSAVE_STATE) sprintf (options.value[9],"State");
-			else if (EmuSettings.autoSave == AUTOSAVE_BOTH) sprintf (options.value[9],"Both");
+			if (EmuSettings.autoSave == AUTOSAVE_OFF) sprintf (options.value[8],"Off");
+			else if (EmuSettings.autoSave == AUTOSAVE_RAM) sprintf (options.value[8],"RAM");
+			else if (EmuSettings.autoSave == AUTOSAVE_STATE) sprintf (options.value[8],"State");
+			else if (EmuSettings.autoSave == AUTOSAVE_BOTH) sprintf (options.value[8],"Both");
 
-			if (!EmuSettings.appendAuto) sprintf (options.value[10], "Off");
-			else sprintf (options.value[10], "On");
+			if (!EmuSettings.appendAuto) sprintf (options.value[9], "Off");
+			else sprintf (options.value[9], "On");
 
 			optionBrowser.triggerUpdate();
 		}

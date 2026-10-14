@@ -888,6 +888,9 @@ extern "C"
 
     RETRO_API bool retro_load_game_special(unsigned, const struct retro_game_info *, size_t) { return false; }
 
+    // Whether the loaded game has a color pack (whatever the packs option says)
+    bool vboycolor_has_pack(void) { return !g_pack.Empty(); }
+
     RETRO_API void retro_unload_game(void)
     {
         beetle_retro_unload_game();

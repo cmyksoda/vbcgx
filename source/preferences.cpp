@@ -430,9 +430,9 @@ void FixInvalidSettings()
         *c = std::min(std::max(*c, 0), 100);
 	if(!(EmuSettings.currentPalette >= 0 && EmuSettings.currentPalette < ColorSchemes::kMulticolorCount))
 		EmuSettings.currentPalette = 0;
-	if(!(EmuSettings.videoZoomHor > 0.5 && EmuSettings.videoZoomHor < 1.5))
+	if(!(EmuSettings.videoZoomHor >= 0.5 && EmuSettings.videoZoomHor <= 1.5))
 		EmuSettings.videoZoomHor = 1.0;
-	if(!(EmuSettings.videoZoomVert > 0.5 && EmuSettings.videoZoomVert < 1.5))
+	if(!(EmuSettings.videoZoomVert >= 0.5 && EmuSettings.videoZoomVert <= 1.5))
 		EmuSettings.videoZoomVert = 1.0;
 	if(!(EmuSettings.videoXshift > -50 && EmuSettings.videoXshift < 50))
 		EmuSettings.videoXshift = 0;
