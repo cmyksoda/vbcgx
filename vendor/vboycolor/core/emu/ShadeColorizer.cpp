@@ -149,11 +149,10 @@ void ShadeColorizer::Colorize(const uint8_t *src, uint8_t *dst, size_t pixelCoun
     // Read BGRA bytes as native words; the RGB mask follows the host byte order.
     uint32_t background;
     std::memcpy(&background, m_background.data(), 4);
-    for (size_t i = 0; i < pixelCount; ++i, src += 4, dst += 4)
-    {
+    auto one = [&](const uint8_t *in, uint8_t *out) {
         uint32_t pixel, color;
-        std::memcpy(&pixel, src, 4);
-        std::memcpy(&color, m_lut[src[3]].data(), 4);
+        std::memcpy(&pixel, in, 4);
+        std::memcpy(&color, m_lut[in[3]].data(), 4);
         // A shade switched fully off by the game (output 0) shows as
         // background, whatever the fade level says.
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -161,6 +160,20 @@ void ShadeColorizer::Colorize(const uint8_t *src, uint8_t *dst, size_t pixelCoun
 #else
         color = (pixel & 0x00FFFFFFu) ? color : background;
 #endif
-        std::memcpy(dst, &color, 4);
+        std::memcpy(out, &color, 4);
+    };
+    size_t i = 0;
+#if defined(__PPC__) || defined(__powerpc__)
+    // Whole 32-byte lines of dst are claimed in the cache without reading memory first.
+    for (; i < pixelCount && (reinterpret_cast<uintptr_t>(dst) & 31); ++i, src += 4, dst += 4)
+        one(src, dst);
+    for (; i + 8 <= pixelCount; i += 8, src += 32, dst += 32)
+    {
+        __asm__ volatile("dcbz 0,%0" : : "r"(dst) : "memory");
+        for (size_t k = 0; k < 8; ++k)
+            one(src + k * 4, dst + k * 4);
     }
+#endif
+    for (; i < pixelCount; ++i, src += 4, dst += 4)
+        one(src, dst);
 }

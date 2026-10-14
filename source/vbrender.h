@@ -1,6 +1,28 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
+
+// A 32-byte line about to be overwritten whole: claimed in the cache without
+// reading memory first (Broadway's dcbz).
+inline void ZeroLine32(uint8_t *p)
+{
+#if defined(__PPC__) || defined(__powerpc__)
+    __asm__ volatile("dcbz 0,%0" : : "r"(p) : "memory");
+#else
+    (void)p;
+#endif
+}
+
+// A word whose bytes in memory are a, b, c, d.
+inline uint32_t BytesInOrder(uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+{
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    return a << 24 | b << 16 | c << 8 | d;
+#else
+    return d << 24 | c << 16 | b << 8 | a;
+#endif
+}
 
 // Coverage reduction protects thin lines when the frame exceeds the output
 // resolution. GX receives RGBA8 tiles with explicit byte order.
@@ -8,18 +30,17 @@ inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned source
     uint8_t *tiled, unsigned w, unsigned h)
 {
     if (w == sourceW && h == sourceH) {
+        // (each tile: a line of alpha-red pairs and a line of green-blue ones, two pixels a word)
         for (unsigned by = 0; by < h; by += 4) {
             for (unsigned bx = 0; bx < w; bx += 4) {
-                uint8_t *ar = tiled;
-                uint8_t *gb = tiled + 32;
+                ZeroLine32(tiled);
+                ZeroLine32(tiled + 32);
                 for (unsigned y = 0; y < 4; ++y) {
                     const uint8_t *src = bgrx + (by + y) * pitch + bx * 4;
-                    for (unsigned x = 0; x < 4; ++x) {
-                        *ar++ = 255;
-                        *ar++ = src[2];
-                        *gb++ = src[1];
-                        *gb++ = src[0];
-                        src += 4;
+                    for (unsigned x = 0; x < 4; x += 2, src += 8) {
+                        const uint32_t ar = BytesInOrder(255, src[2], 255, src[6]), gb = BytesInOrder(src[1], src[0], src[5], src[4]);
+                        std::memcpy(tiled + y * 8 + x * 2, &ar, 4);
+                        std::memcpy(tiled + 32 + y * 8 + x * 2, &gb, 4);
                     }
                 }
                 tiled += 64;
