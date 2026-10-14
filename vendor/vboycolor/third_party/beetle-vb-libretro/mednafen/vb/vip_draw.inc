@@ -88,29 +88,26 @@ static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, b
    uint32 pixels = CHR16[char_no * 8 + char_sub_y];
 
    USE_BG_CHR(char_no);
-   if(!pixels)
-    ;
-   else if(bgsc & 0x2000)
+   if(pixels)
    {
-    if((pixels >> 14) & 3) target[0 + x] = GPLT_Cache[palette_selector][(pixels >> 14) & 3];
-    if((pixels >> 12) & 3) target[1 + x] = GPLT_Cache[palette_selector][(pixels >> 12) & 3];
-    if((pixels >> 10) & 3) target[2 + x] = GPLT_Cache[palette_selector][(pixels >> 10) & 3];
-    if((pixels >> 8) & 3) target[3 + x] = GPLT_Cache[palette_selector][(pixels >> 8) & 3];
-    if((pixels >> 6) & 3) target[4 + x] = GPLT_Cache[palette_selector][(pixels >> 6) & 3];
-    if((pixels >> 4) & 3) target[5 + x] = GPLT_Cache[palette_selector][(pixels >> 4) & 3];
-    if((pixels >> 2) & 3) target[6 + x] = GPLT_Cache[palette_selector][(pixels >> 2) & 3];
-    if((pixels >> 0) & 3) target[7 + x] = GPLT_Cache[palette_selector][(pixels >> 0) & 3];
-   } 
-   else
-   {
-    if((pixels >> 0) & 3) target[0 + x] = GPLT_Cache[palette_selector][(pixels >> 0) & 3];
-    if((pixels >> 2) & 3) target[1 + x] = GPLT_Cache[palette_selector][(pixels >> 2) & 3];
-    if((pixels >> 4) & 3) target[2 + x] = GPLT_Cache[palette_selector][(pixels >> 4) & 3];
-    if((pixels >> 6) & 3) target[3 + x] = GPLT_Cache[palette_selector][(pixels >> 6) & 3];
-    if((pixels >> 8) & 3) target[4 + x] = GPLT_Cache[palette_selector][(pixels >> 8) & 3];
-    if((pixels >> 10) & 3) target[5 + x] = GPLT_Cache[palette_selector][(pixels >> 10) & 3];
-    if((pixels >> 12) & 3) target[6 + x] = GPLT_Cache[palette_selector][(pixels >> 12) & 3];
-    if((pixels >> 14) & 3) target[7 + x] = GPLT_Cache[palette_selector][(pixels >> 14) & 3];
+    /* All eight shades at once, merged into the row under the drawn pixels. */
+    uint32 p = pixels, shades[2], drawn[2], row[2];
+    if(bgsc & 0x2000)
+    {
+     p = ((p >> 2) & 0x3333) | ((p & 0x3333) << 2);
+     p = ((p >> 4) & 0x0F0F) | ((p & 0x0F0F) << 4);
+     p = ((p >> 8) & 0x00FF) | ((p & 0x00FF) << 8);
+    }
+    memcpy(&shades[0], GPLT_Quad[palette_selector][p & 0xFF], 4);
+    memcpy(&shades[1], GPLT_Quad[palette_selector][p >> 8], 4);
+    memcpy(&drawn[0], OpaqueQuad[p & 0xFF], 4);
+    memcpy(&drawn[1], OpaqueQuad[p >> 8], 4);
+    memcpy(&row[0], target + x, 4);
+    memcpy(&row[1], target + x + 4, 4);
+    row[0] = (row[0] & ~drawn[0]) | (shades[0] & drawn[0]);
+    row[1] = (row[1] & ~drawn[1]) | (shades[1] & drawn[1]);
+    memcpy(target + x, &row[0], 4);
+    memcpy(target + x + 4, &row[1], 4);
    }
 
    x += 7;

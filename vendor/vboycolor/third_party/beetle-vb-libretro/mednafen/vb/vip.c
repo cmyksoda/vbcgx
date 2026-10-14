@@ -344,12 +344,18 @@ static uint16 SBCMP;	/* Derived from XPCTRL */
 static uint16 SPT[4];	/* SPT0~SPT3, 5f848~5f84e */
 static uint16 GPLT[4];
 static uint8 GPLT_Cache[4][4];
+/* A character row byte's four pixels, in screen order: their shades, and which of them are drawn. */
+static uint8 GPLT_Quad[4][256][4];
+static uint8 OpaqueQuad[256][4];
 
 static INLINE void Recalc_GPLT_Cache(int which)
 {
-   unsigned i;
+   unsigned i, k;
    for(i = 0; i < 4; i++)
       GPLT_Cache[which][i] = (GPLT[which] >> (i * 2)) & 3;
+   for(i = 0; i < 256; i++)
+      for(k = 0; k < 4; k++)
+         GPLT_Quad[which][i][k] = GPLT_Cache[which][(i >> (k * 2)) & 3];
 }
 
 static uint16 JPLT[4];
@@ -827,7 +833,11 @@ bool VIP_Init(void)
 
 void VIP_Power(void)
 {
-   unsigned i;
+   unsigned i, k;
+
+   for(i = 0; i < 256; i++)
+      for(k = 0; k < 4; k++)
+         OpaqueQuad[i][k] = ((i >> (k * 2)) & 3) ? 0xFF : 0;
 
    Repeat = 0;
    SB_Latch = 0;
