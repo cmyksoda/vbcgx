@@ -101,6 +101,12 @@ void ShadeColorizer::Observe(const uint8_t *src, size_t width, size_t height, si
         return;
     // One sample per shade (a sparse scan - every other row, every third
     // pixel - finds every shade on screen), plus the fade level it was drawn at.
+    // (the core draws red, written as 0x00RRGGBB words: red's byte depends on the CPU's byte order)
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    constexpr int kRedByte = 1;
+#else
+    constexpr int kRedByte = 2;
+#endif
     int value[4] = {-1, -1, -1, -1}, levelOf[4] = {0, 0, 0, 0}, found = 0, brightest = 0;
     for (size_t y = 0; y < height && found < 3; y += 2)
         for (size_t x = 0; x < width; x += 3)
@@ -112,7 +118,7 @@ void ShadeColorizer::Observe(const uint8_t *src, size_t width, size_t height, si
             brightest = std::max(brightest, level);
             if (value[shade] < 0)
             {
-                value[shade] = p[2]; // grayscale - any channel
+                value[shade] = p[kRedByte];
                 levelOf[shade] = level;
                 ++found;
             }
