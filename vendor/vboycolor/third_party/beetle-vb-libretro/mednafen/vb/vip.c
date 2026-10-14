@@ -1935,6 +1935,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      UsedRows = block->rows;
                      UsedBgChr = block->bgChr;
                      memset(vbgo_tt_wcells, 0, sizeof(vbgo_tt_wcells));
+                     memset(vbgo_tt_fillc, 0, sizeof(vbgo_tt_fillc));
                      for(c = 0; c < 48;)
                      {
                         int end = c;
@@ -1980,6 +1981,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      UsedObjs = &block->objs;
                      Drawing = block;
                      memset(vbgo_tt_wcells, 0, sizeof(vbgo_tt_wcells));
+                     memset(vbgo_tt_fillc, 0, sizeof(vbgo_tt_fillc));
                      VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
                      PackBlock(DrawingBuffers, 0, 383);
                      {

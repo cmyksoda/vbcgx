@@ -275,7 +275,7 @@ static inline int vbgo_tt_tag_row8(uint64_t *d, unsigned pixels, int flipped, ui
       else
          vbgo_tt_fill_at(d, t);
    }
-   return 1;
+   return 2; /* (fills may be among them) */
 }
 
 /* dram: the VIP's DRAM (VIP 0x20000-0x3FFFF as halfwords), for the world and
@@ -311,6 +311,8 @@ uint64_t vbgo_tiletrack_world_cells(uint32_t changed, uint64_t cells);
 /* Per cell of the block being drawn, the background worlds that tagged a pixel
  * there (cleared before drawing: more than shows, never less). */
 extern uint32_t vbgo_tt_wcells[48];
+/* Cells of the block being drawn where a fill may have been tagged. */
+extern uint8_t vbgo_tt_fillc[48];
 bool vbgo_tiletrack_pass_reusable(unsigned src_fb);
 void vbgo_tiletrack_share_pass(unsigned fb, unsigned src_fb);
 void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no);

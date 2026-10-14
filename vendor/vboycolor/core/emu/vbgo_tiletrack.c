@@ -52,7 +52,7 @@ static uint16_t s_band_stamp[VBGO_TT_SLOTS][VBGO_TT_BLOCKS], s_band_pass[VBGO_TT
 #define VBGO_TT_CELLS (VBGO_TT_WIDTH / 8)
 static uint32_t s_block_chr[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][2048 / 32];
 static uint32_t s_cell_version[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
-static uint64_t s_cell_black[VBGO_TT_SLOTS][VBGO_TT_BLOCKS]; /* (cells all drawn in shade 0 - see BlackCell) */
+static uint64_t s_cell_black[VBGO_TT_SLOTS][VBGO_TT_BLOCKS]; /* (cells the colorizer passes over - see BlackCell) */
 /* Per cell, the worlds its tags showed as last drawn (bit per world; all: unknown). */
 static uint32_t s_cell_worlds[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
 static uint32_t s_versions;
@@ -450,25 +450,18 @@ static int SameCell(unsigned c)
    return 1;
 }
 
-/* Whether every pixel of cell c, both eyes, is drawn by this pass (not a fill) in
- * shade 0: black at any brightness, so the colorizer passes over the whole cell. */
+/* Whether cell c, both eyes, shows nothing the colorizer colors: every pixel in shade 0 (black at
+ * any brightness) and no fill tagged there - what's left was drawn black or not drawn by this pass. */
 static int BlackCell(unsigned c)
 {
-   const uint32_t now_stamp = (uint32_t)(vbgo_tt_stamp_bits >> 32);
    const uint8_t *fbs = vbgo_vip_framebuffers() + (size_t)(s_last_fb & 1) * 2 * 0x6000 + s_block_no * 2;
-   unsigned e, x, y;
+   unsigned e, x;
+   if (vbgo_tt_fillc[c])
+      return 0;
    for (e = 0; e < 2; e++)
       for (x = c * 8; x < c * 8 + 8; x++)
          if (fbs[e * 0x6000 + 64 * x] | fbs[e * 0x6000 + 64 * x + 1])
             return 0;
-   for (e = 0; e < 2; e++)
-      for (x = c * 8; x < c * 8 + 8; x++)
-      {
-         const uint64_t *is = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
-         for (y = 0; y < 8; y++)
-            if (((uint32_t)(is[y] >> 32) & 0xFFFF0000u) != now_stamp || !VBGO_TAG_PIXEL(is[y]))
-               return 0;
-      }
    return 1;
 }
 
@@ -505,6 +498,7 @@ void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same
 }
 
 uint32_t vbgo_tt_wcells[48];
+uint8_t vbgo_tt_fillc[48];
 
 uint64_t vbgo_tiletrack_world_cells(uint32_t changed, uint64_t cells)
 {
