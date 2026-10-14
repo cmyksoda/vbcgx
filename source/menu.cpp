@@ -2922,6 +2922,9 @@ static int MenuSettingsMappingsMap()
 	GuiSound btnSoundOver(button_over_pcm, button_over_pcm_size, SOUND::PCM);
 	GuiSound btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM);
 
+	GuiTrigger trigB;
+	trigB.setSecondaryTrigger();
+
 	GuiText backBtnTxt("Go Back", 22, MenuPaletteCurrent().label);
 	MenuButtonShape backBtnImg(MenuButtonShape::NORMAL);
 	GuiButton backBtn(MENU_BTN_NORMAL_W, MENU_BTN_NORMAL_H);
@@ -2932,6 +2935,7 @@ static int MenuSettingsMappingsMap()
 	backBtn.setSoundOver(&btnSoundOver);
 	backBtn.setSoundClick(&btnSoundClick);
 	backBtn.setTrigger(trigA);
+	backBtn.setTrigger(&trigB);
 	backBtn.setEffectGrow();
 
 	GuiText resetBtnTxt("Reset Mappings", 22, MenuPaletteCurrent().label);
