@@ -413,11 +413,6 @@ bool MakeFilePath(char filepath[], int type, char * filename, int filenum)
 					snprintf(file, sizeof(file), "%s", filename);
 				}
 				break;
-
-			case FILE_CHEAT:
-				sprintf(folder, EmuSettings.cheatFolder);
-				snprintf(file, sizeof(file), "%s.cht", romFilename);
-				break;
 		}
 		platform->getFileSystem()->getPath(temppath, EmuSettings.saveDevice, folder, file);
 	}

@@ -28,7 +28,6 @@
 
 enum {
     SAVEFOLDER_SAVES = 0,
-    SAVEFOLDER_CHEATS,
     SAVEFOLDER_LENGTH
 };
 
@@ -46,8 +45,7 @@ typedef struct {
 } FolderDef;
 
 const FolderDef saveFolder[] = {
-    { SAVEFOLDER_SAVES,  "saves" },
-    { SAVEFOLDER_CHEATS, "cheats" }
+    { SAVEFOLDER_SAVES,  "saves" }
 };
 
 const FolderDef loadFolder[] = {
@@ -61,8 +59,7 @@ enum
 {
 	FILE_RAM,
 	FILE_STATE,
-	FILE_ROM,
-	FILE_CHEAT
+	FILE_ROM
 };
 
 enum {
@@ -173,7 +170,6 @@ struct SEmuSettings
 	char	loadFolder[MAXPATHLEN]; // Path to game files
 	char	lastFileLoaded[MAXPATHLEN]; //Last file loaded filename
 	char	saveFolder[MAXPATHLEN]; // Path to save files
-	char	cheatFolder[MAXPATHLEN]; // Path to cheat files
 	char	screenshotsFolder[MAXPATHLEN]; // Path to screenshot files
 	char	coverFolder[MAXPATHLEN]; 	// Path to cover files
 	char	artworkFolder[MAXPATHLEN]; 	// Path to artwork files

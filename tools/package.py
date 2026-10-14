@@ -12,19 +12,18 @@ app.mkdir(parents=True)
 for name in ['meta.xml', 'icon.png']:
     shutil.copyfile(root / 'hbc' / name, app / name)
 shutil.copyfile(root / 'executables/vboycolorgx-wii.dol', app / 'boot.dol')
-for folder in ['roms', 'saves', 'cheats', 'covers', 'artwork', 'screenshots', 'vboycolor']:
+for folder in ['roms', 'saves', 'covers', 'artwork', 'screenshots', 'vboycolor']:
     (out / 'vboycolorgx' / folder).mkdir(parents=True)
 licenses = app / 'licenses'
 licenses.mkdir()
 for source, target in [
     ('LICENSE', 'GPL-3.txt'), ('NOTICE', 'NOTICE.txt'),
-    ('vendor/vboycolor/THIRD-PARTY-NOTICES.txt', 'THIRD-PARTY-NOTICES.txt'),
-    ('vendor/vboycolor/third_party/beetle-vb-libretro/COPYING', 'beetle-vb-COPYING.txt'),
+    ('vendor/vboycolor/third_party/beetle-vb-libretro/COPYING', 'beetle-vb-GPL-2.txt'),
 ]:
     shutil.copyfile(root / source, licenses / target)
-for source in (root / 'vendor/vboycolor/licenses').iterdir():
-    if source.is_file():
-        shutil.copyfile(source, licenses / source.name)
+# (the licenses of what the Wii build links; vendor/vboycolor/licenses is for VBoy Color's PC and VR builds)
+for source in (root / 'licenses').iterdir():
+    shutil.copyfile(source, licenses / source.name)
 archive = root / 'dist/VBoy-Color-GX-dev.zip'
 with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as package:
     for path in sorted(out.rglob('*')):

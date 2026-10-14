@@ -148,7 +148,6 @@ preparePrefsData ()
 	createXMLSetting("lastFileLoaded", "Last File Loaded", EmuSettings.lastFileLoaded);
 	createXMLSetting("saveFolder", "Save Folder", EmuSettings.saveFolder);
 	createXMLSetting("appendAuto", "Append Auto to .SAV Files", BtoStr(EmuSettings.appendAuto));
-	createXMLSetting("cheatFolder", "Cheats Folder", EmuSettings.cheatFolder);
 	createXMLSetting("gameGenie", "Game Genie", BtoStr(EmuSettings.gameGenie));
 	createXMLSetting("screenshotsFolder", "Screenshots Folder", EmuSettings.screenshotsFolder);
 	createXMLSetting("coverFolder", "Covers Folder", EmuSettings.coverFolder);
@@ -330,7 +329,6 @@ decodePrefsData ()
 	loadXMLSetting(EmuSettings.lastFileLoaded, "lastFileLoaded", sizeof(EmuSettings.lastFileLoaded));
 	loadXMLSetting(EmuSettings.saveFolder, "saveFolder", sizeof(EmuSettings.saveFolder));
 	loadXMLSetting(&EmuSettings.appendAuto, "appendAuto");
-	loadXMLSetting(EmuSettings.cheatFolder, "cheatFolder", sizeof(EmuSettings.cheatFolder));
 	loadXMLSetting(&EmuSettings.gameGenie, "gameGenie");
 	loadXMLSetting(EmuSettings.screenshotsFolder, "screenshotsFolder", sizeof(EmuSettings.screenshotsFolder));
 	loadXMLSetting(EmuSettings.coverFolder, "coverFolder", sizeof(EmuSettings.coverFolder));
@@ -583,7 +581,6 @@ void DefaultSettings()
 	EmuSettings.saveDevice = DEVICE_AUTO; // Auto, SD, USB, Network Share
 	sprintf (EmuSettings.loadFolder, "%s/%s", APPFOLDER, loadFolder[LOADFOLDER_ROMS].name); // Path to game files
 	sprintf (EmuSettings.saveFolder, "%s/%s", APPFOLDER, saveFolder[SAVEFOLDER_SAVES].name); // Path to save files
-	sprintf (EmuSettings.cheatFolder, "%s/%s", APPFOLDER, saveFolder[SAVEFOLDER_CHEATS].name); // Path to cheat files
 	sprintf (EmuSettings.screenshotsFolder, "%s/%s", APPFOLDER, loadFolder[LOADFOLDER_SCREENSHOTS].name); // Path to screenshots files
 	sprintf (EmuSettings.coverFolder, "%s/%s", APPFOLDER, loadFolder[LOADFOLDER_COVERS].name); // Path to cover files
 	sprintf (EmuSettings.artworkFolder, "%s/%s", APPFOLDER, loadFolder[LOADFOLDER_ARTWORK].name); // Path to artwork files
@@ -932,7 +929,6 @@ static void RemapUsbPathsIfNeeded()
 	RemapUsbPathIfNeeded(EmuSettings.loadFolder, sizeof(EmuSettings.loadFolder));
 	RemapUsbPathIfNeeded(EmuSettings.lastFileLoaded, sizeof(EmuSettings.lastFileLoaded));
 	RemapUsbPathIfNeeded(EmuSettings.saveFolder, sizeof(EmuSettings.saveFolder));
-	RemapUsbPathIfNeeded(EmuSettings.cheatFolder, sizeof(EmuSettings.cheatFolder));
 	RemapUsbPathIfNeeded(EmuSettings.screenshotsFolder, sizeof(EmuSettings.screenshotsFolder));
 	RemapUsbPathIfNeeded(EmuSettings.coverFolder, sizeof(EmuSettings.coverFolder));
 	RemapUsbPathIfNeeded(EmuSettings.artworkFolder, sizeof(EmuSettings.artworkFolder));
@@ -988,7 +984,7 @@ void CreatePathWithPrefix(int device, const char* folder) {
 void CreateMissingDirectories() {
 	char defaultFolder[MAXPATHLEN];
 	if (EmuSettings.saveDevice > DEVICE_AUTO) {
-		const char* savePointers[] = { EmuSettings.saveFolder, EmuSettings.cheatFolder };
+		const char* savePointers[] = { EmuSettings.saveFolder };
 		bool appFolderChecked = false; // only hit the device once per pass
 
 		for (int i = 0; i < SAVEFOLDER_LENGTH; i++) {
