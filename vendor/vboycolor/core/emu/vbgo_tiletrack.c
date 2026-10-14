@@ -413,9 +413,15 @@ void vbgo_tiletrack_block_drawing(bool compare)
    s_old_valid = 0;
    if (!compare || !vbgo_tt_on || !s_block_was || !s_prev_valid || s_block_slot < 0 || s_block_no >= VBGO_TT_BLOCKS)
       return;
+   /* (spelled out: on the Wii a memcpy call per 64-byte column costs more than the copy itself) */
    for (e = 0; e < 2; e++)
       for (x = 0; x < VBGO_TT_WIDTH; x++)
-         memcpy(&s_old_tags[e][x * 8], vbgo_tt_dst[e] + x * VBGO_TT_COLUMN, 8 * sizeof(uint64_t));
+      {
+         const uint64_t *from = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
+         uint64_t *to = &s_old_tags[e][x * 8];
+         to[0] = from[0], to[1] = from[1], to[2] = from[2], to[3] = from[3];
+         to[4] = from[4], to[5] = from[5], to[6] = from[6], to[7] = from[7];
+      }
    s_old_stamp = s_band_was;
    s_old_valid = 1;
 }
