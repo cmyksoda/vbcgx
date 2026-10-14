@@ -252,18 +252,19 @@ void OgcInputDriver::update() {
 			padData.hw_roll[INPUT_HW_WIIMOTE]    = wpad->orient.roll;
 			padData.hw_yaw[INPUT_HW_WIIMOTE]     = wpad->orient.yaw;
 
+			// The remote points whatever is plugged into it.
+			if (wpad->ir.valid) {
+				padData.validPointer = true;
+				padData.isTouch = false;
+				padData.cursor_x = wpad->ir.x;
+				padData.cursor_y = wpad->ir.y;
+				padData.cursor_angle = wpad->ir.angle;
+			}
+
 			if (exp_type == WPAD_EXP_NONE) {
 				padData.hw_buttons_d[INPUT_HW_WIIMOTE] = MapWiimoteToGeneric(wpad->btns_d);
 				padData.hw_buttons_h[INPUT_HW_WIIMOTE] = MapWiimoteToGeneric(wpad->btns_h);
 				padData.hw_buttons_r[INPUT_HW_WIIMOTE] = MapWiimoteToGeneric(wpad->btns_u);
-
-				if (wpad->ir.valid) {
-					padData.validPointer = true;
-					padData.isTouch = false;
-					padData.cursor_x = wpad->ir.x;
-					padData.cursor_y = wpad->ir.y;
-					padData.cursor_angle = wpad->ir.angle;
-				}
 
 				controller[i]->setSideways(getWiimoteOrientation() == WIIMOTE_ORIENTATION_HORIZONTAL);
 			}
