@@ -2628,7 +2628,6 @@ static int MenuSettingsMappingsController()
 
 	GuiSound btnSoundOver(button_over_pcm, button_over_pcm_size, SOUND::PCM);
 	GuiSound btnSoundClick(button_click_pcm, button_click_pcm_size, SOUND::PCM);
-	MenuIconData iconWiimote(icon_settings_wiimote_png);
 	MenuIconData iconClassic(icon_settings_classic_png);
 	MenuIconData iconGamecube(icon_settings_gamecube_png);
 	MenuIconData iconNunchuk(icon_settings_nunchuk_png);
@@ -2644,7 +2643,7 @@ static int MenuSettingsMappingsController()
 	GuiImage gamecubeBtnIcon(&iconGamecube);
 	GuiButton gamecubeBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
 	gamecubeBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	gamecubeBtn.setPosition(-125, 120);
+	gamecubeBtn.setPosition(0, 120);
 	gamecubeBtn.setLabel(&gamecubeBtnTxt);
 	gamecubeBtn.setImage(&gamecubeBtnImg);
 	gamecubeBtn.setIcon(&gamecubeBtnIcon);
@@ -2653,27 +2652,13 @@ static int MenuSettingsMappingsController()
 	gamecubeBtn.setTrigger(trigA);
 	gamecubeBtn.setEffectGrow();
 
-	GuiText wiimoteBtnTxt("Wiimote", 22, MenuPaletteCurrent().label);
-	MenuButtonShape wiimoteBtnImg(MenuButtonShape::LARGE);
-	GuiImage wiimoteBtnIcon(&iconWiimote);
-	GuiButton wiimoteBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
-	wiimoteBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	wiimoteBtn.setPosition(125, 120);
-	wiimoteBtn.setLabel(&wiimoteBtnTxt);
-	wiimoteBtn.setImage(&wiimoteBtnImg);
-	wiimoteBtn.setIcon(&wiimoteBtnIcon);
-	wiimoteBtn.setSoundOver(&btnSoundOver);
-	wiimoteBtn.setSoundClick(&btnSoundClick);
-	wiimoteBtn.setTrigger(trigA);
-	wiimoteBtn.setEffectGrow();
-
 	GuiText drcBtnTxt("Wii U GamePad", 22, MenuPaletteCurrent().label);
 	drcBtnTxt.setWrap(true, MENU_BTN_LARGE_W-30);
 	MenuButtonShape drcBtnImg(MenuButtonShape::LARGE);
 	GuiImage drcBtnIcon(&iconDrc);
 	GuiButton drcBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
 	drcBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	drcBtn.setPosition(200, 120);
+	drcBtn.setPosition(125, 120);
 	drcBtn.setLabel(&drcBtnTxt);
 	drcBtn.setImage(&drcBtnImg);
 	drcBtn.setIcon(&drcBtnIcon);
@@ -2756,8 +2741,7 @@ static int MenuSettingsMappingsController()
 	if(mapMenuCtrlNES == CTRL_PAD)
 	{
 		if(controller[0]->getPadData().hw_connected[INPUT_HW_DRC]) {
-			gamecubeBtn.setPosition(-200, 120);
-			wiimoteBtn.setPosition(0, 120);
+			gamecubeBtn.setPosition(-125, 120);
 			w.append(&drcBtn);
 		}
 
@@ -2775,12 +2759,7 @@ static int MenuSettingsMappingsController()
 	{
 		if(!UpdateGui()) return MENU_EXIT;
 
-		if(wiimoteBtn.getState() == STATE::CLICKED)
-		{
-			selection = MENU_GAMESETTINGS_MAPPINGS_MAP;
-			mapMenuCtrl = INPUT_HW_WIIMOTE;
-		}
-		else if(nunchukBtn.getState() == STATE::CLICKED)
+		if(nunchukBtn.getState() == STATE::CLICKED)
 		{
 			selection = MENU_GAMESETTINGS_MAPPINGS_MAP;
 			mapMenuCtrl = INPUT_HW_NUNCHUK;

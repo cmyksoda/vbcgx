@@ -54,7 +54,6 @@
 #include "icon_game_save_png.h"
 #include "icon_game_delete_png.h"
 #include "icon_game_reset_png.h"
-#include "icon_settings_wiimote_png.h"
 #include "icon_settings_classic_png.h"
 #include "icon_settings_gamecube_png.h"
 #include "icon_settings_nunchuk_png.h"
