@@ -434,12 +434,14 @@ static int SameCell(unsigned c)
          for (y = 0; y < 8; y++)
          {
             const uint32_t a_hi = (uint32_t)(was[y] >> 32), b_hi = (uint32_t)(is[y] >> 32);
-            const int va = (a_hi & 0xFFFF0000u) == was_stamp, vb = (b_hi & 0xFFFF0000u) == now_stamp;
-            if (va != vb)
-               return 0;
-            if (!vb)
+            if ((a_hi & 0xFFFF0000u) != was_stamp)
+            {
+               if ((b_hi & 0xFFFF0000u) == now_stamp)
+                  return 0;
                continue;
-            if (((a_hi ^ b_hi) & 0xFFFF) | ((uint32_t)was[y] ^ (uint32_t)is[y]))
+            }
+            /* (a tag of that pass: the same now but for the stamp) */
+            if (b_hi != (now_stamp | (a_hi & 0xFFFF)) || (uint32_t)was[y] != (uint32_t)is[y])
                return 0;
             if (s_block_chr_changed && (s_chr_changed[VBGO_TAG_CHAR(is[y]) >> 5] >> (VBGO_TAG_CHAR(is[y]) & 31) & 1))
                return 0;
