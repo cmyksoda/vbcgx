@@ -3246,15 +3246,19 @@ static int MenuVBOptions(bool colors)
             options.value[i][0] = 0;
         }
     };
+    // (an empty name hides a row and keeps the indices; Fixed Pixel Ratio sets the size itself)
+    auto layoutVideoRows = [&]() {
+        for (int i = 0; i < 6; ++i)
+            snprintf(options.name[i], 100, "%s", EmuSettings.videoFixedRatio && (i == 1 || i == 3) ? "" : videoNames[i]);
+    };
     auto is240p = []() { return EmuSettings.videoMode == VIDEOMODE_ORIGINAL_240P || EmuSettings.videoMode == VIDEOMODE_240P_PAL; };
     if (colors)
         layoutColorRows();
     else {
         options.length = 6;
-        for (int i = 0; i < options.length; ++i) {
-            snprintf(options.name[i], 100, "%s", videoNames[i]);
+        for (int i = 0; i < options.length; ++i)
             options.value[i][0] = 0;
-        }
+        layoutVideoRows();
     }
 	GuiText titleTxt(colors ? "Game Settings - Colors" : "Game Settings - Video", 26, MenuPaletteCurrent().textOnAccent);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
@@ -3326,6 +3330,7 @@ static int MenuVBOptions(bool colors)
                 case 4: EmuSettings.videoFixedRatio = (EmuSettings.videoFixedRatio + 1) % ((is240p() ? 1 : VIDEO_FIXED_RATIO_MAX) + 1); break;
                 case 5: ScreenPositionWindow(); break;
                 }
+                layoutVideoRows();
             }
         }
         if (firstRun || ret >= 0) {

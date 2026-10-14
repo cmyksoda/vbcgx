@@ -74,4 +74,5 @@ class GuiOptionBrowser : public GuiElement
 		GuiTrigger * trigHeldA;
 
 		bool listChanged;
+		bool contentChanged;		// names or values changed (not a scroll): the selected option keeps the selection
 };

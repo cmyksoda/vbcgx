@@ -41,6 +41,7 @@ GuiOptionBrowser::GuiOptionBrowser(int w, int h, OptionList * l)
 	selectable = true;
 	listOffset = this->findMenuItem(-1, 1);
 	listChanged = true; // trigger an initial list update
+	contentChanged = false;
 	selectedItem = 0;
 	focus = 0; // allow focus
 	visibleCount = 0;
@@ -358,6 +359,7 @@ void GuiOptionBrowser::draw()
 void GuiOptionBrowser::triggerUpdate()
 {
 	listChanged = true;
+	contentChanged = true;
 }
 
 void GuiOptionBrowser::resetText()
@@ -427,8 +429,11 @@ void GuiOptionBrowser::update(InputController * controller)
 
 	if(listChanged)
 	{
-		listChanged = false;
+		// (rows hidden or shown before the selected one move it to another slot)
+		const int selectedOption = contentChanged && optionBtn[selectedItem]->isVisible() ? optionIndex[selectedItem] : -1;
+		listChanged = contentChanged = false;
 		updateThumb();
+		int shown = 0;
 		for(int i=0; i<OPTION_PAGESIZE; ++i)
 		{
 			if(next >= 0)
@@ -443,12 +448,22 @@ void GuiOptionBrowser::update(InputController * controller)
 				optionVal[i]->setText(options->value[next]);
 				optionIndex[i] = next;
 				next = this->findMenuItem(next, 1);
+				shown = i + 1;
 			}
 			else
 			{
 				optionBtn[i]->setVisible(false);
 				optionBtn[i]->setState(STATE::DISABLED);
 			}
+		}
+		int slot = selectedItem < shown ? selectedItem : shown - 1;
+		for(int i=0; i<shown; ++i)
+			if(optionIndex[i] == selectedOption)
+				slot = i;
+		if(slot >= 0 && slot != selectedItem)
+		{
+			optionBtn[selectedItem]->resetState();
+			selectedItem = slot;
 		}
 	}
 
