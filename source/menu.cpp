@@ -2787,7 +2787,7 @@ static int MenuSettingsMappingsController()
 		}
 		else if(backBtn.getState() == STATE::CLICKED)
 		{
-			selection = MENU_GAMESETTINGS_MAPPINGS;
+			selection = MENU_GAMESETTINGS;
 		}
 	}
 	return selection;
