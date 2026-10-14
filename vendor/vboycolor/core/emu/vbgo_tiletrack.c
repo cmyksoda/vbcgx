@@ -43,6 +43,9 @@ static unsigned s_flat[VBGO_TT_SLOTS]; /* flat sprite palettes as its pass start
  * new stamp instead of being drawn again (vbgo_tiletrack_keep_block). */
 #define VBGO_TT_BLOCKS (VBGO_TT_HEIGHT / 8)
 static uint16_t s_block_stamp[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
+/* Per slot and block: the stamp its tags carry (as drawn; a kept block's stays),
+ * and the pass its tags last counted for (s_block_stamp also forgets blocks only so they aren't kept). */
+static uint16_t s_band_stamp[VBGO_TT_SLOTS][VBGO_TT_BLOCKS], s_band_pass[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 /* ... the characters its drawing used (a bit each), and per 8x8 cell the
  * version of what it shows (0: one a renderer can't count on - see
  * vbgo_tiletrack_block_drawn). */
@@ -66,6 +69,7 @@ static uint32_t s_obj_changed[1024 / 32]; /* ... sprites whose attributes do */
 static int s_block_chr_changed;          /* (the block being drawn uses such a tile) */
 static uint16_t s_prev_stamp[2]; /* per frame buffer: its last pass's stamp, as its pass started */
 static uint16_t s_block_was;     /* the block begun last: its slot's stamp before */
+static uint16_t s_band_was;      /* (and the stamp its tags carried then) */
 static int s_block_slot = -1;    /* ... its slot and number */
 static unsigned s_block_no;
 
@@ -103,6 +107,32 @@ static int FreeSlot(void)
    return k;
 }
 
+/* After a wrap-around: keep's tags of its last pass take stamp 1 and the rest
+ * go (a kept band's old stamp would otherwise come round again). */
+static void RestampSlot(int k)
+{
+   unsigned b, e, x, y;
+   for (b = 0; b < VBGO_TT_BLOCKS; b++)
+   {
+      const int valid = s_band_pass[k][b] == s_stamp[k];
+      for (e = 0; e < 2; e++)
+         for (x = 0; x < VBGO_TT_WIDTH; x++)
+         {
+            uint64_t *t = &s_tags[k][e][x * VBGO_TT_COLUMN + b * 8];
+            for (y = 0; y < 8; y++)
+               t[y] = valid && (t[y] >> 48) == s_band_stamp[k][b] ? (t[y] & 0xFFFFFFFFFFFFull) | ((uint64_t)1 << 48) : 0;
+         }
+      s_block_stamp[k][b] = s_block_stamp[k][b] == s_stamp[k] ? 1 : 0;
+      s_band_stamp[k][b] = s_band_pass[k][b] = valid ? 1 : 0;
+      if (!valid)
+      {
+         memset(s_cell_version[k][b], 0, sizeof(s_cell_version[k][b]));
+         memset(s_cell_worlds[k][b], 0xFF, sizeof(s_cell_worlds[k][b]));
+      }
+   }
+   s_stamp[k] = 1;
+}
+
 /* A new stamp; on wrap-around forget every old tag (but keep's), so a pixel
  * left untouched for 65535 passes can't come back to life. */
 static void NextStamp(int keep)
@@ -115,11 +145,18 @@ static void NextStamp(int keep)
          {
             memset(s_tags[k], 0, sizeof(s_tags[k]));
             memset(s_block_stamp[k], 0, sizeof(s_block_stamp[k]));
+            memset(s_band_stamp[k], 0, sizeof(s_band_stamp[k]));
+            memset(s_band_pass[k], 0, sizeof(s_band_pass[k]));
             memset(s_cell_version[k], 0, sizeof(s_cell_version[k]));
             memset(s_cell_worlds[k], 0xFF, sizeof(s_cell_worlds[k]));
          }
       memset(s_have, 0, sizeof(s_have));
       s_next_stamp = 1;
+      if (keep >= 0)
+      {
+         RestampSlot(keep);
+         s_next_stamp = 2;
+      }
    }
    vbgo_tt_stamp_bits = (uint64_t)s_next_stamp << 48;
 }
@@ -147,6 +184,8 @@ static void Unshare(unsigned fb)
    to = FreeSlot();
    memcpy(s_tags[to], s_tags[from], sizeof(s_tags[to]));
    memcpy(s_block_stamp[to], s_block_stamp[from], sizeof(s_block_stamp[to]));
+   memcpy(s_band_stamp[to], s_band_stamp[from], sizeof(s_band_stamp[to]));
+   memcpy(s_band_pass[to], s_band_pass[from], sizeof(s_band_pass[to]));
    memcpy(s_block_chr[to], s_block_chr[from], sizeof(s_block_chr[to]));
    memcpy(s_cell_version[to], s_cell_version[from], sizeof(s_cell_version[to]));
    memcpy(s_cell_worlds[to], s_cell_worlds[from], sizeof(s_cell_worlds[to]));
@@ -240,6 +279,8 @@ void vbgo_tiletrack_reset(void)
 {
    memset(s_tags, 0, sizeof(s_tags));
    memset(s_block_stamp, 0, sizeof(s_block_stamp));
+   memset(s_band_stamp, 0, sizeof(s_band_stamp));
+   memset(s_band_pass, 0, sizeof(s_band_pass));
    memset(s_cell_version, 0, sizeof(s_cell_version));
    memset(s_cell_worlds, 0xFF, sizeof(s_cell_worlds));
    memset(s_have, 0, sizeof(s_have));
@@ -309,7 +350,9 @@ void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *
    {
       /* (drawn or kept, the block's tags are this pass's from here on) */
       s_block_was = s_block_stamp[s_slot[fb]][block_no] == s_prev_stamp[fb] ? s_prev_stamp[fb] : 0;
+      s_band_was = s_band_stamp[s_slot[fb]][block_no];
       s_block_stamp[s_slot[fb]][block_no] = s_stamp[s_slot[fb]];
+      s_band_stamp[s_slot[fb]][block_no] = s_band_pass[s_slot[fb]][block_no] = s_stamp[s_slot[fb]];
    }
    else
       s_block_was = 0;
@@ -325,20 +368,11 @@ typedef uint16_t __attribute__((__may_alias__)) StampHalf;
 
 bool vbgo_tiletrack_keep_block(void)
 {
-   const uint16_t now = (uint16_t)(vbgo_tt_stamp_bits >> 48);
-   unsigned e, x, k;
    if (!vbgo_tt_on)
       return true;
    if (!s_block_was)
       return false;
-   for (e = 0; e < 2; e++)
-   {
-      StampHalf *stamp = (StampHalf *)vbgo_tt_dst[e] + STAMP_HALF;
-      for (x = 0; x < VBGO_TT_WIDTH; x++, stamp += VBGO_TT_COLUMN * 4)
-         for (k = 0; k < 8 * 4; k += 4)
-            if (stamp[k] == s_block_was)
-               stamp[k] = now;
-   }
+   s_band_stamp[s_block_slot][s_block_no] = s_band_was;
    return true;
 }
 
@@ -356,7 +390,7 @@ bool vbgo_tiletrack_keep_cells(uint64_t cells)
       for (x = 0; x < VBGO_TT_WIDTH; x++, stamp += VBGO_TT_COLUMN * 4)
          if (cells >> (x >> 3) & 1)
             for (k = 0; k < 8 * 4; k += 4)
-               if (stamp[k] == s_block_was)
+               if (stamp[k] == s_band_was)
                   stamp[k] = now;
    }
    return true;
@@ -371,7 +405,7 @@ void vbgo_tiletrack_block_drawing(bool compare)
    for (e = 0; e < 2; e++)
       for (x = 0; x < VBGO_TT_WIDTH; x++)
          memcpy(&s_old_tags[e][x * 8], vbgo_tt_dst[e] + x * VBGO_TT_COLUMN, 8 * sizeof(uint64_t));
-   s_old_stamp = s_block_was;
+   s_old_stamp = s_band_was;
    s_old_valid = 1;
 }
 
@@ -477,8 +511,8 @@ void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
       return;
    from = s_slot[fb];
    to = s_slot[fb ^ 1] == from ? FreeSlot() : from;
-   old_stamp = s_stamp[from];
    NextStamp(from);
+   old_stamp = s_stamp[from];
    if (to != from)
    {
       CopySlotInfo(to, from);
@@ -488,22 +522,20 @@ void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
    for (e = 0; e < block_no && e < VBGO_TT_BLOCKS; e++)
    {
       s_block_stamp[to][e] = s_block_stamp[from][e] == old_stamp ? s_next_stamp : s_block_stamp[from][e];
+      s_band_pass[to][e] = s_band_pass[from][e] == old_stamp ? s_next_stamp : s_band_pass[from][e];
       if (to != from)
       {
+         s_band_stamp[to][e] = s_band_stamp[from][e];
          memcpy(s_block_chr[to][e], s_block_chr[from][e], sizeof(s_block_chr[to][e]));
          memcpy(s_cell_version[to][e], s_cell_version[from][e], sizeof(s_cell_version[to][e]));
          memcpy(s_cell_worlds[to][e], s_cell_worlds[from][e], sizeof(s_cell_worlds[to][e]));
       }
    }
    /* (the blocks it repeated: the other buffer's tags, as this pass's) */
-   for (e = 0; e < 2; e++)
+   for (e = 0; to != from && e < 2; e++)
       for (x = 0; x < VBGO_TT_WIDTH; x++)
-      {
-         const uint64_t *src = &s_tags[from][e][x * VBGO_TT_COLUMN];
-         uint64_t *dst = &s_tags[to][e][x * VBGO_TT_COLUMN];
-         for (y = 0; y < block_no * 8; y++)
-            dst[y] = (src[y] >> 48) == old_stamp ? (src[y] & 0xFFFFFFFFFFFFull) | vbgo_tt_stamp_bits : src[y];
-      }
+         memcpy(&s_tags[to][e][x * VBGO_TT_COLUMN], &s_tags[from][e][x * VBGO_TT_COLUMN],
+                (block_no < VBGO_TT_BLOCKS ? block_no : VBGO_TT_BLOCKS) * 8 * sizeof(uint64_t));
    s_have[fb] = 1;
    s_cpu[fb] = 0;
    s_pass_open = 1;
@@ -563,7 +595,8 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view)
    if (fb < 0 || !s_have[fb])
       return false;
    slot = s_slot[fb];
-   view->stamp = s_stamp[slot];
+   for (x = 0; x < VBGO_TT_BLOCKS; x++)
+      view->band_stamp[x] = s_band_pass[slot][x] == s_stamp[slot] ? s_band_stamp[slot][x] : 0x10000u;
    view->hashes = s_hash[slot];
    view->blank = s_blank[slot];
    view->chr = s_chr[slot];
@@ -599,7 +632,7 @@ bool vbgo_tiletrack_records(unsigned eye, uint64_t *records, uint32_t *cells, bo
          const uint64_t t = col ? col[y] : 0;
          uint64_t out = 0;
          uint32_t cell = 0;
-         if (t && (t >> 48) == view.stamp && (with_fills || VBGO_TAG_PIXEL(t)))
+         if (t && (t >> 48) == view.band_stamp[y >> 3] && (with_fills || VBGO_TAG_PIXEL(t)))
          {
             const unsigned chr = VBGO_TAG_CHAR(t);
             out = (uint64_t)view.hashes[chr] | ((uint64_t)VBGO_TAG_SUBX(t) << 32) | ((uint64_t)VBGO_TAG_SUBY(t) << 35) |

@@ -781,7 +781,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                     for (uint32_t y = band * 8; y < band * 8 + 8; ++y)
                     {
                         const uint64_t t = column[y];
-                        if ((t >> 48) != v.stamp)
+                        if ((t >> 48) != v.band_stamp[band])
                             continue;
                         const unsigned chr = VBGO_TAG_CHAR(t);
                         const ContextGroupBits &slotBits = m_slotMarkers[chr];
@@ -1102,7 +1102,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                     m_leftPairMasks[i] |= leftPairSlot[c];
                 }
         }
-        const uint64_t stamp = v.stamp;
         if (++m_runCacheAt == 0)
         {
             for (CachedRun &cached : m_runCache)
@@ -1143,6 +1142,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                 bool runSetUp = true;
                 for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
                 {
+                    // (a run going on into the band: its tags carry the band's stamp)
+                    const uint64_t stamp = v.band_stamp[b];
+                    runHi = (runHi & 0xFFFFu) | static_cast<uint32_t>(stamp << 16);
                     BandColumn &here = rightColumns[b * VBGO_TT_WIDTH + x];
                     const bool kept = keptRightCell[b][x >> 3];
                     if (kept)
@@ -1284,6 +1286,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             NearBits nearBits{};
             for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
             {
+            const uint64_t stamp = v.band_stamp[b];
+            runHi = (runHi & 0xFFFFu) | static_cast<uint32_t>(stamp << 16);
             BandColumn &here = bandColumns[b * VBGO_TT_WIDTH + x];
             const bool kept = keptCell[b][x >> 3];
             if (kept)
@@ -1582,7 +1586,6 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, const uint8_t *raw, uint3
         m_depthShades[eye].assign(kPixels, 0);
         m_depthWant[eye].assign(kPixels, 0);
         uint8_t *shades = m_depthShades[eye].data(), *want = m_depthWant[eye].data();
-        const uint64_t stamp = have[eye] ? view[eye].stamp : 0;
         for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
         {
             const uint64_t *column = have[eye] ? view[eye].columns[x] : nullptr;
@@ -1595,7 +1598,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, const uint8_t *raw, uint3
                 if (!shade || !(rawPixel & 0xFFFFFFu))
                     continue;
                 shades[y * VBGO_TT_WIDTH + x] = static_cast<uint8_t>(shade);
-                if (column && (column[y] >> 48) == stamp && VBGO_TAG_PIXEL(column[y]))
+                if (column && (column[y] >> 48) == view[eye].band_stamp[y >> 3] && VBGO_TAG_PIXEL(column[y]))
                     continue; // a tile drew it
                 want[y * VBGO_TT_WIDTH + x] = 1;
                 any = true;
@@ -1732,7 +1735,6 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8
                         : spriteSlot[world] >= 0 ? static_cast<int8_t>(spriteSlot[world] | 0x40)
                                                  : -1;
         }
-        const uint64_t stamp = view[eye].stamp;
         for (int x = 0; x < VBGO_TT_WIDTH; ++x)
         {
             const uint64_t *column = view[eye].columns[x];
@@ -1746,17 +1748,21 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8
 #endif
             BitHalf *at = reinterpret_cast<BitHalf *>(bits + static_cast<size_t>(eye) * eyeRows + 1 + (x >> 6)) + half;
             const uint32_t bit = 1u << (x & 31);
-            for (int y = 0; y < VBGO_TT_HEIGHT; ++y, at += 2 * 3 * kGuardedRow)
+            for (int b = 0; b < kBands; ++b)
             {
-                const uint64_t t = column[y];
-                if ((t >> 48) != stamp)
-                    continue;
-                int k = slotOf[static_cast<uint32_t>(t) >> 19 & 0xFF];
-                if (k < 0 || (k & 0x40 && EyeOnly(t) != (eye ? 2 : 1)))
-                    continue;
-                const unsigned shade = shades[static_cast<size_t>(y) * fbWidth * 4] & 3;
-                if (shade)
-                    at[2 * ((k & 0x3F) * 2 * eyeRows + (shade - 1) * kGuardedRow)] |= bit;
+                const uint64_t stamp = view[eye].band_stamp[b];
+                for (int y = b * 8; y < b * 8 + 8; ++y, at += 2 * 3 * kGuardedRow)
+                {
+                    const uint64_t t = column[y];
+                    if ((t >> 48) != stamp)
+                        continue;
+                    int k = slotOf[static_cast<uint32_t>(t) >> 19 & 0xFF];
+                    if (k < 0 || (k & 0x40 && EyeOnly(t) != (eye ? 2 : 1)))
+                        continue;
+                    const unsigned shade = shades[static_cast<size_t>(y) * fbWidth * 4] & 3;
+                    if (shade)
+                        at[2 * ((k & 0x3F) * 2 * eyeRows + (shade - 1) * kGuardedRow)] |= bit;
+                }
             }
         }
     }
@@ -1990,14 +1996,14 @@ void ColorPackRenderer::PaintAmbiguous(uint8_t *frame, uint32_t fbWidth, uint32_
     // Only what both eyes show the same way around it counts: on a layer,
     // its own layer; among sprites, sprites at the same depth (parallax) -
     // their pixels sit the same way around it in both eyes.
-    // (a neighbour's tag must match in these: drawn this frame, the pixel's value, its layer, sprite or not)
-    constexpr uint64_t kSame = (0xFFFFull << 48) | (31ull << 22) | (3ull << 20) | (1ull << 19);
+    // (a neighbour's tag must be drawn this frame and match in these: the pixel's value, its layer, sprite or not)
+    constexpr uint64_t kSame = (31ull << 22) | (3ull << 20) | (1ull << 19);
     static constexpr int kDirections[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
     for (const auto &p : m_ambiguousPixels)
     {
         const int x = p.first, y = p.second;
         const uint64_t t = view.columns[x] ? view.columns[x][y] : 0;
-        if ((t >> 48) != view.stamp)
+        if ((t >> 48) != view.band_stamp[y >> 3])
             continue;
         const uint64_t same = t & kSame;
         const bool sprite = m_oam && VBGO_TAG_IS_OBJ(t);
@@ -2010,7 +2016,7 @@ void ColorPackRenderer::PaintAmbiguous(uint8_t *frame, uint32_t fbWidth, uint32_
                 if (nx < 0 || nx >= VBGO_TT_WIDTH || ny < 0 || ny >= VBGO_TT_HEIGHT || !view.columns[nx])
                     continue;
                 const uint64_t n = view.columns[nx][ny];
-                if ((n & kSame) == same && !m_slots[VBGO_TAG_CHAR(n)].ambiguous &&
+                if ((n >> 48) == view.band_stamp[ny >> 3] && (n & kSame) == same && !m_slots[VBGO_TAG_CHAR(n)].ambiguous &&
                     (!sprite || vbgo_obj_parallax(m_oam, VBGO_TAG_OBJ_NO(n)) == jp))
                 {
                     from = ny * static_cast<int>(fbWidth) + static_cast<int>(eyeOffset) + nx;

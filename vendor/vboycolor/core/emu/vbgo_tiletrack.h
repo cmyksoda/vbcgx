@@ -105,12 +105,14 @@ void vbgo_tiletrack_set_fill_cells(const uint8_t *bits);
 
 /* What one eye showed in the frame most recently output by retro_run():
  * per column, the 224 tags of that column (NULL if the column was blank),
- * plus the stamp tags must carry to belong to it and the drawing pass's
- * tile hashes / character memory (index by VBGO_TAG_CHAR). */
+ * plus the stamp tags of each 8-row band must carry to belong to it and the
+ * drawing pass's tile hashes / character memory (index by VBGO_TAG_CHAR). */
 typedef struct
 {
    const uint64_t *columns[VBGO_TT_WIDTH];
-   uint64_t stamp; /* compare with (tag >> 48) */
+   /* Compare with (tag >> 48) for a pixel in band y / 8 (none matches a band the pass didn't reach).
+    * A band the pass kept carries the stamp it was drawn with, so keeping one rewrites no tags. */
+   uint32_t band_stamp[VBGO_TT_HEIGHT / 8];
    const uint32_t *hashes;   /* 2048 */
    const uint8_t *blank;     /* 2048: 1 = all 64 pixels transparent */
    const uint16_t *chr;      /* 2048 * 8 rows (2 bits per pixel, pixel 0 in the low bits) */
