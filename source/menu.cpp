@@ -3354,14 +3354,20 @@ class TintSliders : public GuiWindow
 		}
 		void update(InputController *c) override
 		{
-			// (before the window's own focus moves, which would use up the held repeat)
-			if (c && isFocused())
+			if (isFocused() != active)
 			{
+				active = isFocused();
+				refresh();
+			}
+			// (before the window's own focus moves, which would use up the held repeat)
+			if (c && active)
+			{
+				const int was = row;
 				if (c->up()) row = (row + 2) % 3;
 				else if (c->down()) row = (row + 1) % 3;
+				if (row != was) refresh();
 				if (c->left()) change(-kStep);
 				else if (c->right()) change(+kStep);
-				refresh();
 			}
 			GuiWindow::update(c);
 			if (!c)
@@ -3410,10 +3416,10 @@ class TintSliders : public GuiWindow
 				track[k]->setPaint(GuiPaint()
 				                       .gradient(MenuRGBA(Byte(lo[0]), Byte(lo[1]), Byte(lo[2])),
 				                                 MenuRGBA(Byte(hi[0]), Byte(hi[1]), Byte(hi[2])), 0.0f)
-				                       .stroke(1.5f, k == row ? p.accent : p.outlineStrong));
+				                       .stroke(1.5f, k == row && active ? p.accent : p.outlineStrong));
 				knob[k]->setPosition(kTrackX + value[k] * kTrackW / 100 - 4, -46 + k * 46);
-				knob[k]->setPaint(GuiPaint().color(p.textOnAccent).stroke(1.5f, k == row ? p.accent : p.outlineStrong));
-				label[k]->setColor(k == row ? p.accent : p.label);
+				knob[k]->setPaint(GuiPaint().color(p.textOnAccent).stroke(1.5f, k == row && active ? p.accent : p.outlineStrong));
+				label[k]->setColor(k == row && active ? p.accent : p.label);
 				char v[8];
 				snprintf(v, sizeof(v), "%.2f", value[k] / 100.0f);
 				text[k]->setText(v);
@@ -3421,6 +3427,7 @@ class TintSliders : public GuiWindow
 		}
 		int *value;
 		int row = 0;
+		bool active = false; // (the chosen row only shows while OK/Cancel don't have the focus)
 		GuiShape *swatch, *shade[4], *track[3], *knob[3];
 		GuiText *label[3], *text[3];
 		MenuArrowImage *arrowImg[3][2];
