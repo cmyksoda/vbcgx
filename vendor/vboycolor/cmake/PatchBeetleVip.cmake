@@ -176,18 +176,34 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
    {
     /* (a map entry that can't fill anywhere: the same entry again is the same blank row) */
     const uint32 blank_bgsc = (!vbgo_row || !vbgo_tt_fill || vbgo_tt_blank[char_no]) ? bgsc : 0x10000;
-    do
+    if(!overplane)
     {
-     x += 8;
-     SourceX = (SourceX + 8) & SourceX_Mask;
-     bgsc = bgsc_overplane;
-     vbgo_cell = overplane_char & 0xFFFF;
-     if(!overplane || (SourceX < SourceX_Size && SourceY < SourceY_Size))
+     /* (along a map's row of 64 cells the next cell is the next halfword) */
+     unsigned c = (SourceX >> 3) & 0x3F;
+     uint32 row_start = (BGMap_Base | ((SourceX << 3) & ~0xFFF)) & 0xFFFF;
+     do
      {
-      vbgo_cell = (BGMap_Base | ((SourceX << 3) & ~0xFFF) | ((SourceX >> 3) & 0x3F)) & 0xFFFF;
-      bgsc = BGMap[vbgo_cell];
-     }
-    } while(bgsc == blank_bgsc && (x + 15) <= final_x);
+      x += 8;
+      SourceX = (SourceX + 8) & SourceX_Mask;
+      if(++c == 64)
+       c = 0, row_start = (BGMap_Base | ((SourceX << 3) & ~0xFFF)) & 0xFFFF;
+      bgsc = BGMap[row_start | c];
+     } while(bgsc == blank_bgsc && (x + 15) <= final_x);
+     vbgo_cell = row_start | c;
+    }
+    else
+     do
+     {
+      x += 8;
+      SourceX = (SourceX + 8) & SourceX_Mask;
+      bgsc = bgsc_overplane;
+      vbgo_cell = overplane_char & 0xFFFF;
+      if(SourceX < SourceX_Size && SourceY < SourceY_Size)
+      {
+       vbgo_cell = (BGMap_Base | ((SourceX << 3) & ~0xFFF) | ((SourceX >> 3) & 0x3F)) & 0xFFFF;
+       bgsc = BGMap[vbgo_cell];
+      }
+     } while(bgsc == blank_bgsc && (x + 15) <= final_x);
     char_no = bgsc & 0x7FF;
     palette_selector = bgsc >> 14;
     char_sub_y = ((bgsc & 0x1000) ? 7 : 0) ^ (SourceY & 0x7);
