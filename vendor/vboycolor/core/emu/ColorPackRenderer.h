@@ -330,6 +330,11 @@ private:
     std::vector<ContextGroupBits> m_nearSprites;  // per grid cell: sprites' groups with a marker within reach (this frame and the last two)
     std::array<ContextGroupBits, kGridW * kGridH> m_gridRows, m_gridCloseRows, m_gridHere; // (Paint's scratch for those)
     std::vector<uint16_t> m_spreadCells; // (the cells those reached last frame; all of them if m_spreadAll)
+    // With layer-bound groups only sprites' context tiles ask, so the cells
+    // with markers are kept and a cell's groups worked out when asked (once a frame).
+    std::vector<std::pair<uint16_t, ContextGroupBits>> m_spriteSources;
+    std::array<uint32_t, kGridW * kGridH> m_spriteNearAt{};
+    void SpriteNear(unsigned i, ContextGroupBits &near, ContextGroupBits &close);
     bool m_spreadAll = true;
     std::array<uint8_t, kGridW * kGridH> m_spreadMark{};
     std::vector<ContextGroupBits> m_closeSprites; // (the same, within one cell)

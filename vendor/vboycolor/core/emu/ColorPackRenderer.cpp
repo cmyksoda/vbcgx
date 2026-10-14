@@ -467,6 +467,28 @@ void ColorPackRenderer::Near(int x, int y, unsigned world, ContextGroupBits &nea
     near = known.bits, close = known.close;
 }
 
+void ColorPackRenderer::SpriteNear(unsigned i, ContextGroupBits &near, ContextGroupBits &close)
+{
+    if (m_spriteNearAt[i] != m_frame)
+    {
+        const int gx = static_cast<int>(i % kGridW), gy = static_cast<int>(i / kGridW);
+        ContextGroupBits n, c;
+        for (const auto &source : m_spriteSources)
+        {
+            const int dx = std::abs(source.first % kGridW - gx), dy = std::abs(source.first / kGridW - gy);
+            if (dx <= kContextReach && dy <= kContextReach)
+            {
+                n |= source.second;
+                if (dx <= 1 && dy <= 1)
+                    c |= source.second;
+            }
+        }
+        m_nearSprites[i] = n, m_closeSprites[i] = c;
+        m_spriteNearAt[i] = m_frame;
+    }
+    near = m_nearSprites[i], close = m_closeSprites[i];
+}
+
 bool ColorPackRenderer::SharedWithLeftPicture(unsigned chr, uint32_t hash, int pair)
 {
     // (per slot and frame: the pairs whose left pictures draw its tile)
@@ -827,12 +849,16 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                             sources[sourceCount++] = i;
                     }
         }
-        if (sourceCount > 64)
-            for (int i = 0; i < kGridW * kGridH; ++i)
-                here[i] = (a[i] | b[i] | markers[i]) & free;
         m_nearSprites.resize(kGridW * kGridH);
         m_closeSprites.resize(kGridW * kGridH);
-        if (sourceCount <= 64)
+        if (m_layerBound.Any())
+        {
+            m_spriteSources.clear();
+            for (int k = 0; k < sourceCount; ++k)
+                m_spriteSources.emplace_back(sources[k], here[sources[k]]);
+            m_spreadAll = true;
+        }
+        else if (sourceCount <= 64)
         {
             if (m_spreadAll)
             {
@@ -865,6 +891,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         else
         {
             m_spreadAll = true;
+            for (int i = 0; i < kGridW * kGridH; ++i)
+                here[i] = (a[i] | b[i] | markers[i]) & free;
             for (int gy = 0; gy < kGridH; ++gy)
                 for (int gx = 0; gx < kGridW; ++gx)
                 {
@@ -950,7 +978,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                 nearCell = cell;
                 const int i = (y >> 3) * kGridW + (lx >> 3);
                 if (sprite)
-                    nearBits.near = m_nearSprites[i], nearBits.close = m_closeSprites[i];
+                {
+                    if (m_layerBound.Any())
+                        SpriteNear(static_cast<unsigned>(i), nearBits.near, nearBits.close);
+                    else
+                        nearBits.near = m_nearSprites[i], nearBits.close = m_closeSprites[i];
+                }
                 else if (m_layerBound.Any())
                 {
                     Near(lx, y, world, nearBits.near, nearBits.close);
@@ -1260,12 +1293,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         // A kept cell's slow columns are painted again only if the markers their context goes by
         // moved (without layer-bound groups, only sprites' count; their marker writes are the pre-pass's).
         uint8_t contextSame[kBands][kGridW] = {};
-        for (unsigned b = 0; haveContexts && b < static_cast<unsigned>(kBands); ++b)
+        for (unsigned b = 0; haveContexts && !m_layerBound.Any() && b < static_cast<unsigned>(kBands); ++b)
             for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
             {
                 Cell &cell = bands[b].cells[c];
                 const unsigned i = b * kGridW + c;
-                contextSame[b][c] = keptCell[b][c] && !m_layerBound.Any() && cell.nearSprites == m_nearSprites[i] &&
+                contextSame[b][c] = keptCell[b][c] && cell.nearSprites == m_nearSprites[i] &&
                                     cell.closeSprites == m_closeSprites[i];
                 cell.nearSprites = m_nearSprites[i];
                 cell.closeSprites = m_closeSprites[i];
