@@ -350,8 +350,8 @@ void OgcInputDriver::update() {
 		controller[i]->update(padData, platform->getVideo()->getDeltaTime());
 		
 		// Menu (hover) rumble: a short tick with an enforced silent gap afterward
-		static constexpr int kMenuRumbleOnFrames = 2; // ~33ms motor-on burst
-		static constexpr int kMenuRumbleGapFrames = 6; // ~100ms enforced silence after a tick
+		static constexpr int kMenuRumbleOnFrames = 3; // as long as FCE Ultra GX's, long enough for the motor to spin up
+		static constexpr int kMenuRumbleGapFrames = 12;
 
 		if (rumbleRequest[i]) {
 			rumbleRequest[i] = false;
