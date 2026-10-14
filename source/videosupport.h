@@ -1,3 +1,12 @@
+/****************************************************************************
+ * FCE Ultra GX
+ *
+ * Daryl Borth 2008-2026
+ *
+ * videosupport.h
+ *
+ * Video rendering
+ ****************************************************************************/
 #pragma once
 #include "libgui/Gui.h"
 #define IMAGE_BUFFER_SIZE (640 * 480 * 4)

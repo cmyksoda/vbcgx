@@ -1,3 +1,12 @@
+/****************************************************************************
+ * FCE Ultra GX
+ *
+ * Daryl Borth 2008-2026
+ *
+ * fceusupport.h
+ *
+ * FCEU Support Functions
+ ****************************************************************************/
 #pragma once
 #include <gccore.h>
 #include <libretro.h>

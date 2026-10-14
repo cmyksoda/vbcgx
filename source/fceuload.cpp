@@ -1,3 +1,15 @@
+/****************************************************************************
+ * FCE Ultra GX
+ *
+ * Daryl Borth 2008-2026
+ *
+ * fceload.c
+ *
+ * NES Memory Load Game
+ *
+ * This performs the functions of LoadGame and iNESLoad from a single module
+ * Helper function for GameCube injected ROMS
+ ****************************************************************************/
 #include "fceugx.h"
 #include "fceusupport.h"
 #include "filebrowser.h"

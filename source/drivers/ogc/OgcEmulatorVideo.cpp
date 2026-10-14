@@ -1,3 +1,10 @@
+/****************************************************************************
+ * FCE Ultra GX
+ *
+ * Daryl Borth 2008-2026
+ *
+ * OgcEmulatorVideo.cpp
+ ***************************************************************************/
 #include "OgcEmulatorVideo.h"
 #include "OgcVideoDriver.h"
 #include "../../fceugx.h"

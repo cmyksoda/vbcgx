@@ -1,3 +1,12 @@
+/****************************************************************************
+ * FCE Ultra GX
+ *
+ * Daryl Borth 2008-2026
+ *
+ * pad.cpp
+ *
+ * Controller input
+ ****************************************************************************/
 #include "pad.h"
 #include "fceusupport.h"
 #include "drivers/Platform.h"

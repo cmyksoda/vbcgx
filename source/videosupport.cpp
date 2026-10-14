@@ -1,3 +1,12 @@
+/****************************************************************************
+ * FCE Ultra GX
+ *
+ * Daryl Borth 2008-2026
+ *
+ * videosupport.cpp
+ *
+ * Generic video glue: frame pacing/timing, screenshot capture.
+ ****************************************************************************/
 #include "videosupport.h"
 #include "fceugx.h"
 #include "fceusupport.h"

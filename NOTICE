@@ -6,10 +6,16 @@ https://github.com/dborth/fceugx
 Imported revision 603e1d7dfdd4f6436e1cb1ae6ffe4e44f214e606; upstream identifies this code as GPL licensed.
 Original source copyright headers are retained.
 
+GX menu artwork by the3seashells and menu sounds by Peter de Man, both from FCE Ultra GX;
+the menu images here are recolored or redrawn from that artwork.
+
 VBoy Color by yuk27 and contributors. GNU GPL version 3.
 https://github.com/yuk27/VBoyColor
 Imported revision 528297b2c7f8d116277e776dead69caa4d50663b.
-Menu logo adapted from the VBoyColor project's original artwork:
+VBoy Color started as a fork of VirtualBoyGo by CidVonHighwind (Patrick) and contributors,
+GNU GPL version 3; its tile tracking and color pack format are part of the core here.
+https://github.com/CidVonHighwind/VirtualBoyGo
+Menu logo adapted from the VBoyColor project's original artwork (Juan's, per VBoy Color's notices):
 https://github.com/yuk27/VBoyColor/blob/main/assets/logo/vboycolor-logo.png
 Cropped and resized, with a beveled GX badge added.
 Beetle VB revision 38e7a0ec9ac7079ca1c1e3dd9aaf5b56f527efca; GPL version 2 or later.
@@ -35,3 +41,31 @@ Menu music:
 The menu music is this retro synthwave loop by user abelouis on Looperman:
 https://www.looperman.com/loops/detail/247262/bells-melody-retro-synthwave-35b-abelouis-free-96bpm-ambient-pad-loop
 ("Bells Melody Retro SynthWave 35B"; raised 6.6 dB and encoded as Ogg Vorbis at 32 kHz.)
+
+Libraries and code in the Wii build:
+- libogc2 by Michael Wiedenbauer (shagkur), Dave Murphy (WinterMute) and Extrems' Corner.org,
+  with ASND by Hermes, DI by Team Twiizers, libfat by fincs and devkitPro, and libwiiuse/libbte.
+  zlib-style and BSD licenses. https://github.com/extremscorner/libogc2
+- libwiidrc by FIX94, MIT license (source/drivers/ogc/wii/wiidrc.c):
+  Copyright (C) 2017 FIX94. Permission is hereby granted, free of charge, to any person obtaining a
+  copy of this software and associated documentation files (the "Software"), to deal in the Software
+  without restriction, including without limitation the rights to use, copy, modify, merge, publish,
+  distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
+  Software is furnished to do so, subject to the following conditions: The above copyright notice and
+  this permission notice shall be included in all copies or substantial portions of the Software.
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+  LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+  NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+  WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+  SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+- libsmb2 by Ronnie Sahlberg and contributors (Daryl Borth's fork), GNU LGPL version 2.1 or later.
+- LZMA SDK 4.40 by Igor Pavlov (source/utils/sz), GNU LGPL or CPL.
+- Portions of this software are copyright (c) The FreeType Project (www.freetype.org).
+  All rights reserved. (FreeType License)
+- libpng (PNG Reference Library License v2), zlib (zlib license, Jean-loup Gailly and Mark Adler),
+  Mini-XML by Michael R Sweet (Apache License 2.0), and Tremor and libogg by Xiph.Org (BSD).
+- Beetle VB includes the V810 core by David Tucker, Blip_Buffer by Shay Green (LGPL 2.1 or later),
+  SoftFloat by John R. Hauser, and libretro-common by the RetroArch team (MIT).
+- stb_image by Sean Barrett (MIT or public domain), in the VBoy Color core.
+- Controller and audio code in source/ carries credits to Michniewski (button mapping, from the
+  Snes9x ports) and eke-eke (audio).

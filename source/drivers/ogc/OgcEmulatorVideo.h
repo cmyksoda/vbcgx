@@ -1,3 +1,11 @@
+/****************************************************************************
+ * FCE Ultra GX
+ *
+ * Daryl Borth 2008-2026
+ * Daryl Borth 2008-2026
+ *
+ * OgcEmulatorVideo.h
+ ***************************************************************************/
 #pragma once
 #include <gccore.h>
 #include "../EmulatorVideoDriver.h"

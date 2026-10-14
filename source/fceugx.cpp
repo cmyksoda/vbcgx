@@ -1,3 +1,12 @@
+/****************************************************************************
+ * FCE Ultra GX
+ *
+ * Daryl Borth 2008-2026
+ *
+ * fceugx.cpp
+ *
+ * This file controls overall program flow. Most things start and end here!
+ ****************************************************************************/
 #include <malloc.h>
 #include "fceugx.h"
 #include "fceusupport.h"
