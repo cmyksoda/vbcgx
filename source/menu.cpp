@@ -3277,9 +3277,9 @@ static int MenuVBOptions(bool colors)
     int selection = MENU_NONE;
     OptionList options;
     bool firstRun = true;
-    const char *videoNames[] = {"Output Mode", "Aspect Correction", "Bilinear Filtering", "Screen Zoom", "Screen Position"};
+    const char *videoNames[] = {"Output Mode", "Aspect Ratio Correction", "Bilinear Filtering", "Screen Zoom", "Fixed Pixel Ratio", "Screen Position"};
     const char *colorNames[] = {"Colors", "Color Packs", "Multicolor Palette", "Gradient", "Tint"};
-    options.length = 5;
+    options.length = colors ? 5 : 6;
     for (int i = 0; i < options.length; ++i) {
         snprintf(options.name[i], 100, "%s", colors ? colorNames[i] : videoNames[i]);
         options.value[i][0] = 0;
@@ -3338,10 +3338,11 @@ static int MenuVBOptions(bool colors)
                     EmuSettings.videoMode = (EmuSettings.videoMode + 1) % VIDEOMODE_LENGTH;
                     platform->getVideo()->startMenuVideo();
                     break;
-                case 1: EmuSettings.videoAspectRatioCorrection ^= 1; break;
+                case 1: EmuSettings.videoAspectRatioCorrection = (EmuSettings.videoAspectRatioCorrection + 1) % SCALING_LENGTH; break;
                 case 2: EmuSettings.videoBilinearFilter = !EmuSettings.videoBilinearFilter; break;
                 case 3: ScreenZoomWindow(); break;
-                case 4: ScreenPositionWindow(); break;
+                case 4: EmuSettings.videoFixedRatio = (EmuSettings.videoFixedRatio + 1) % (VIDEO_FIXED_RATIO_MAX + 1); break;
+                case 5: ScreenPositionWindow(); break;
                 }
             }
         }
@@ -3357,10 +3358,15 @@ static int MenuVBOptions(bool colors)
             } else {
                 const char *modes[] = {"Automatic", "NTSC (480i)", "Progressive (480p)", "PAL (576i)", "PAL60 (480i)", "240p (60Hz)", "240p (50Hz)"};
                 snprintf(options.value[0], 100, "%s", modes[EmuSettings.videoMode]);
-                snprintf(options.value[1], 100, "%s", EmuSettings.videoAspectRatioCorrection ? "16:9" : "4:3");
+                const char *scaling[] = {"Maintain Aspect Ratio", "Partial Stretch", "Stretch to Fit"};
+                snprintf(options.value[1], 100, "%s", scaling[EmuSettings.videoAspectRatioCorrection]);
                 snprintf(options.value[2], 100, "%s", EmuSettings.videoBilinearFilter ? "On" : "Off");
                 snprintf(options.value[3], 100, "%.0f%%, %.0f%%", EmuSettings.videoZoomHor * 100, EmuSettings.videoZoomVert * 100);
-                snprintf(options.value[4], 100, "%d, %d", EmuSettings.videoXshift, EmuSettings.videoYshift);
+                if (EmuSettings.videoFixedRatio)
+                    snprintf(options.value[4], 100, "%dx", EmuSettings.videoFixedRatio);
+                else
+                    snprintf(options.value[4], 100, "Disabled");
+                snprintf(options.value[5], 100, "%d, %d", EmuSettings.videoXshift, EmuSettings.videoYshift);
             }
             optionBrowser.triggerUpdate();
         }

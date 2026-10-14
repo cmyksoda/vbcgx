@@ -163,7 +163,8 @@ preparePrefsData ()
 	createXMLSection("Video", "Video Settings");
 
 	createXMLSetting("videoMode", "Output Mode", toStr(EmuSettings.videoMode));
-	createXMLSetting("videoAspectRatioCorrection", "Aspect Ratio Correction", toStr(EmuSettings.videoAspectRatioCorrection));
+	createXMLSetting("videoScaling", "Aspect Ratio Correction", toStr(EmuSettings.videoAspectRatioCorrection));
+	createXMLSetting("videoFixedRatio", "Fixed Pixel Ratio", toStr(EmuSettings.videoFixedRatio));
 	createXMLSetting("hideOverscan", "Cropping", toStr(EmuSettings.hideOverscan));
 	createXMLSetting("currentPalette", "Palette", toStr(EmuSettings.currentPalette));
     createXMLSetting("colorPacks", "Color Packs", BtoStr(EmuSettings.colorPacks));
@@ -342,7 +343,8 @@ decodePrefsData ()
 	// Video Settings
 
 	loadXMLSetting(&EmuSettings.videoMode, "videoMode");
-	loadXMLSetting(&EmuSettings.videoAspectRatioCorrection, "videoAspectRatioCorrection");
+	loadXMLSetting(&EmuSettings.videoAspectRatioCorrection, "videoScaling");
+	loadXMLSetting(&EmuSettings.videoFixedRatio, "videoFixedRatio");
 	loadXMLSetting(&EmuSettings.hideOverscan, "hideOverscan");
 	loadXMLSetting(&EmuSettings.currentPalette, "currentPalette");
     loadXMLSetting(&EmuSettings.colorPacks, "colorPacks");
@@ -434,8 +436,10 @@ void FixInvalidSettings()
 		EmuSettings.controller = CTRL_PAD;
 	if(!(EmuSettings.videoHardwareSoften >= VIDEO_HW_SOFTEN_OFF && EmuSettings.videoHardwareSoften < VIDEO_HW_SOFTEN_LENGTH))
 		EmuSettings.videoHardwareSoften = VIDEO_HW_SOFTEN_AUTO;
-	if(!(EmuSettings.videoAspectRatioCorrection >= VIDEO_ASPECT_RATIO_CORRECTION_NONE && EmuSettings.videoAspectRatioCorrection < VIDEO_ASPECT_RATIO_CORRECTION_LENGTH))
-		EmuSettings.videoAspectRatioCorrection = VIDEO_ASPECT_RATIO_CORRECTION_NONE;
+	if(!(EmuSettings.videoAspectRatioCorrection >= SCALING_MAINTAIN_ASPECT && EmuSettings.videoAspectRatioCorrection < SCALING_LENGTH))
+		EmuSettings.videoAspectRatioCorrection = SCALING_MAINTAIN_ASPECT;
+	if(!(EmuSettings.videoFixedRatio >= 0 && EmuSettings.videoFixedRatio <= VIDEO_FIXED_RATIO_MAX))
+		EmuSettings.videoFixedRatio = 0;
 	if(!(EmuSettings.videoMode >= VIDEOMODE_AUTO && EmuSettings.videoMode < VIDEOMODE_LENGTH))
 		EmuSettings.videoMode = VIDEOMODE_AUTO;
 #if defined(HW_RVL) || defined(HW_DOL) || defined(__WIIU__)
@@ -510,19 +514,9 @@ void DefaultSettings()
 	EmuSettings.videoUpscalingFilter = 0;
 #endif
 
-#ifdef HW_RVL
-	if (CONF_GetAspectRatio() == CONF_ASPECT_16_9)
-		EmuSettings.videoAspectRatioCorrection = VIDEO_ASPECT_RATIO_CORRECTION_16_9;
-	else
-		EmuSettings.videoAspectRatioCorrection = VIDEO_ASPECT_RATIO_CORRECTION_NONE;
-#elif HW_DOL
-	EmuSettings.videoAspectRatioCorrection = VIDEO_ASPECT_RATIO_CORRECTION_NONE;
-#elif defined(__WIIU__)
-	if (GX2GetSystemTVAspectRatio() == GX2_ASPECT_RATIO_16_9)
-		EmuSettings.videoAspectRatioCorrection = VIDEO_ASPECT_RATIO_CORRECTION_16_9;
-	else
-		EmuSettings.videoAspectRatioCorrection = VIDEO_ASPECT_RATIO_CORRECTION_NONE;
-#endif
+	// (a 16:9 TV is told from the system setting when drawing)
+	EmuSettings.videoAspectRatioCorrection = SCALING_MAINTAIN_ASPECT;
+	EmuSettings.videoFixedRatio = 0;
 
 	EmuSettings.colorMode = EmuSettings.gradient = EmuSettings.tint = 0;
     EmuSettings.colorPacks = true;

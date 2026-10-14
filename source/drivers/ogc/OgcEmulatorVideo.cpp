@@ -29,13 +29,35 @@ void OgcEmulatorVideo::presentFrame(const uint8_t *buffer, size_t pitch)
     shown = buffer;
     shownPitch = pitch;
     auto *mode = videoDriver->getVideoMode();
-    float aspect = vbAspect;
-    if (EmuSettings.videoAspectRatioCorrection == VIDEO_ASPECT_RATIO_CORRECTION_16_9)
-        aspect *= .75f;
-    float logicalW = std::min(640.0f, 480.0f * aspect);
-    float logicalH = logicalW / aspect;
-    logicalW *= EmuSettings.videoZoomHor;
-    logicalH *= EmuSettings.videoZoomVert;
+    // Laid out in the 640x480 space that spans the whole TV picture, as in VBA GX.
+#ifdef HW_RVL
+    const float tvAspect = CONF_GetAspectRatio() == CONF_ASPECT_16_9 ? 16.0f / 9.0f : 4.0f / 3.0f;
+#else
+    const float tvAspect = 4.0f / 3.0f;
+#endif
+    float logicalW, logicalH;
+    if (EmuSettings.videoFixedRatio) {
+        // Whole output rows per Virtual Boy row, square pixels; 12:7 is wider than 4:3, so
+        // a picture too wide for the screen keeps its rows and fits the width.
+        const float rowUnits = 480.0f / mode->efbHeight;
+        int rows = EmuSettings.videoFixedRatio;
+        while (rows > 1 && vbHeight * rows * rowUnits > 480.0f)
+            --rows;
+        logicalH = vbHeight * rows * rowUnits;
+        logicalW = std::min(640.0f, vbWidth * rows * rowUnits / (0.75f * tvAspect));
+    } else {
+        const float maxStretch = EmuSettings.videoAspectRatioCorrection == SCALING_STRETCH_TO_FIT ? 1.6f
+            : EmuSettings.videoAspectRatioCorrection == SCALING_PARTIAL_STRETCH ? 1.3f : 1.0f;
+        if (tvAspect > vbAspect) {
+            logicalH = 480.0f;
+            logicalW = 480.0f * vbAspect * std::min(tvAspect / vbAspect, maxStretch) * (4.0f / 3.0f) / tvAspect;
+        } else {
+            logicalW = 640.0f;
+            logicalH = 640.0f / vbAspect * std::min(vbAspect / tvAspect, maxStretch) / ((4.0f / 3.0f) / tvAspect);
+        }
+        logicalW *= EmuSettings.videoZoomHor;
+        logicalH *= EmuSettings.videoZoomVert;
+    }
     // Reduce with coverage averaging before GX samples the image. This keeps
     // thin lines from disappearing in 240p, including top/bottom stereo.
     unsigned w = std::min(vbWidth, static_cast<unsigned>(std::max(4.0f, logicalW)));

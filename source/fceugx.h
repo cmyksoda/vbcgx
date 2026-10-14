@@ -86,10 +86,13 @@ enum {
 };
 
 enum {
-	VIDEO_ASPECT_RATIO_CORRECTION_NONE = 0,
-	VIDEO_ASPECT_RATIO_CORRECTION_16_9,
-	VIDEO_ASPECT_RATIO_CORRECTION_LENGTH
+	SCALING_MAINTAIN_ASPECT = 0,
+	SCALING_PARTIAL_STRETCH,
+	SCALING_STRETCH_TO_FIT,
+	SCALING_LENGTH
 };
+
+#define VIDEO_FIXED_RATIO_MAX 2 // (3x of 224 rows won't fit any output mode)
 
 enum {
 	VIDEO_HW_SOFTEN_OFF = 0,
@@ -180,6 +183,7 @@ struct SEmuSettings
 
 	int		videoMode;
 	int		videoAspectRatioCorrection;
+	int		videoFixedRatio; // 0 off, else rows per Virtual Boy row
 	bool	videoBilinearFilter;
 	int		videoHardwareSoften;
 	bool	videoScanlines;
