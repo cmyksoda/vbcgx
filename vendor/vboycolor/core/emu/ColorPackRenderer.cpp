@@ -1854,7 +1854,8 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint64_t *leftBits, const
                     const uint64_t *r = &rightBits[(y * 3 + s) * kGuardedRow];
                     const uint64_t *l = &leftBits[(y * 3 + s) * kGuardedRow];
                     for (int w = from; w <= to; ++w)
-                        n += CountSet(r[1 + w] & Shifted(l, w, d));
+                        if (r[1 + w]) // (most rows are sparse; PowerPC counts bits in software)
+                            n += CountSet(r[1 + w] & Shifted(l, w, d));
                 }
             return n;
         };
@@ -1947,7 +1948,8 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint64_t *leftBits, const
                     const uint64_t *r = &rightBits[(y * 3 + s) * kGuardedRow];
                     const uint64_t *l = &leftBits[(y * 3 + s) * kGuardedRow];
                     for (int w = from; w <= to; ++w)
-                        sum[w] += ByteCounts(r[1 + w] & Shifted(l, w, d));
+                        if (r[1 + w])
+                            sum[w] += ByteCounts(r[1 + w] & Shifted(l, w, d));
                 }
             for (int w = from; w <= to; ++w)
                 for (int j = 0; j < 8; ++j)
