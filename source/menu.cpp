@@ -2643,7 +2643,7 @@ static int MenuSettingsMappingsController()
 	GuiImage gamecubeBtnIcon(&iconGamecube);
 	GuiButton gamecubeBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
 	gamecubeBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	gamecubeBtn.setPosition(0, 120);
+	gamecubeBtn.setPosition(-125, 120);
 	gamecubeBtn.setLabel(&gamecubeBtnTxt);
 	gamecubeBtn.setImage(&gamecubeBtnImg);
 	gamecubeBtn.setIcon(&gamecubeBtnIcon);
@@ -2658,7 +2658,7 @@ static int MenuSettingsMappingsController()
 	GuiImage drcBtnIcon(&iconDrc);
 	GuiButton drcBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
 	drcBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	drcBtn.setPosition(125, 120);
+	drcBtn.setPosition(0, 120);
 	drcBtn.setLabel(&drcBtnTxt);
 	drcBtn.setImage(&drcBtnImg);
 	drcBtn.setIcon(&drcBtnIcon);
@@ -2673,7 +2673,7 @@ static int MenuSettingsMappingsController()
 	GuiImage classicBtnIcon(&iconClassic);
 	GuiButton classicBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
 	classicBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	classicBtn.setPosition(-200, 250);
+	classicBtn.setPosition(-125, 250);
 	classicBtn.setLabel(&classicBtnTxt);
 	classicBtn.setImage(&classicBtnImg);
 	classicBtn.setIcon(&classicBtnIcon);
@@ -2691,7 +2691,7 @@ static int MenuSettingsMappingsController()
 	GuiImage nunchukBtnIcon(&iconNunchuk);
 	GuiButton nunchukBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
 	nunchukBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	nunchukBtn.setPosition(0, 250);
+	nunchukBtn.setPosition(125, 120);
 	nunchukBtn.setLabel(&nunchukBtnTxt1, 0);
 	nunchukBtn.setLabel(&nunchukBtnTxt2, 1);
 	nunchukBtn.setLabel(&nunchukBtnTxt3, 2);
@@ -2708,7 +2708,7 @@ static int MenuSettingsMappingsController()
 	GuiImage wiiuproBtnIcon(&iconWiiupro);
 	GuiButton wiiuproBtn(MENU_BTN_LARGE_W, MENU_BTN_LARGE_H);
 	wiiuproBtn.setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP);
-	wiiuproBtn.setPosition(200, 250);
+	wiiuproBtn.setPosition(125, 250);
 	wiiuproBtn.setLabel(&wiiuproBtnTxt);
 	wiiuproBtn.setImage(&wiiuproBtnImg);
 	wiiuproBtn.setIcon(&wiiuproBtnIcon);
@@ -2741,7 +2741,8 @@ static int MenuSettingsMappingsController()
 	if(mapMenuCtrlNES == CTRL_PAD)
 	{
 		if(controller[0]->getPadData().hw_connected[INPUT_HW_DRC]) {
-			gamecubeBtn.setPosition(-125, 120);
+			gamecubeBtn.setPosition(-200, 120);
+			nunchukBtn.setPosition(200, 120);
 			w.append(&drcBtn);
 		}
 
