@@ -1506,85 +1506,6 @@ static void ControllerWindow()
 	delete(settingText);
 }
 
-#ifndef HW_DOL
-static int playerMappingChan = 0;
-
-static void PlayerMappingWindowUpdate(void * ptr, int dir)
-{
-	GuiButton * b = (GuiButton *)ptr;
-	if(b->getState() == STATE::CLICKED)
-	{
-		playerMapping[playerMappingChan] += dir;
-
-		if(playerMapping[playerMappingChan] > 3)
-			playerMapping[playerMappingChan] = 0;
-		if(playerMapping[playerMappingChan] < 0)
-			playerMapping[playerMappingChan] = 3;
-
-		char playerNumber[20];
-		sprintf(playerNumber, "Player %d", playerMapping[playerMappingChan]+1);
-
-		settingText->setText(playerNumber);
-		b->resetState();
-	}
-}
-
-static void PlayerMappingWindowLeftClick(void * ptr) { PlayerMappingWindowUpdate(ptr, -1); }
-static void PlayerMappingWindowRightClick(void * ptr) { PlayerMappingWindowUpdate(ptr, +1); }
-
-static void PlayerMappingWindow(int chan)
-{
-	playerMappingChan = chan;
-
-	GuiWindow * w = new GuiWindow(300,250);
-	w->setAlignment(ALIGN_H::CENTRE, ALIGN_V::MIDDLE);
-
-	GuiTrigger trigLeft;
-	trigLeft.setButtonOnlyInFocusTrigger(-1, INPUT_BTN_LEFT);
-
-	GuiTrigger trigRight;
-	trigRight.setButtonOnlyInFocusTrigger(-1, INPUT_BTN_RIGHT);
-
-	MenuArrowImage arrowLeftImg(ARROW::LEFT);
-	GuiButton arrowLeftBtn(MENU_ARROW_HIT_SHORT, MENU_ARROW_HIT_LONG);
-	arrowLeftBtn.setImage(&arrowLeftImg);
-	arrowLeftBtn.setAlignment(ALIGN_H::LEFT, ALIGN_V::MIDDLE);
-	arrowLeftBtn.setTrigger(trigA);
-	arrowLeftBtn.setTrigger(&trigLeft);
-	arrowLeftBtn.setSelectable(false);
-	arrowLeftBtn.setUpdateCallback(PlayerMappingWindowLeftClick);
-
-	MenuArrowImage arrowRightImg(ARROW::RIGHT);
-	GuiButton arrowRightBtn(MENU_ARROW_HIT_SHORT, MENU_ARROW_HIT_LONG);
-	arrowRightBtn.setImage(&arrowRightImg);
-	arrowRightBtn.setAlignment(ALIGN_H::RIGHT, ALIGN_V::MIDDLE);
-	arrowRightBtn.setTrigger(trigA);
-	arrowRightBtn.setTrigger(&trigRight);
-	arrowRightBtn.setSelectable(false);
-	arrowRightBtn.setUpdateCallback(PlayerMappingWindowRightClick);
-
-	char playerNumber[20];
-	sprintf(playerNumber, "Player %d", playerMapping[playerMappingChan]+1);
-
-	settingText = new GuiText(playerNumber, 22, MenuPaletteCurrent().label);
-
-	w->append(&arrowLeftBtn);
-	w->append(&arrowRightBtn);
-	w->append(settingText);
-
-	char title[50];
-	sprintf(title, "Player Mapping - Controller %d", chan+1);
-
-	int previousPlayerMapping = playerMapping[playerMappingChan];
-
-	if(!SettingWindow(title,w))
-		playerMapping[playerMappingChan] = previousPlayerMapping; // undo changes
-
-	delete(w);
-	delete(settingText);
-}
-#endif
-
 /****************************************************************************
  * MenuGame
  *
@@ -1762,9 +1683,8 @@ static int MenuGame()
 		batteryBtn[i]->setImage(batteryImg[i]);
 		batteryBtn[i]->setIcon(batteryBarImg[i]);
 		batteryBtn[i]->setAlignment(ALIGN_H::LEFT, ALIGN_V::BOTTOM);
-		batteryBtn[i]->setTrigger(trigA);
-		batteryBtn[i]->setSoundOver(&btnSoundOver);
-		batteryBtn[i]->setSoundClick(&btnSoundClick);
+		batteryBtn[i]->setClickable(false); // (only shows the charge: every controller drives the game)
+		batteryBtn[i]->setRumble(false);
 		batteryBtn[i]->setSelectable(false);
 		batteryBtn[i]->setState(STATE::DISABLED);
 		batteryBtn[i]->setAlpha(150);
@@ -1892,24 +1812,6 @@ static int MenuGame()
 		{
 			selection = MENU_GAMESETTINGS;
 		}
-#ifndef HW_DOL
-		else if(batteryBtn[0]->getState() == STATE::CLICKED)
-		{
-			PlayerMappingWindow(0);
-		}
-		else if(batteryBtn[1]->getState() == STATE::CLICKED)
-		{
-			PlayerMappingWindow(1);
-		}
-		else if(batteryBtn[2]->getState() == STATE::CLICKED)
-		{
-			PlayerMappingWindow(2);
-		}
-		else if(batteryBtn[3]->getState() == STATE::CLICKED)
-		{
-			PlayerMappingWindow(3);
-		}
-#endif
 		else if(mainmenuBtn.getState() == STATE::CLICKED)
 		{
 			if (WindowPrompt("Quit Game", "Quit this game? Any unsaved progress will be lost.", "OK", "Cancel"))

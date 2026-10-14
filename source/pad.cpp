@@ -5,7 +5,6 @@
 #include <cstring>
 #include "vbinput.h"
 uint32_t btnmap[CTRL_BTN_MAPPINGS][INPUT_HW_MAX][MAXJP];
-int playerMapping[4] = {0, 0, 0, 0};
 static bool menuRequested;
 static_assert(MAXJP == VB_BUTTON_COUNT);
 void ResetControls(int controllerType, int hardwareType)
