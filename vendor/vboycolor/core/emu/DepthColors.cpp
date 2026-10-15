@@ -124,22 +124,35 @@ void DepthColors::LeftWindow(unsigned s, int x, int y, unsigned left[7]) const
     }
 }
 
+// A buffer of a picture's size, all 0 (dcbz on the Wii: a line is zeroed without being read first).
+static uint8_t *Cleared(PictureBuffer &buffer)
+{
+    constexpr size_t n = static_cast<size_t>(DepthColors::kWidth) * DepthColors::kHeight;
+    static_assert(n % 32 == 0, "whole cache lines");
+#ifdef GEKKO
+    buffer.resize(n);
+    for (size_t i = 0; i < n; i += 32)
+        __asm__ volatile("dcbz 0,%0" : : "r"(buffer.data() + i) : "memory");
+#else
+    buffer.assign(n, 0);
+#endif
+    return buffer.data();
+}
+
 uint8_t *DepthColors::NextShades(unsigned eye)
 {
-    m_nextShades[eye].assign(static_cast<size_t>(kWidth) * kHeight, 0);
-    return m_nextShades[eye].data();
+    return Cleared(m_nextShades[eye]);
 }
 
 uint8_t *DepthColors::NextWant(unsigned eye)
 {
-    m_nextWant[eye].assign(static_cast<size_t>(kWidth) * kHeight, 0);
-    return m_nextWant[eye].data();
+    return Cleared(m_nextWant[eye]);
 }
 
-void DepthColors::Update(const uint8_t *const shades[2], const uint8_t *const want[2])
+void DepthColors::Update(const uint8_t *const shades[2], const uint8_t *const want[2], uint64_t signature)
 {
     const size_t n = static_cast<size_t>(kWidth) * kHeight;
-    if (m_haveLast && std::memcmp(shades[0], m_lastShades[0].data(), n) == 0 && std::memcmp(shades[1], m_lastShades[1].data(), n) == 0 &&
+    if (m_haveLast && signature == m_lastSignature && std::memcmp(shades[0], m_lastShades[0].data(), n) == 0 && std::memcmp(shades[1], m_lastShades[1].data(), n) == 0 &&
         std::memcmp(want[0], m_lastWant[0].data(), n) == 0 && std::memcmp(want[1], m_lastWant[1].data(), n) == 0)
         return; // both pictures as last time
     m_disparity.assign(n, kUnknown);
@@ -320,6 +333,7 @@ void DepthColors::Update(const uint8_t *const shades[2], const uint8_t *const wa
     }
     std::swap(m_lastDisparity, m_disparity);
     m_haveLast = true;
+    m_lastSignature = signature;
 }
 
 void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const want[2])

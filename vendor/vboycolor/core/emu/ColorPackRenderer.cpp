@@ -1659,6 +1659,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
     // shade the game switched off counts as nothing).
     bool any = false;
     uint8_t *eyeShades[2], *eyeWant[2];
+    uint64_t signature = 14695981039346656037ull; // (of every lit pixel: where, its shade, wanted or not)
     unsigned brightest = 0;
     for (unsigned eye = 0; eye < 2; ++eye)
     {
@@ -1685,9 +1686,11 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
                 if (!shade || !(rawPixel & 0xFFFFFFu))
                     continue;
                 shades[y * VBGO_TT_WIDTH + x] = static_cast<uint8_t>(shade);
+                signature = (signature ^ (eye << 20 | y << 11 | x << 2 | shade)) * 1099511628211ull;
                 if (column && vbgo_tag_drawn(column[y], view[eye].band_key[y >> 3]) && VBGO_TAG_PIXEL(column[y]))
                     continue; // a tile drew it
                 want[y * VBGO_TT_WIDTH + x] = 1;
+                signature = (signature ^ 0xFFFFFFu) * 1099511628211ull;
                 any = true;
                 brightest = std::max<unsigned>(brightest, rawPixel >> 26);
             }
@@ -1702,7 +1705,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
     }
     const uint8_t *const shades[2] = {eyeShades[0], eyeShades[1]};
     const uint8_t *const want[2] = {eyeWant[0], eyeWant[1]};
-    m_depth.Update(shades, want);
+    m_depth.Update(shades, want, signature);
     const uint8_t *const leftBits = vbgo_vip_eye_bits(0);
     const uint32_t *const leftClut = vbgo_vip_eye_clut(0);
     // (DepthColors::Color for every disparity a pixel can have and shades 0-3, worked out once)
