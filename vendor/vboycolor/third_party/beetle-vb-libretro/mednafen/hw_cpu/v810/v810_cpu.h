@@ -234,6 +234,7 @@ class V810
  uint32 *JitResumeAt; /* (where compiled code an event stopped would go on, at JitResumePc with JitResumeLastop) */
  uint32 JitResumePc;
  int32 JitResumeLastop;
+ int32 MDFN_FASTCALL (*JitEventHandler)(const v810_timestamp_t timestamp); /* (Run's, for compiled code) */
 #endif
 
  uint32 IPendingCache;
@@ -396,7 +397,8 @@ class V810
  Block *BlockSlot[BLOCK_SLOTS];
  uint8 *BlockArena = nullptr;
  size_t BlockArenaUsed = 0;
- bool RunBlock(v810_timestamp_t &timestamp);
+ int RunBlock(v810_timestamp_t &timestamp);
+ static v810_timestamp_t JitIdleLoop(V810 *cpu, v810_timestamp_t timestamp, uint32 target);
  Block *FindBlock(uint32 pc, bool decode);
  /* Compiled blocks start only where a branch lands, after one, or after an op left to the interpreter:
     an event can stop a block anywhere, and starting new ones there would never end. */

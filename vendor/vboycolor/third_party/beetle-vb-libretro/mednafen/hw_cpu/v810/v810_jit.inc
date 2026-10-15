@@ -35,7 +35,7 @@ public:
       if(v & 0xFFFF)
          Ori(rt, rt, v & 0xFFFF);
    }
-   void Addi(unsigned rt, unsigned ra, int32 v) { D(14, rt, ra, v); } /* (ra != 0) */
+   void Addi(unsigned rt, unsigned ra, int32 v) { D(14, rt, ra, v); } /* (never ra 0: that reads as the constant 0) */
    void Subfic(unsigned rt, unsigned ra, int32 v) { D(8, rt, ra, v); }
    void Addis(unsigned rt, unsigned ra, int32 v) { D(15, rt, ra, v); }
    void AddicDot(unsigned rt, unsigned ra, int32 v) { D(13, rt, ra, v); }
@@ -45,6 +45,7 @@ public:
    void Cmpwi(unsigned ra, int32 v) { D(11, 0, ra, v); }
    void Lwz(unsigned rt, int32 d, unsigned ra) { D(32, rt, ra, d); }
    void Stw(unsigned rs, int32 d, unsigned ra) { D(36, rs, ra, d); }
+   void Lbz(unsigned rt, int32 d, unsigned ra) { D(34, rt, ra, d); }
    void Stwu(unsigned rs, int32 d, unsigned ra) { D(37, rs, ra, d); }
    void Lmw(unsigned rt, int32 d, unsigned ra) { D(46, rt, ra, d); }
    void Stmw(unsigned rs, int32 d, unsigned ra) { D(47, rs, ra, d); }
@@ -140,12 +141,13 @@ void *V810::CompileBlock(Block *block)
    const int32 offPending = (const uint8 *)&IPendingCache - base, offLastop = (const uint8 *)&lastop - base;
    const int32 offTarget = (const uint8 *)&JitTarget - base, offLinkSite = (const uint8 *)&JitLinkSite - base;
    const int32 offIdleQuiet = (const uint8 *)&IdleQuiet - base, offResumeAt = (const uint8 *)&JitResumeAt - base;
-   const int32 offSystem = (const uint8 *)S_REG - base;
+   const int32 offSystem = (const uint8 *)S_REG - base, offRunning = (const uint8 *)&Running - base;
+   const int32 offHandler = (const uint8 *)&JitEventHandler - base;
    for(unsigned b = 0; b < 256; ++b)
       if(MemReadBus32[b] || MemWriteBus32[b])
          return NULL;
    for(int32 off : {offPsw, offNext, offPending, offLastop, offTarget, offLinkSite, offIdleQuiet, offResumeAt,
-                    offSystem + 4 * 31})
+                    offSystem + 4 * 31, offRunning, offHandler})
       if(off < 0 || off > 32767)
          return NULL;
    if(!JitWorkRam)
@@ -183,45 +185,109 @@ void *V810::CompileBlock(Block *block)
       w.Imm32(JR_RAM, (uint32)(uintptr_t)JitWorkRam);
       w.Mtlr(5);
       w.Blr();
-      /* LEAVE(exit code) */
+      /* LEAVE(exit code), and LEAVE_TS with the cycle count already in JR_TS and *timestamp */
       JitStub[JIT_STUB_LEAVE] = w.at;
       CtrToTs();
+      JitStub[JIT_STUB_LEAVE_TS] = w.at;
       w.Stw(JR_PSW, offPsw, JR_REGS);
       w.Lmw(JR_RAM, 12, 1);
       w.Lwz(0, 36, 1);
       w.Mtlr(0);
       w.Addi(1, 1, 32);
       w.Blr();
-      /* Exits, reached by bl with their data in the words after it: the PC, then (STOPPED and INTERPRET) lastop,
-       * then (STOPPED) where the code goes on. INTERPRET_FIRST is before a block's first op, where lastop stays as
-       * it is. A branch's bl is the one RunBlock replaces to link it. */
-      for(unsigned stub : {JIT_STUB_STOPPED, JIT_STUB_INTERPRET, JIT_STUB_INTERPRET_FIRST, JIT_STUB_BRANCH,
-                           JIT_STUB_BRANCH_DUE, JIT_STUB_BRANCH_BACK})
+      /* Exits, reached by bl with their data in the words after it: the PC, then (all but INTERPRET_FIRST, before
+       * a block's first op, where lastop stays as it is) lastop. A branch's bl is the one RunBlock links. */
+      for(unsigned stub : {JIT_STUB_INTERPRET, JIT_STUB_INTERPRET_FIRST, JIT_STUB_BRANCH})
       {
          JitStub[stub] = w.at;
          w.Mflr(5);
          w.Lwz(4, 0, 5);
          w.Stw(4, offTarget, JR_REGS);
-         if(stub == JIT_STUB_STOPPED || stub == JIT_STUB_INTERPRET)
+         if(stub == JIT_STUB_INTERPRET)
          {
             w.Lwz(4, 4, 5);
             w.Stw(4, offLastop, JR_REGS);
-         }
-         if(stub == JIT_STUB_STOPPED)
-         {
-            w.Lwz(4, 8, 5);
-            w.Stw(4, offResumeAt, JR_REGS);
          }
          if(stub == JIT_STUB_BRANCH)
          {
             w.Addi(5, 5, -4);
             w.Stw(5, offLinkSite, JR_REGS);
          }
-         w.Li(3, stub == JIT_STUB_STOPPED ? JIT_EXIT_STOPPED
-                 : stub == JIT_STUB_INTERPRET || stub == JIT_STUB_INTERPRET_FIRST ? JIT_EXIT_INTERPRET
-                 : stub == JIT_STUB_BRANCH_BACK ? JIT_EXIT_BRANCH_BACK : JIT_EXIT_BRANCH);
+         w.Li(3, stub == JIT_STUB_BRANCH ? JIT_EXIT_BRANCH : JIT_EXIT_INTERPRET);
          w.BTo(JitStub[JIT_STUB_LEAVE]);
       }
+      /* EVENTS (data: PC, lastop, where to leave to, where to go on or 0): before an op, runs the event handler as
+       * the interpreter loop would while one is due, then goes on unless the frame ended or an interrupt is due. */
+      JitStub[JIT_STUB_EVENTS] = w.at;
+      w.Mflr(5);
+      w.Lwz(4, 4, 5);
+      w.Stw(4, offLastop, JR_REGS);
+      w.Stwu(1, -16, 1);
+      w.Stw(5, 8, 1);
+      CtrToTs();
+      w.Stw(JR_PSW, offPsw, JR_REGS);
+      uint32 *const loop = w.at;
+      w.Lwz(0, offNext, JR_REGS);
+      w.Cmpw(JR_TS, 0);
+      uint32 *const noEvent = w.Bc(BO_TRUE, CR_LT);
+      w.Mr(3, JR_TS);
+      w.Lwz(12, offHandler, JR_REGS);
+      w.Mtlr(12);
+      w.Blrl();
+      w.Stw(3, offNext, JR_REGS);
+      w.Lbz(0, offRunning, JR_REGS);
+      w.Cmpwi(0, 0);
+      uint32 *const frameEnd = w.Bc(BO_TRUE, CR_EQ);
+      w.Patch(w.B(), loop);
+      w.Patch(noEvent, w.at);
+      w.Lwz(0, offPending, JR_REGS);
+      w.Cmpwi(0, 0);
+      uint32 *const interrupt = w.Bc(BO_FALSE, CR_EQ);
+      w.Lwz(5, 8, 1);
+      w.Lwz(6, 12, 5);
+      w.Cmpwi(6, 0);
+      uint32 *const nowhere = w.Bc(BO_TRUE, CR_EQ);
+      w.Lwz(0, offNext, JR_REGS);
+      w.Subf(9, JR_TS, 0);
+      w.Mtctr(9);
+      w.Addi(1, 1, 16);
+      w.Mtlr(6);
+      w.Blr();
+      w.Patch(frameEnd, w.at);
+      w.Li(3, JIT_EXIT_FRAME_END);
+      uint32 *const leave = w.B();
+      w.Patch(interrupt, w.at);
+      w.Patch(nowhere, w.at);
+      w.Li(3, JIT_EXIT_STOPPED);
+      w.Patch(leave, w.at);
+      w.Lwz(5, 8, 1);
+      w.Addi(1, 1, 16);
+      w.Lwz(4, 0, 5);
+      w.Stw(4, offTarget, JR_REGS);
+      w.Lwz(4, 8, 5);
+      w.Stw(4, offResumeAt, JR_REGS);
+      w.BTo(JitStub[JIT_STUB_LEAVE_TS]);
+      /* IDLE (data: the branch target): the interpreter's idle check after a short branch back */
+      JitStub[JIT_STUB_IDLE] = w.at;
+      w.Stwu(1, -16, 1);
+      w.Mflr(0);
+      w.Stw(0, 20, 1);
+      CtrToTs();
+      w.Stw(JR_PSW, offPsw, JR_REGS);
+      w.Imm32(3, (uint32)(uintptr_t)this);
+      w.Mr(4, JR_TS);
+      w.Lwz(5, 20, 1);
+      w.Lwz(5, 0, 5);
+      w.Imm32(12, (uint32)(uintptr_t)&JitIdleLoop);
+      w.Mtlr(12);
+      w.Blrl();
+      w.Stw(3, 0, JR_TSP);
+      TsToCtr();
+      w.Lwz(12, 20, 1);
+      w.Addi(12, 12, 4);
+      w.Mtlr(12);
+      w.Addi(1, 1, 16);
+      w.Blr();
       /* Memory accesses through the C side, fn(timestamp, r4, r5), with the cycle count and PSW where it sees
        * them. */
       const void *const fns[6] = {(const void *)&::MemRead8, (const void *)&::MemRead16, (const void *)&::VBReadWord,
@@ -295,7 +361,7 @@ void *V810::CompileBlock(Block *block)
    auto Spend = [&](int32 cycles, uint32 next, int32 lastopNext, bool signedOnly = false) {
       if(cycles == 1 && !signedOnly)
       {
-         ExitBefore(w.Bdz(), next, lastopNext, JIT_STUB_STOPPED);
+         ExitBefore(w.Bdz(), next, lastopNext, JIT_STUB_EVENTS);
          return;
       }
       w.Mfctr(9);
@@ -306,7 +372,7 @@ void *V810::CompileBlock(Block *block)
       }
       else
          w.Cmpwi(9, 0);
-      ExitBefore(w.Bc(BO_FALSE, CR_GT), next, lastopNext, JIT_STUB_STOPPED);
+      ExitBefore(w.Bc(BO_FALSE, CR_GT), next, lastopNext, JIT_STUB_EVENTS);
    };
    /* The same with the cycle count in r9. */
    auto SpendR9 = [&](int32 plus, uint32 next, int32 lastopNext) {
@@ -315,7 +381,7 @@ void *V810::CompileBlock(Block *block)
       if(plus)
          w.AddicDot(10, 10, -plus);
       w.Mtctr(10);
-      ExitBefore(w.Bc(BO_FALSE, CR_GT), next, lastopNext, JIT_STUB_STOPPED);
+      ExitBefore(w.Bc(BO_FALSE, CR_GT), next, lastopNext, JIT_STUB_EVENTS);
    };
    /* CTR minus one, no check (an op's first cycle) */
    auto FirstCycle = [&]() {
@@ -326,7 +392,7 @@ void *V810::CompileBlock(Block *block)
    auto PendingExit = [&](uint32 next, int32 lastopNext) {
       w.Lwz(0, offPending, JR_REGS);
       w.Cmpwi(0, 0);
-      ExitBefore(w.Bc(BO_FALSE, CR_EQ), next, lastopNext, JIT_STUB_STOPPED);
+      ExitBefore(w.Bc(BO_FALSE, CR_EQ), next, lastopNext, JIT_STUB_EVENTS);
    };
    /* Into r4: a load or store's address. */
    auto Address = [&](unsigned vbase, uint32 imm, unsigned clear) {
@@ -391,9 +457,17 @@ void *V810::CompileBlock(Block *block)
       if(cond >= 8) /* (8-15 are 0-7 negated) */
          w.Xori(3, 3, 1);
    };
+   /* Events due at a branch target, then straight on (EVENTS' data: leaving, it starts at the target afresh). */
+   auto EventsAt = [&](uint32 target, unsigned opcode, uint32 *goOn) {
+      w.BTo(JitStub[JIT_STUB_EVENTS], 1);
+      w.Word(target);
+      w.Word(opcode);
+      w.Word(0);
+      w.Word((uint32)(uintptr_t)goOn);
+   };
    /* A branch's cycles and a known target: straight on into its code once that's compiled (RunBlock points the bl
-    * there), else back to the C side, which also runs the event if it's due first. back: the interpreter's idle
-    * check after a short branch back - when its countdown is out, the C side runs it. */
+    * there), else back to the C side; first the events due. back: the interpreter's idle check after a short
+    * branch back. */
    auto BranchTo = [&](uint32 target, unsigned opcode, bool back, int32 cycles) {
       w.Li(4, opcode);
       w.Stw(4, offLastop, JR_REGS);
@@ -416,17 +490,20 @@ void *V810::CompileBlock(Block *block)
          w.Cmpwi(9, 0);
          due = w.Bc(BO_FALSE, CR_GT);
       }
+      uint32 *const link = w.at;
       w.BTo(JitStub[JIT_STUB_BRANCH], 1);
       w.Word(target);
       if(idle)
       {
          w.Patch(idle, w.at);
-         w.BTo(JitStub[JIT_STUB_BRANCH_BACK], 1);
+         w.BTo(JitStub[JIT_STUB_IDLE], 1);
          w.Word(target);
+         w.Mfctr(9);
+         w.Cmpwi(9, 0);
+         w.Patch(w.Bc(BO_TRUE, CR_GT), link);
       }
       w.Patch(due, w.at);
-      w.BTo(JitStub[JIT_STUB_BRANCH_DUE], 1);
-      w.Word(target);
+      EventsAt(target, opcode, link);
    };
 
    uint32 offset = 0;
@@ -777,6 +854,37 @@ void *V810::CompileBlock(Block *block)
          ended = true;
          continue;
       }
+      case BK_WAIT:
+      {
+         /* (as op_WAIT_BE and the rest: taken, the cycle count jumps to the next event, then 3 more) */
+         const unsigned cond = op.opcode == 0x36 ? COND_Z : op.opcode == 0x37 ? COND_NZ : op.opcode == 0x64 ? COND_NS
+                               : op.opcode == 0x65 ? COND_LT : op.opcode == 0x6C ? COND_C : COND_T;
+         const uint32 target = pc + (sign_9(op.imm) & 0xFFFFFFFE);
+         uint32 *notTaken = NULL;
+         if(cond != COND_T)
+         {
+            Condition(cond & 7);
+            w.Cmpwi(3, 0);
+            notTaken = w.Bc(cond >= 8 ? BO_FALSE : BO_TRUE, CR_EQ);
+         }
+         w.Li(4, op.opcode);
+         w.Stw(4, offLastop, JR_REGS);
+         w.Li(9, -3);
+         w.Mtctr(9);
+         uint32 *const skip = w.B();
+         uint32 *const link = w.at;
+         w.BTo(JitStub[JIT_STUB_BRANCH], 1);
+         w.Word(target);
+         w.Patch(skip, w.at);
+         EventsAt(target, op.opcode, link);
+         if(notTaken)
+         {
+            w.Patch(notTaken, w.at);
+            BranchTo(pc + 2, op.opcode, false, 1);
+         }
+         ended = true;
+         continue;
+      }
       case BK_JR: case BK_JAL:
          if(op.kind == BK_JAL)
          {
@@ -815,13 +923,14 @@ void *V810::CompileBlock(Block *block)
       w.Word(block->pc + e.offset);
       if(e.stub != JIT_STUB_INTERPRET_FIRST)
          w.Word((uint32)e.lastop);
-      if(e.stub == JIT_STUB_STOPPED)
+      if(e.stub == JIT_STUB_EVENTS)
       {
-         /* (no code to go on in when the next op isn't compiled) */
+         /* (none when no op of this block is there) */
          uint32 *resume = NULL;
          for(const auto &at : opAt)
             if(at.first == e.offset)
                resume = at.second;
+         w.Word((uint32)(uintptr_t)resume);
          w.Word((uint32)(uintptr_t)resume);
       }
    }

@@ -669,6 +669,9 @@ void V810::Run_Accurate(int32 MDFN_FASTCALL (*event_handler)(const v810_timestam
 void V810::Run_Fast(int32 MDFN_FASTCALL (*event_handler)(const v810_timestamp_t timestamp))
 {
  const bool RB_AccurateMode = false;
+#ifdef GEKKO
+ JitEventHandler = event_handler;
+#endif
 
  #define RB_ADDBT(n,o,p)
  #define RB_CPUHOOK(n)

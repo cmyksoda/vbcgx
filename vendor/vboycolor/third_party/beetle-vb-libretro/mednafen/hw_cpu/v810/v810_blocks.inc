@@ -5,13 +5,13 @@
 extern "C" void DCFlushRange(void *start, uint32 length);
 extern "C" void ICInvalidateRange(void *start, uint32 length);
 
-/* How compiled code ends (v810_jit.inc): an event or interrupt is due before an op (it can go on there, at
- * JitResumeAt), the interpreter must run the next op, or at a branch to JitTarget (BACK: one back that the idle
- * check must see). */
-enum { JIT_EXIT_STOPPED = 0, JIT_EXIT_BRANCH = 1, JIT_EXIT_BRANCH_BACK = 2, JIT_EXIT_INTERPRET = 3 };
+/* How compiled code ends (v810_jit.inc): an interrupt is due before an op (it can go on there, at JitResumeAt), the
+ * event handler it ran ended the frame (likewise), the interpreter must run the next op, or at a branch to
+ * JitTarget that isn't linked yet. */
+enum { JIT_EXIT_STOPPED = 0, JIT_EXIT_BRANCH = 1, JIT_EXIT_INTERPRET = 2, JIT_EXIT_FRAME_END = 3 };
 /* JitStub[JIT_STUB_ENTER](P_REG, &timestamp, code) runs compiled code; the exit leaves the next PC in JitTarget. */
-enum { JIT_STUB_ENTER, JIT_STUB_LEAVE, JIT_STUB_STOPPED, JIT_STUB_INTERPRET, JIT_STUB_INTERPRET_FIRST, JIT_STUB_BRANCH,
-       JIT_STUB_BRANCH_DUE, JIT_STUB_BRANCH_BACK, JIT_STUB_READ8, JIT_STUB_READ16, JIT_STUB_READ32, JIT_STUB_WRITE8,
+enum { JIT_STUB_ENTER, JIT_STUB_LEAVE, JIT_STUB_LEAVE_TS, JIT_STUB_EVENTS, JIT_STUB_INTERPRET, JIT_STUB_INTERPRET_FIRST,
+       JIT_STUB_BRANCH, JIT_STUB_IDLE, JIT_STUB_READ8, JIT_STUB_READ16, JIT_STUB_READ32, JIT_STUB_WRITE8,
        JIT_STUB_WRITE16, JIT_STUB_WRITE32, JIT_STUBS };
 
 namespace
@@ -30,8 +30,8 @@ enum BlockKind : uint8
    /* stores (r1 = data, r2 = base, imm = displacement) */
    BK_ST_B, BK_ST_H, BK_ST_W,
    BK_NOP,
-   /* the ops that end a block */
-   BK_BCOND, BK_JMP, BK_JR, BK_JAL
+   /* the ops that end a block (WAIT: Bcond that waits for the next event, from the idle patches) */
+   BK_BCOND, BK_WAIT, BK_JMP, BK_JR, BK_JAL
 };
 
 /* By opcode (an instruction's top 7 bits), as v810_op_table.inc orders them. */
@@ -42,14 +42,14 @@ const uint8 kBlockKinds[128] = {
    BK_OR, BK_OR, BK_AND, BK_AND, BK_XOR, BK_XOR, BK_NOT, BK_NOT,
    BK_MOV_I, BK_MOV_I, BK_ADD_I, BK_ADD_I, BK_SETF, BK_SETF, BK_CMP_I, BK_CMP_I,
    BK_SHL_I, BK_SHL_I, BK_SHR_I, BK_SHR_I, BK_NONE, BK_NONE, BK_SAR_I, BK_SAR_I,
-   BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE,
+   BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_WAIT, BK_WAIT,
    BK_NONE, BK_NONE, BK_STSR, BK_STSR, BK_NONE, BK_NONE, BK_NONE, BK_NONE,
    BK_BCOND, BK_BCOND, BK_BCOND, BK_BCOND, BK_BCOND, BK_BCOND, BK_BCOND, BK_BCOND,
    BK_BCOND, BK_BCOND, BK_BCOND, BK_BCOND, BK_BCOND, BK_NOP, BK_BCOND, BK_BCOND,
    BK_MOVEA, BK_MOVEA, BK_ADDI, BK_ADDI, BK_JR, BK_JR, BK_JAL, BK_JAL,
    BK_ORI, BK_ORI, BK_ANDI, BK_ANDI, BK_XORI, BK_XORI, BK_MOVHI, BK_MOVHI,
-   BK_LD_B, BK_LD_B, BK_LD_H, BK_LD_H, BK_NONE, BK_NONE, BK_LD_W, BK_LD_W,
-   BK_ST_B, BK_ST_B, BK_ST_H, BK_ST_H, BK_NONE, BK_NONE, BK_ST_W, BK_ST_W,
+   BK_LD_B, BK_LD_B, BK_LD_H, BK_LD_H, BK_WAIT, BK_WAIT, BK_LD_W, BK_LD_W,
+   BK_ST_B, BK_ST_B, BK_ST_H, BK_ST_H, BK_WAIT, BK_WAIT, BK_ST_W, BK_ST_W,
    BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE,
    BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE,
 };
@@ -92,7 +92,12 @@ V810::Block *V810::FindBlock(uint32 pc, bool decode)
    {
       const uint32 tmpop = LoadU16_LE((const uint16 *)code);
       const unsigned opcode = tmpop >> 9, kind = kBlockKinds[opcode];
+      const uint32 op_pc = pc + (code - PC_ptr);
       if(kind == BK_NONE)
+         break;
+      /* (as op_WAIT_BE and the rest check, else they're invalid ops) */
+      if(kind == BK_WAIT && (!idlePatches || ((op_pc >> 24) & 7) != 7
+                             || code != &FastMap[op_pc >> V810_FAST_MAP_SHIFT][op_pc]))
          break;
       BlockOp &op = block->ops[n++];
       op.kind = kind;
@@ -105,7 +110,7 @@ V810::Block *V810::FindBlock(uint32 pc, bool decode)
          op.r1 = tmpop & 0x1F, op.r2 = (tmpop >> 5) & 0x1F, op.imm = LoadU16_LE((const uint16 *)(code + 2));
       else if(kind <= BK_ST_W)
          op.r1 = (tmpop >> 5) & 0x1F, op.r2 = tmpop & 0x1F, op.imm = LoadU16_LE((const uint16 *)(code + 2));
-      else if(kind == BK_BCOND)
+      else if(kind == BK_BCOND || kind == BK_WAIT)
          op.imm = tmpop & 0x1FE;
       else if(kind == BK_JMP)
          op.r1 = tmpop & 0x1F, op.r2 = (tmpop >> 5) & 0x1F;
@@ -128,13 +133,20 @@ V810::Block *V810::FindBlock(uint32 pc, bool decode)
    return block;
 }
 
-/* Runs compiled code from PC, if there is any, while no event is due and no interrupt pending (the interpreter
- * loop checked both before calling). False if the interpreter must run the next op. */
-bool V810::RunBlock(v810_timestamp_t &timestamp)
+/* The interpreter's idle check after a short branch back, for compiled code. */
+v810_timestamp_t V810::JitIdleLoop(V810 *cpu, v810_timestamp_t timestamp, uint32 target)
+{
+   cpu->SetPC(target);
+   return cpu->IdleLoop(timestamp, cpu->PC_ptr);
+}
+
+/* Runs compiled code from PC, if there is any (the interpreter loop checked that no event is due and no interrupt
+ * pending). 1: it ran, 0: the interpreter must run the next op, -1: it ran the event handler and the frame ended. */
+int V810::RunBlock(v810_timestamp_t &timestamp)
 {
    const uint32 block_pc = PC_ptr - PC_base;
    if(((block_pc >> 24) & 7) != 7)
-      return false;
+      return 0;
    void *code;
    if(JitResumeAt && block_pc == JitResumePc && lastop == JitResumeLastop)
       code = JitResumeAt; /* (its code runs the same from any way there, with that lastop) */
@@ -147,7 +159,7 @@ bool V810::RunBlock(v810_timestamp_t &timestamp)
       if(!block)
       {
          BlockExpect = PC_ptr + ((LoadU16_LE((const uint16 *)PC_ptr) >> 10) >= 0x28 ? 4 : 2);
-         return false;
+         return 0;
       }
       if(!block->jitTried)
       {
@@ -157,7 +169,7 @@ bool V810::RunBlock(v810_timestamp_t &timestamp)
       if(!block->jit)
       {
          BlockEntryOk = true; /* (whatever the interpreter's op does, it goes the same way every time) */
-         return false;
+         return 0;
       }
       code = block->jit;
       if(JitLinkSite && JitLinkTarget == block_pc)
@@ -171,25 +183,17 @@ bool V810::RunBlock(v810_timestamp_t &timestamp)
    JitLinkSite = NULL;
    const uint32 exit = ((uint32 (*)(uint32 *, v810_timestamp_t *, void *))JitStub[JIT_STUB_ENTER])(P_REG, &timestamp, code);
    SetPC(JitTarget);
-   BlockEntryOk = exit != JIT_EXIT_STOPPED || !JitResumeAt; /* (stopped with nowhere to go on: the block ended there) */
+   const bool stopped = exit == JIT_EXIT_STOPPED || exit == JIT_EXIT_FRAME_END;
+   BlockEntryOk = !stopped || !JitResumeAt; /* (stopped with nowhere to go on: the block ended there) */
    BlockExpect = PC_ptr;
-   if(exit == JIT_EXIT_STOPPED)
+   if(stopped)
    {
       JitResumePc = JitTarget;
       JitResumeLastop = lastop;
+      return exit == JIT_EXIT_FRAME_END ? -1 : 1;
    }
-   else if(exit == JIT_EXIT_INTERPRET)
-      return false; /* (no event is due yet) */
-   else
-   {
-      JitLinkTarget = JitTarget;
-      if(exit == JIT_EXIT_BRANCH_BACK)
-      {
-         if(IdleQuiet)
-            IdleQuiet--;
-         else
-            timestamp = IdleLoop(timestamp, PC_ptr);
-      }
-   }
-   return true;
+   if(exit == JIT_EXIT_INTERPRET)
+      return 0; /* (no event is due yet) */
+   JitLinkTarget = JitTarget;
+   return 1;
 }

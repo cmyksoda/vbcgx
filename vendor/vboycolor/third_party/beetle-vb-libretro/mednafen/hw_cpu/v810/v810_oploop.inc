@@ -68,8 +68,14 @@
         P_REG[0] = 0; /* Zero the Zero Reg!!! */
 
 #ifdef GEKKO
-	if(!RB_AccurateMode && !IPendingCache && !Halted && !in_bstr && RunBlock(timestamp_rl))
-	   continue;
+	if(!RB_AccurateMode && !IPendingCache && !Halted && !in_bstr)
+	{
+	   const int ran = RunBlock(timestamp_rl);
+	   if(ran > 0)
+	      continue;
+	   if(ran < 0)
+	      goto EventsRan; /* (compiled code ran the event handler, and the frame ended there) */
+	}
 #endif
 
 	RB_CPUHOOK(RB_GETPC());
@@ -1155,6 +1161,9 @@
 	OpFinishedSkipLO: ;
      }	/* end  while(timestamp_rl < next_event_ts) */
      next_event_ts = event_handler(timestamp_rl);
+#ifdef GEKKO
+     EventsRan: ;
+#endif
     }
 
 v810_timestamp = timestamp_rl;
