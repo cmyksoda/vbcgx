@@ -105,12 +105,10 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
     # Displayed column -> output tags (side-by-side is the only 3D mode the
     # frontend uses; this function is what writes it).
     _vbgo_replace_once(VIP
-        [=[   uint32 *target = surface->pixels + Column + (dest_lr ? (384 + VBSBS_Separation) : 0);
-   const int32 pitch32 = surface->pitch32;
+        [=[   const int eye = dest_lr & 1;
    const uint8 *fb_source = &FB[fb][lr][64 * Column];
 ]=]
-        [=[   uint32 *target = surface->pixels + Column + (dest_lr ? (384 + VBSBS_Separation) : 0);
-   const int32 pitch32 = surface->pitch32;
+        [=[   const int eye = dest_lr & 1;
    const uint8 *fb_source = &FB[fb][lr][64 * Column];
 
    vbgo_tiletrack_display_column(fb, lr, dest_lr, Column, DisplayActive_arg); /* VirtualBoyGo */

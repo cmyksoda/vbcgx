@@ -81,9 +81,9 @@ public:
         uint32_t version = 0;
     };
     // frame: B,G,R,A bytes, ShownBuffer's picture as its last Paint left it (bands not kept are
-    // shaded and painted again); raw: the core's frame (B,G,R,tag); both fbWidth pixels per row,
-    // the eyes side by side at eyeOffset[0/1]. background: what painted colors fade toward.
-    void Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWidth, const uint32_t eyeOffset[2], const ShadeRgb &background,
+    // shaded and painted again), fbWidth pixels per row, the eyes side by side at eyeOffset[0/1]
+    // (the core's picture comes from vbgo_vip_eye_bits). background: what painted colors fade toward.
+    void Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t eyeOffset[2], const ShadeRgb &background,
                const Shade &shade);
     // The frame buffer the left eye shows (0 or 1): each keeps a colored picture of its own.
     static int ShownBuffer();
@@ -230,7 +230,7 @@ private:
     int m_pairCount = 0;
     uint32_t m_frame = 0;
     // Pairs' disparities, where out of date (once a frame, before the right eye).
-    int EstimatePairs(const vbgo_tt_eye_view view[2], const uint8_t *raw, uint32_t fbWidth, const uint32_t eyeOffset[2]);
+    int EstimatePairs(const vbgo_tt_eye_view view[2]);
     bool PairDue(const Pair &pair, const uint16_t *worlds, std::array<uint16_t, 32> &attributes, uint32_t &others, bool &scrolled) const;
     void EstimatePair(Pair &pair, const uint64_t *leftBits, const uint64_t *rightBits, bool scrolled);
     std::vector<uint64_t> m_estimateBits; // (EstimatePairs: the pictures' shades as bit rows)
@@ -341,7 +341,7 @@ private:
 
     // Auto mode, what no tile drew (the game's CPU wrote it into the frame
     // buffer): colored by depth. Returns the brightest level it painted.
-    unsigned PaintDepth(uint8_t *frame, const uint8_t *raw, uint32_t fbWidth, const uint32_t eyeOffset[2], const vbgo_tt_eye_view view[2],
+    unsigned PaintDepth(uint8_t *frame, uint32_t fbWidth, const uint32_t eyeOffset[2], const vbgo_tt_eye_view view[2],
                         const bool have[2], const int bg[3]);
     DepthColors m_depth;
     std::vector<uint8_t> m_depthShades[2], m_depthWant[2];

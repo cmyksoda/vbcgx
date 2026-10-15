@@ -411,7 +411,6 @@ namespace
     const uint8_t *g_frame = nullptr;
     unsigned g_frameW = 0, g_frameH = 0;
     size_t g_framePitch = 0;
-    std::vector<uint8_t> g_raw;
     std::vector<uint8_t> g_colored[2]; // per frame buffer (see ColorPackRenderer::Paint)
     uint32_t g_lastPicture; // (the VIP's id for the last frame's picture)
     bool g_repaint = true;  // the next frame is colored in full regardless
@@ -673,25 +672,21 @@ namespace
             colored.resize(pixels * 4);
             g_renderer.ForgetBands();
         }
-        const uint8_t *raw = g_frame;
-        if (g_framePitch != rowBytes) {
-            g_raw.resize(pixels * 4);
-            for (unsigned y = 0; y < h; ++y)
-                std::memcpy(&g_raw[y * rowBytes], g_frame + y * g_framePitch, rowBytes);
-            raw = g_raw.data();
-        }
+        // (the picture Beetle drew, each eye kept compact: the side-by-side surface isn't written)
+        const uint8_t *const bits[2] = {vbgo_vip_eye_bits(0), vbgo_vip_eye_bits(1)};
+        const uint32_t *const clut[2] = {vbgo_vip_eye_clut(0), vbgo_vip_eye_clut(1)};
 
         if (g_shadeColors)
         {
             if (g_colorizer.IsGradient())
-                g_colorizer.Observe(raw, w, h, rowBytes, w - VBGO_TT_WIDTH, vbgo_vip_right_bits(), vbgo_vip_right_clut());
+                g_colorizer.Observe(bits, clut, w, h, w - VBGO_TT_WIDTH);
             auto shadeRows = [&](unsigned first, unsigned count) {
                 for (unsigned y = first; y < first + count && y < h; ++y)
-                    g_colorizer.Colorize(raw + y * rowBytes, &colored[y * rowBytes], VBGO_TT_WIDTH);
+                    g_colorizer.Colorize(bits[0], clut[0], 0, y, VBGO_TT_WIDTH, &colored[y * rowBytes]);
             };
             auto shadeCells = [&](unsigned band, unsigned first, unsigned count) {
                 for (unsigned y = band * 8; y < band * 8 + 8 && y < h; ++y)
-                    g_colorizer.Colorize(raw + y * rowBytes + first * 32, &colored[y * rowBytes + first * 32], count * 8);
+                    g_colorizer.Colorize(bits[0], clut[0], first * 8, y, count * 8, &colored[y * rowBytes + first * 32]);
             };
             if (painting)
             {
@@ -699,9 +694,9 @@ namespace
                 g_renderer.SetPackShown(true);
                 auto shadeColumn = [&](unsigned x, unsigned first, unsigned count) {
                     for (unsigned y = first; y < first + count && y < h; ++y)
-                        g_colorizer.Colorize(raw + y * rowBytes + x * 4, &colored[y * rowBytes + x * 4], 1);
+                        g_colorizer.Colorize(bits[0], clut[0], x, y, 1, &colored[y * rowBytes + x * 4]);
                 };
-                g_renderer.Paint(colored.data(), raw, static_cast<uint32_t>(rowBytes / 4), eyeOffset, g_background,
+                g_renderer.Paint(colored.data(), static_cast<uint32_t>(rowBytes / 4), eyeOffset, g_background,
                                  {shadeCells, shadeColumn, g_colorizer.Version()});
             }
             else
@@ -709,19 +704,12 @@ namespace
         }
         else
         {
-            // By brightness (the core draws red: its red is the brightness).
-            // (Beetle writes 0x00RRGGBB words, so red's byte depends on the CPU's byte order)
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-            constexpr unsigned kRedByte = 1;
-#else
-            constexpr unsigned kRedByte = 2;
-#endif
+            // By brightness (the core draws red: its red, bits 16-23 of the word, is the brightness).
             for (unsigned y = 0; y < h; ++y)
             {
-                const uint8_t *in = raw + y * rowBytes;
                 uint32_t *out = reinterpret_cast<uint32_t *>(&colored[y * rowBytes]);
                 for (unsigned x = 0; x < VBGO_TT_WIDTH; ++x)
-                    out[x] = g_brightness[in[x * 4 + kRedByte]];
+                    out[x] = g_brightness[vbgo_eye_word(bits[0], clut[0], x, y) >> 16 & 0xFF];
             }
         }
         g_video(colored.data(), VBGO_TT_WIDTH, h, rowBytes);
@@ -900,7 +888,6 @@ extern "C"
         new (&g_renderer) ColorPackRenderer();
         g_pack.~TileColorPack();
         new (&g_pack) TileColorPack();
-        std::vector<uint8_t>().swap(g_raw);
         for (auto &colored : g_colored)
             std::vector<uint8_t>().swap(colored);
         g_loaded = false;

@@ -1,4 +1,5 @@
 #include "emu/ShadeColorizer.h"
+#include "emu/vbgo_tiletrack.h"
 
 #include <algorithm>
 #include <cmath>
@@ -95,8 +96,7 @@ float ShadeColorizer::Fade(int level) const
     return std::min(1.0f, std::pow(std::clamp(level, 0, 63) / reference, 1.0f / 2.2f));
 }
 
-void ShadeColorizer::Observe(const uint8_t *src, size_t width, size_t height, size_t strideBytes, size_t rightX,
-                             const uint8_t *rightBits, const uint32_t *rightClut)
+void ShadeColorizer::Observe(const uint8_t *const bits[2], const uint32_t *const clut[2], size_t width, size_t height, size_t rightX)
 {
     if (!m_gradient)
         return;
@@ -112,15 +112,12 @@ void ShadeColorizer::Observe(const uint8_t *src, size_t width, size_t height, si
     for (size_t y = 0; y < height && found < 3; y += 2)
         for (size_t x = 0; x < width; x += 3)
         {
-            const uint8_t *p = src + y * strideBytes + x * 4;
-            uint8_t right[4]; // (the right eye from its compact copy - see vbgo_vip_right_bits)
-            if (x >= rightX)
-            {
-                const size_t column = x - rightX;
-                const uint32_t value = rightClut[column * 4 + (rightBits[column * 56 + y / 4] >> ((y & 3) * 2) & 3)];
-                std::memcpy(right, &value, 4);
-                p = right;
-            }
+            // (each eye's bytes as the side-by-side picture held them; between the eyes, nothing)
+            const uint32_t word = x < VBGO_TT_WIDTH ? vbgo_eye_word(bits[0], clut[0], static_cast<unsigned>(x), static_cast<unsigned>(y))
+                                  : x >= rightX   ? vbgo_eye_word(bits[1], clut[1], static_cast<unsigned>(x - rightX), static_cast<unsigned>(y))
+                                                  : 0;
+            uint8_t p[4];
+            std::memcpy(p, &word, 4);
             const int shade = p[3] & 3, level = p[3] >> 2;
             if (shade == 0 || level == 0 || (p[0] | p[1] | p[2]) == 0)
                 continue;
@@ -159,14 +156,17 @@ void ShadeColorizer::Observe(const uint8_t *src, size_t width, size_t height, si
         BuildGradient();
 }
 
-void ShadeColorizer::Colorize(const uint8_t *src, uint8_t *dst, size_t pixelCount) const
+void ShadeColorizer::Colorize(const uint8_t *bits, const uint32_t *clut, unsigned x, unsigned y, size_t pixelCount,
+                              uint8_t *dst) const
 {
-    // Read BGRA bytes as native words; the RGB mask follows the host byte order.
+    // Pixels as native words of BGRA bytes; the RGB mask follows the host byte order.
     uint32_t background;
     std::memcpy(&background, m_background.data(), 4);
-    auto one = [&](const uint8_t *in, uint8_t *out) {
-        uint32_t pixel, color;
-        std::memcpy(&pixel, in, 4);
+    auto one = [&](unsigned column, uint8_t *out) {
+        const uint32_t pixel = vbgo_eye_word(bits, clut, column, y);
+        uint8_t in[4];
+        std::memcpy(in, &pixel, 4);
+        uint32_t color;
         std::memcpy(&color, m_lut[in[3]].data(), 4);
         // A shade switched fully off by the game (output 0) shows as
         // background, whatever the fade level says.
@@ -180,15 +180,15 @@ void ShadeColorizer::Colorize(const uint8_t *src, uint8_t *dst, size_t pixelCoun
     size_t i = 0;
 #if defined(__PPC__) || defined(__powerpc__)
     // Whole 32-byte lines of dst are claimed in the cache without reading memory first.
-    for (; i < pixelCount && (reinterpret_cast<uintptr_t>(dst) & 31); ++i, src += 4, dst += 4)
-        one(src, dst);
-    for (; i + 8 <= pixelCount; i += 8, src += 32, dst += 32)
+    for (; i < pixelCount && (reinterpret_cast<uintptr_t>(dst) & 31); ++i, dst += 4)
+        one(x + static_cast<unsigned>(i), dst);
+    for (; i + 8 <= pixelCount; i += 8, dst += 32)
     {
         __asm__ volatile("dcbz 0,%0" : : "r"(dst) : "memory");
         for (size_t k = 0; k < 8; ++k)
-            one(src + k * 4, dst + k * 4);
+            one(x + static_cast<unsigned>(i + k), dst + k * 4);
     }
 #endif
-    for (; i < pixelCount; ++i, src += 4, dst += 4)
-        one(src, dst);
+    for (; i < pixelCount; ++i, dst += 4)
+        one(x + static_cast<unsigned>(i), dst);
 }

@@ -94,11 +94,17 @@ void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr);
 /* The VIP's frame buffers, FB[fb][lr][0x6000] (a function the patched vip.c
  * adds - see cmake/PatchBeetleVip.cmake). */
 const uint8_t *vbgo_vip_framebuffers(void);
-/* The right eye of the picture last shown, which the side-by-side surface doesn't hold: per column,
- * 56 bytes of 2-bit pixels (row y: byte y / 4, bits (y % 4) * 2) and the 4 pixel values they index
- * (0: the display was off). */
-const uint8_t *vbgo_vip_right_bits(void);
-const uint32_t *vbgo_vip_right_clut(void);
+/* An eye of the picture last shown (the side-by-side surface isn't written): per column, 56 bytes
+ * of 2-bit pixels (row y: byte y / 4, bits (y % 4) * 2) and the 4 pixel values they index, each the
+ * 32-bit word the surface would have held (0: the display was off). */
+const uint8_t *vbgo_vip_eye_bits(int eye);
+const uint32_t *vbgo_vip_eye_clut(int eye);
+
+/* An eye's pixel y in column x, as the 4 bytes the surface would have held there */
+static inline uint32_t vbgo_eye_word(const uint8_t *bits, const uint32_t *clut, unsigned x, unsigned y)
+{
+   return clut[x * 4 + (bits[x * 56 + (y >> 2)] >> ((y & 3) * 2) & 3)];
+}
 
 #define VBGO_TT_FILLS_NONE 0
 #define VBGO_TT_FILLS_PACK 1 /* only in cells marked with vbgo_tiletrack_set_fill_cells */

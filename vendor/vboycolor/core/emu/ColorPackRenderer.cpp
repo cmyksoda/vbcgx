@@ -11,16 +11,6 @@
 
 namespace
 {
-uint32_t ReadTaggedPixel(const uint8_t *p)
-{
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-    uint32_t pixel;
-    std::memcpy(&pixel, p, sizeof(pixel));
-    return __builtin_bswap32(pixel);
-#else
-    return p[0] | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
-#endif
-}
 
 int Sign9(uint16_t v)
 {
@@ -55,11 +45,11 @@ inline uint64_t Shifted(const uint64_t *row, int k, int d)
 
 constexpr int kMaxDisparity = 64;
 
-// The right eye's pixel y of a column, as ReadTaggedPixel would read it from the copied picture
-// (the right eye is kept compact instead - see vbgo_vip_right_bits).
-inline uint32_t RightTaggedPixel(const uint8_t *bits, const uint32_t *clut, uint32_t y)
+// An eye's pixel x, y: B, G, R and the tag (shade, brightness) from the low byte up, as the core
+// writes them on either byte order (each eye is kept compact - see vbgo_vip_eye_bits).
+inline uint32_t EyeTaggedPixel(const uint8_t *bits, const uint32_t *clut, uint32_t x, uint32_t y)
 {
-    const uint32_t value = clut[bits[y >> 2] >> ((y & 3) * 2) & 3];
+    const uint32_t value = vbgo_eye_word(bits, clut, x, y);
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
     return __builtin_bswap32(value);
 #else
@@ -623,7 +613,7 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, int
     return run;
 }
 
-void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWidth, const uint32_t eyeOffset[2],
+void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t eyeOffset[2],
                               const ShadeRgb &background, const Shade &shade)
 {
     const TileColorPack *pack = m_packShown ? m_pack : nullptr;
@@ -650,7 +640,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             shade.cells(b, 0, kGridW);
         ForgetBands();
         if (m_auto)
-            PaintDepth(frame, raw, fbWidth, eyeOffset, view, have, bg);
+            PaintDepth(frame, fbWidth, eyeOffset, view, have, bg);
         return;
     }
     ++m_frame;
@@ -769,6 +759,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         if (have[0])
         {
             const vbgo_tt_eye_view &v = view[0];
+            const uint8_t *const leftBits = vbgo_vip_eye_bits(0);
+            const uint32_t *const leftClut = vbgo_vip_eye_clut(0);
             ResolveSlots(v.hashes);
             const uint32_t *markerSlots = m_markerSlots;
             uint32_t anyBits = 0;
@@ -810,7 +802,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                     const uint64_t *column = v.columns[x];
                     if (!column || keptCell[band][x >> 3])
                         continue;
-                    const uint8_t *r = &raw[(static_cast<size_t>(eyeOffset[0]) + x) * 4];
                     unsigned lastChr = ~0u, lastBand = ~0u; // (a cell's marker counted once per tile and band)
                     for (uint32_t y = band * 8; y < band * 8 + 8; ++y)
                     {
@@ -822,7 +813,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                         if (!m_slotHasMarkers[chr] || !VBGO_TAG_PIXEL(t) || (chr == lastChr && (y >> 3) == lastBand))
                             continue;
                         uint32_t rawPixel;
-                        rawPixel = ReadTaggedPixel(r + static_cast<size_t>(y) * fbWidth * 4);
+                        rawPixel = EyeTaggedPixel(leftBits, leftClut, x, y);
                         if (!(rawPixel & 0xFFFFFFu))
                             continue; // (a shade the game switched off)
                         lastChr = chr, lastBand = y >> 3;
@@ -1121,11 +1112,13 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
         if (!have[eye])
             continue;
         const vbgo_tt_eye_view &v = view[eye];
+        const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
+        const uint32_t *const eyeClut = vbgo_vip_eye_clut(static_cast<int>(eye));
         setUp.flatObjPalettes = v.flat_obj_palettes;
         if (pack)
             ResolveSlots(v.hashes);
         if (eye == 1 && pairs)
-            reestimated = EstimatePairs(view, raw, fbWidth, eyeOffset) > 0;
+            reestimated = EstimatePairs(view) > 0;
         if (eye == 1 && pairs)
         {
             // The tiles each pair's left picture drew (by contents: games
@@ -1179,8 +1172,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                 const uint64_t *column = v.columns[x];
                 if (!column)
                     continue;
-                const uint8_t *rightBits = vbgo_vip_right_bits() + x * 56;
-                const uint32_t *rightClut = vbgo_vip_right_clut() + x * 4;
                 uint64_t runKey = ~0ull;
                 uint32_t runHi = 0, runLo = ~0u;
                 Run run;
@@ -1222,7 +1213,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                         if ((t >> 48) != stamp)
                             continue;
                         const unsigned pixel = VBGO_TAG_PIXEL(t);
-                        const uint32_t rawPixel = RightTaggedPixel(rightBits, rightClut, y);
+                        const uint32_t rawPixel = EyeTaggedPixel(eyeBits, eyeClut, x, y);
                         if (pixel && !(rawPixel & 0xFFFFFFu))
                             continue;
                         const bool firstHere = !counted;
@@ -1363,7 +1354,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                 if ((t >> 48) != stamp)
                     continue; // nothing tracked here this frame (background)
                 size_t i = columnBase + y * rowBytes;
-                uint32_t rawPixel = ReadTaggedPixel(&raw[i]); // B, G, R, tag (shade, brightness) from the low byte up
+                uint32_t rawPixel = EyeTaggedPixel(eyeBits, eyeClut, x, y); // B, G, R, tag (shade, brightness) from the low byte up
                 unsigned pixel = VBGO_TAG_PIXEL(t);
                 if (pixel && !(rawPixel & 0xFFFFFFu))
                     continue; // drawn in a shade the game switched off - stays background
@@ -1418,7 +1409,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                             if (static_cast<uint32_t>(next >> 32) != runHi || (static_cast<uint32_t>(next) & kRunMaskLo) != runLo)
                                 break;
                             ++y, i += rowBytes, t = next;
-                            rawPixel = ReadTaggedPixel(&raw[i]);
+                            rawPixel = EyeTaggedPixel(eyeBits, eyeClut, x, y);
                             pixel = VBGO_TAG_PIXEL(t);
                             if (!pixel || (rawPixel & 0xFFFFFFu))
                             {
@@ -1522,7 +1513,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
     }
     if (depth)
     {
-        brightest = std::max(brightest, PaintDepth(frame, raw, fbWidth, eyeOffset, view, have, bg));
+        brightest = std::max(brightest, PaintDepth(frame, fbWidth, eyeOffset, view, have, bg));
         for (Band &band : bands)
             for (Cell &cell : band.cells)
                 cell.version = 0; // (depth colors aren't the cell's own)
@@ -1617,29 +1608,27 @@ bool ColorPackRenderer::MarkersSettled() const
     return true;
 }
 
-unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, const uint8_t *raw, uint32_t fbWidth, const uint32_t eyeOffset[2],
+unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const uint32_t eyeOffset[2],
                                        const vbgo_tt_eye_view view[2], const bool have[2], const int bg[3])
 {
     // Each eye's shades, and the lit pixels no tile drew this frame (a
     // shade the game switched off counts as nothing).
     constexpr size_t kPixels = VBGO_TT_EYE_PIXELS;
-    const size_t rowBytes = static_cast<size_t>(fbWidth) * 4;
     bool any = false;
     unsigned brightest = 0;
     for (unsigned eye = 0; eye < 2; ++eye)
     {
+        const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
+        const uint32_t *const eyeClut = vbgo_vip_eye_clut(static_cast<int>(eye));
         m_depthShades[eye].assign(kPixels, 0);
         m_depthWant[eye].assign(kPixels, 0);
         uint8_t *shades = m_depthShades[eye].data(), *want = m_depthWant[eye].data();
         for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
         {
             const uint64_t *column = have[eye] ? view[eye].columns[x] : nullptr;
-            const uint8_t *src = &raw[(static_cast<size_t>(eyeOffset[eye]) + x) * 4];
-            const uint8_t *rightBits = vbgo_vip_right_bits() + x * 56;
-            const uint32_t *rightClut = vbgo_vip_right_clut() + x * 4;
-            for (uint32_t y = 0; y < VBGO_TT_HEIGHT; ++y, src += rowBytes)
+            for (uint32_t y = 0; y < VBGO_TT_HEIGHT; ++y)
             {
-                const uint32_t rawPixel = eye ? RightTaggedPixel(rightBits, rightClut, y) : ReadTaggedPixel(src);
+                const uint32_t rawPixel = EyeTaggedPixel(eyeBits, eyeClut, x, y);
                 const unsigned shade = (rawPixel >> 24) & 3;
                 if (!shade || !(rawPixel & 0xFFFFFFu))
                     continue;
@@ -1662,6 +1651,8 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, const uint8_t *raw, uint3
     const uint8_t *const shades[2] = {m_depthShades[0].data(), m_depthShades[1].data()};
     const uint8_t *const want[2] = {m_depthWant[0].data(), m_depthWant[1].data()};
     m_depth.Update(shades, want);
+    const uint8_t *const leftBits = vbgo_vip_eye_bits(0);
+    const uint32_t *const leftClut = vbgo_vip_eye_clut(0);
     for (unsigned eye = 0; eye < 1; ++eye) // (only the left eye is shown)
         for (uint32_t y = 0; y < VBGO_TT_HEIGHT; ++y)
         {
@@ -1673,7 +1664,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, const uint8_t *raw, uint3
                 const size_t i = (static_cast<size_t>(y) * fbWidth + eyeOffset[eye] + x) * 4;
                 uint8_t rgb[3];
                 DepthColors::Color(m_depth.Disparity(eye, x, y), shades[eye][y * VBGO_TT_WIDTH + x], rgb);
-                const int fade = m_fade[raw[i + 3] >> 2]; // 0-256 (the tag byte's brightness)
+                const int fade = m_fade[EyeTaggedPixel(leftBits, leftClut, x, y) >> 26]; // 0-256 (the tag byte's brightness)
                 frame[i + 0] = static_cast<uint8_t>(bg[0] + (((rgb[2] - bg[0]) * fade + 128) >> 8));
                 frame[i + 1] = static_cast<uint8_t>(bg[1] + (((rgb[1] - bg[1]) * fade + 128) >> 8));
                 frame[i + 2] = static_cast<uint8_t>(bg[2] + (((rgb[0] - bg[2]) * fade + 128) >> 8));
@@ -1721,8 +1712,7 @@ bool ColorPackRenderer::PairDue(const Pair &pair, const uint16_t *worlds, std::a
     return !(scrolled && age < 4);
 }
 
-int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8_t *raw, uint32_t fbWidth,
-                                     const uint32_t eyeOffset[2])
+int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
 {
     // The pairs whose disparities are out of date (once a frame, before the
     // right eye is painted - see PairDue). Returns how many were.
@@ -1776,6 +1766,8 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8
     typedef uint32_t __attribute__((__may_alias__)) BitHalf; // (one pixel's bit is in one half of its word)
     for (unsigned eye = 0; eye < 2; ++eye)
     {
+        const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
+        const uint32_t *const eyeClut = vbgo_vip_eye_clut(static_cast<int>(eye));
         // A tag's slot by its sprite, pixel and world bits (19-26): -1 none,
         // bit 6 set for a sprite pair's (which counts eye-only sprites).
         int8_t slotOf[256];
@@ -1793,9 +1785,7 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8
             const uint64_t *column = view[eye].columns[x];
             if (!column)
                 continue;
-            const uint8_t *shades = &raw[(static_cast<size_t>(eyeOffset[eye]) + x) * 4 + 3];
-            const uint8_t *rightBits = vbgo_vip_right_bits() + x * 56;
-            const uint32_t *rightClut = vbgo_vip_right_clut() + x * 4;
+
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
             const unsigned half = x & 32 ? 0 : 1;
 #else
@@ -1819,8 +1809,7 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8
                     int k = slotOf[static_cast<uint32_t>(t) >> 19 & 0xFF];
                     if (k < 0 || (k & 0x40 && EyeOnly(t) != (eye ? 2 : 1)))
                         continue;
-                    const unsigned shade = eye ? RightTaggedPixel(rightBits, rightClut, static_cast<uint32_t>(y)) >> 24 & 3
-                                               : shades[static_cast<size_t>(y) * fbWidth * 4] & 3;
+                    const unsigned shade = EyeTaggedPixel(eyeBits, eyeClut, static_cast<uint32_t>(x), static_cast<uint32_t>(y)) >> 24 & 3;
                     if (shade)
                         at[2 * ((k & 0x3F) * 2 * eyeRows + (shade - 1) * kGuardedRow)] |= bit;
                 }

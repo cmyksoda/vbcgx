@@ -55,21 +55,22 @@ public:
     void SetGradient(const std::array<ShadeRgb, 5> &stops, int referenceLevel = -1);
     bool IsGradient() const { return m_gradient; }
     // Gradient only: learns the shade brightnesses from a frame of the core's
-    // output (same layout as Colorize's src); call once per frame before
-    // Colorize. Cheap: a sparse scan, and the table is only rebuilt when
-    // something changed.
-    void Observe(const uint8_t *src, size_t width, size_t height, size_t strideBytes, size_t rightX = SIZE_MAX,
-                 const uint8_t *rightBits = nullptr, const uint32_t *rightClut = nullptr);
+    // output, both eyes as Colorize reads them, scanned as the side-by-side
+    // picture (width wide, the right eye from rightX); call once per frame
+    // before Colorize. Cheap: a sparse scan, and the table is only rebuilt
+    // when something changed.
+    void Observe(const uint8_t *const bits[2], const uint32_t *const clut[2], size_t width, size_t height, size_t rightX);
     // How far a shade is toward its full color at a fade level (0-63) - the
     // factor Colorize uses.
     float Fade(int level) const;
     // The 4 colors as shown at full brightness (background, 3 shades).
     std::array<ShadeRgb, 4> Palette() const { return m_palette; }
 
-    // src: the core's XRGB8888 frame (bytes B,G,R,tag per pixel - tag bits
-    // 0-1 shade index, 2-7 fade level). dst: B,G,R,A bytes ready for the
-    // B8G8R8A8 screen texture, A forced opaque. src and dst may not overlap.
-    void Colorize(const uint8_t *src, uint8_t *dst, size_t pixelCount) const;
+    // Row y of an eye from column x on, pixelCount pixels (bits, clut: the eye
+    // as vbgo_vip_eye_bits keeps it - bytes B,G,R,tag per pixel, tag bits 0-1
+    // shade index, 2-7 fade level). dst: B,G,R,A bytes ready for the B8G8R8A8
+    // screen texture, A forced opaque.
+    void Colorize(const uint8_t *bits, const uint32_t *clut, unsigned x, unsigned y, size_t pixelCount, uint8_t *dst) const;
     // Changes whenever Colorize would color some pixel differently.
     uint32_t Version() const { return m_version; }
 

@@ -440,6 +440,13 @@ static uint32 Contents;
 static uint32 ShownContent[2][2][384][28]; /* [fb][output eye][column][block]: CellContent as converted */
 static uint32 ShownClut[2][2][384];        /* ... vbgo_tt_clut_serial as converted */
 static int ShownFB;
+/* VirtualBoyGo: the colorizer reads the picture, never shows it, so each eye is kept compact - per
+ * frame buffer and column, its 2-bit pixels and the 4 values they stand for (vbgo_tiletrack.h). */
+static uint8 EyeBits[2][2][384][56];
+static uint32 EyeClut[2][2][384][4];
+const uint8 *vbgo_vip_eye_bits(int eye) { return &EyeBits[ShownFB][eye][0][0]; }
+const uint32 *vbgo_vip_eye_clut(int eye) { return &EyeClut[ShownFB][eye][0][0]; }
+
 int vbgo_vip_shown_fb(void) { return ShownFB; }
 
 static uint32 NewContent(void)
@@ -1341,6 +1348,7 @@ void VIP_StartFrame(EmulateSpecStruct *espec)
    if(VidSettingsDirty)
    {
       memset(ShownClut, 0, sizeof(ShownClut));
+      memset(EyeClut, 0, sizeof(EyeClut)); /* (as the surface: black until each column is copied again) */
 #if defined(WANT_32BPP)
 	  memset(surface->pixels, 0, surface->pitch32 * surface->h * 4);
 #elif defined(WANT_16BPP)
@@ -1651,63 +1659,33 @@ static void CopyFBColumnToTarget_CScope(void)
       CopyFBColumnToTarget_CScope_BASE(DisplayActive, 1, 1 ^ VB3DReverse);
 }
 
-/* VirtualBoyGo: nothing shows the right half, so it's kept compact - per frame buffer and column,
- * its 2-bit pixels and brightness table as the copy would have left them (vbgo_tiletrack.h). */
-static uint8 RightBits[2][384][56];
-static uint32 RightClut[2][384][4];
-const uint8 *vbgo_vip_right_bits(void) { return &RightBits[ShownFB][0][0]; }
-const uint32 *vbgo_vip_right_clut(void) { return &RightClut[ShownFB][0][0]; }
-
 static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, const int lr, const int dest_lr)
 {
    const int fb = DisplayFB;
-   uint32 *target = surface->pixels + Column + (dest_lr ? (384 + VBSBS_Separation) : 0);
-   const int32 pitch32 = surface->pitch32;
+   const int eye = dest_lr & 1;
    const uint8 *fb_source = &FB[fb][lr][64 * Column];
-   uint32 *shown = ShownContent[fb][dest_lr & 1][Column];
+   uint32 *shown = ShownContent[fb][eye][Column];
    int block;
 
-   if(fb)
-      target += 224 * pitch32;
    ShownFB = fb;
    if(DisplayActive_arg)
    {
-      const bool sameClut = ShownClut[fb][dest_lr & 1][Column] == vbgo_tt_clut_serial;
-      ShownClut[fb][dest_lr & 1][Column] = vbgo_tt_clut_serial;
-      if(dest_lr)
-         memcpy(RightClut[fb][Column], BrightCLUT[lr], sizeof(RightClut[0][0]));
-      for(block = 0; block < 28; block++, fb_source += 2, target += 8 * pitch32)
+      const bool sameClut = ShownClut[fb][eye][Column] == vbgo_tt_clut_serial;
+      ShownClut[fb][eye][Column] = vbgo_tt_clut_serial;
+      memcpy(EyeClut[fb][eye][Column], BrightCLUT[lr], sizeof(EyeClut[0][0][0]));
+      for(block = 0; block < 28; block++, fb_source += 2)
       {
-         int byte;
          const uint32 content = CellContent[fb][block][Column >> 3];
          if(sameClut && content && shown[block] == content)
             continue;
          shown[block] = content;
-         if(dest_lr)
-         {
-            RightBits[fb][Column][block * 2] = fb_source[0];
-            RightBits[fb][Column][block * 2 + 1] = fb_source[1];
-            continue;
-         }
-         for(byte = 0; byte < 2; byte++)
-         {
-            uint32 source_bits = fb_source[byte];
-            uint32 *row = target + byte * 4 * pitch32;
-            row[0]           = BrightCLUT[lr][source_bits & 3];
-            row[pitch32]     = BrightCLUT[lr][(source_bits >> 2) & 3];
-            row[2 * pitch32] = BrightCLUT[lr][(source_bits >> 4) & 3];
-            row[3 * pitch32] = BrightCLUT[lr][source_bits >> 6];
-         }
+         EyeBits[fb][eye][Column][block * 2] = fb_source[0];
+         EyeBits[fb][eye][Column][block * 2 + 1] = fb_source[1];
       }
    }
    else
    {
-      int y;
-      if(dest_lr)
-         memset(RightClut[fb][Column], 0, sizeof(RightClut[0][0]));
-      else
-         for(y = 0; y < 224; y++)
-            target[y * pitch32] = 0;
+      memset(EyeClut[fb][eye][Column], 0, sizeof(EyeClut[0][0][0]));
       for(block = 0; block < 28; block++)
          shown[block] = 0;
    }
