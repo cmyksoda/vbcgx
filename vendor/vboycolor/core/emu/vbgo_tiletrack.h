@@ -9,9 +9,9 @@
  * untouched. Plain C, shared by the core (vip.c) and the frontend.
  *
  * How it works: while the VIP draws a frame buffer, every drawn pixel gets a
- * 64-bit tag (character slot, pixel inside the tile, palette, layer, map
- * cell - see VBGO_TAG_*) written straight into a tag buffer laid out like
- * the VB's own column-major frame buffer, double-buffered the same way. A
+ * 32-bit tag (character slot, pixel inside the tile, palette, layer - see
+ * VBGO_TAG_*) and a 16-bit map cell beside it, written straight into buffers laid
+ * out like the VB's own column-major frame buffer, double-buffered the same way. A
  * block's tags are cleared before it's drawn, so in a band the pass reached a
  * nonzero tag is one it drew. At the start of each pass the character
  * memory is snapshotted and every tile hashed once, so a tag's tile is known
@@ -41,11 +41,14 @@ extern "C" {
 #define VBGO_TT_WIDTH  384
 #define VBGO_TT_HEIGHT 224
 #define VBGO_TT_EYE_PIXELS (VBGO_TT_WIDTH * VBGO_TT_HEIGHT)
-/* Tags per column in the tag buffer (rows 0-223 used). Not 256: a 2 KB stride
- * puts a block's tags across all columns in 4 of the Wii's 128 L1 sets. */
-#define VBGO_TT_COLUMN 260
+/* Tags per column in the tag buffer (rows 0-223 used): a band's 8 tags are one aligned 32-byte line, and
+ * unlike 256 (a 1 KB stride) the columns spread over the Wii's 128 L1 sets. */
+#define VBGO_TT_COLUMN 264
 
 /* ---- Tags (the tracker's own per-pixel format) -------------------------- */
+
+/* Stored as a 32-bit tag (bits 0-27 below, 28-31 0) and a 16-bit cell; read as one value,
+ * vbgo_tag_compose(tag, cell), which the macros take. */
 
 #define VBGO_TAG_CHAR(t)     ((unsigned)(t) & 0x7FF)          /* character slot 0-2047 */
 #define VBGO_TAG_INDEX(t)    ((unsigned)((t) >> 11) & 63)     /* pixel in the tile: y * 8 + x (tile space, flips undone) */
@@ -56,14 +59,16 @@ extern "C" {
 #define VBGO_TAG_PIXEL(t)    ((unsigned)((t) >> 20) & 3)      /* raw 2-bit value; 0 = a fill (transparent pixel) */
 #define VBGO_TAG_WORLD(t)    ((unsigned)((t) >> 22) & 31)     /* world (layer) that drew it */
 #define VBGO_TAG_HAS_CELL(t) ((unsigned)((t) >> 27) & 1)      /* drawn from a BG map cell (not a sprite) */
-#define VBGO_TAG_CELL(t)     ((unsigned)((t) >> 28) & 0xFFFF) /* that cell's halfword index in VIP DRAM */
-#define VBGO_TAG_OBJ_NO(t)   ((unsigned)((t) >> 28) & 0x3FF)  /* sprites: the OBJ (0-1023) - same bits, no cell */
+#define VBGO_TAG_CELL(t)     ((unsigned)((t) >> 32) & 0xFFFF) /* that cell's halfword index in VIP DRAM */
+#define VBGO_TAG_OBJ_NO(t)   ((unsigned)((t) >> 32) & 0x3FF)  /* sprites: the OBJ (0-1023) - same bits, no cell */
+
+static inline uint64_t vbgo_tag_compose(uint32_t tag, uint16_t cell) { return (uint64_t)cell << 32 | tag; }
 
 /* A run's key: the tag but for the pixel in the tile and its value (all of a run's tags share it). */
-#define VBGO_TAG_RUN_BITS (0x7FFull | (3ull << 17) | (1ull << 19) | (31ull << 22) | (1ull << 27) | (0xFFFFull << 28))
+#define VBGO_TAG_RUN_BITS (0x7FFull | (3ull << 17) | (1ull << 19) | (31ull << 22) | (1ull << 27) | (0xFFFFull << 32))
 
-/* A tag's words, for 32-bit compares: a run's tags share vbgo_tag_key_hi(key), and no tag's high word is
- * VBGO_TAG_NO_HI. A drawn tag's low word is never 0: it has the cell or sprite bit. */
+/* A tag's words, for 32-bit compares: the high word is the cell (a run's share vbgo_tag_key_hi(key)), and
+ * none is VBGO_TAG_NO_HI. A drawn tag's low word is never 0: it has the cell or sprite bit. */
 static inline uint32_t vbgo_tag_hi(uint64_t t) { return (uint32_t)(t >> 32); }
 static inline uint32_t vbgo_tag_lo(uint64_t t) { return (uint32_t)t; }
 static inline uint32_t vbgo_tag_key_hi(uint64_t key) { return (uint32_t)(key >> 32); }
@@ -128,12 +133,13 @@ int vbgo_tiletrack_fill_mode(void);
 void vbgo_tiletrack_set_fill_cells(const uint8_t *bits);
 
 /* What one eye showed in the frame most recently output by retro_run():
- * per column, the 224 tags of that column (NULL if the column was blank),
+ * per column, the 224 tags and cells of that column (NULL if the column was blank),
  * plus each 8-row band's key (which of its tags the pass drew) and the
  * drawing pass's tile hashes / character memory (index by VBGO_TAG_CHAR). */
 typedef struct
 {
-   const uint64_t *columns[VBGO_TT_WIDTH];
+   const uint32_t *columns[VBGO_TT_WIDTH];
+   const uint16_t *cells[VBGO_TT_WIDTH]; /* (meaningful only where the tag is drawn) */
    /* For vbgo_tag_drawn on a pixel in band y / 8: VBGO_TT_BAND_REACHED, or 0 for a band the pass didn't
     * reach (its tags are an older pass's). */
    uint32_t band_key[VBGO_TT_HEIGHT / 8];
@@ -203,44 +209,52 @@ extern int vbgo_tt_on;
 extern int vbgo_tt_fill;
 extern uint32_t vbgo_tt_world;
 extern const uint8_t *vbgo_tt_block_base;
-extern uint64_t *vbgo_tt_dst[2];
+extern uint32_t *vbgo_tt_dst[2];
+extern uint16_t *vbgo_tt_cdst[2];
 extern const uint8_t *vbgo_tt_blank;
 extern uint8_t vbgo_tt_fill_cells[8192];
 /* Bumped by the core whenever its shades-to-colors table changes. */
 extern uint32_t vbgo_tt_clut_serial;
 
-#define VBGO_TT_CELL_BITS(cell) (((uint64_t)1 << 27) | ((uint64_t)(cell) << 28))
-/* Sprites: no cell, but which OBJ drew the pixel (the same in both eyes). */
-#define VBGO_TT_OBJ_BITS(obj) ((uint64_t)((obj) & 0x3FF) << 28)
+/* Sprites have no cell: their cell is which OBJ drew the pixel (the same in both eyes). */
+#define VBGO_TT_OBJ_CELL(obj) ((uint16_t)((obj) & 0x3FF))
 
 /* Background (map) drawing - DrawBG/DrawAffine - only ever draws pixels 0-383
  * of one row, so its tags are found once per call: pixel x of the row
- * row_target (that call's target) is tagged at row[x * VBGO_TT_COLUMN].
- * NULL while tracking is off. */
-static inline uint64_t *vbgo_tt_row(const void *row_target)
+ * row_target (that call's target) is tagged at row[x * VBGO_TT_COLUMN], its
+ * cell at vbgo_tt_cell_row(row_target)[x * VBGO_TT_COLUMN]. NULL while tracking is off. */
+static inline uint32_t *vbgo_tt_row(const void *row_target)
 {
    ptrdiff_t i;
    if (!vbgo_tt_on)
-      return (uint64_t *)0;
+      return (uint32_t *)0;
    i = (const uint8_t *)row_target - vbgo_tt_block_base;
    return &vbgo_tt_dst[(i >> 12) & 1][(i >> 9) & 7];
 }
+static inline uint16_t *vbgo_tt_cell_row(const void *row_target)
+{
+   ptrdiff_t i;
+   if (!vbgo_tt_on)
+      return (uint16_t *)0;
+   i = (const uint8_t *)row_target - vbgo_tt_block_base;
+   return &vbgo_tt_cdst[(i >> 12) & 1][(i >> 9) & 7];
+}
 
 /* What's the same for every tag of one drawing call: the world drawing. */
-static inline uint64_t vbgo_tt_call_bits(void) { return (uint64_t)vbgo_tt_world << 22; }
+static inline uint32_t vbgo_tt_call_bits(void) { return vbgo_tt_world << 22; }
 
-/* The rest of a BG pixel's tag (pv 0 = a fill). */
-#define VBGO_TT_BG_BITS(chr, sx, sy, pal, pv, cell)                                                       \
-   (VBGO_TT_CELL_BITS(cell) | (uint64_t)((uint32_t)(chr) | ((uint32_t)(sx) << 11) | ((uint32_t)(sy) << 14) | \
-                                         ((uint32_t)(pal) << 17) | ((uint32_t)(pv) << 20)))
+/* The rest of a BG pixel's tag (pv 0 = a fill); its cell is stored beside it. */
+#define VBGO_TT_BG_BITS(chr, sx, sy, pal, pv)                                                                  \
+   ((uint32_t)(chr) | ((uint32_t)(sx) << 11) | ((uint32_t)(sy) << 14) | ((uint32_t)(pal) << 17) | \
+    ((uint32_t)(pv) << 20) | (1u << 27))
 
-/* A transparent pixel of a BG tile (only if vbgo_tt_fills_from) at d: tagged
+/* A transparent pixel of a BG tile (only if vbgo_tt_fills_from) at d, its cell at c: tagged
  * as a fill (tag: pv 0) unless something was already drawn or filled there
  * this pass (the block starts clear) - the backmost tile wins, drawn pixels always win. */
-static inline void vbgo_tt_fill_at(uint64_t *d, uint64_t tag)
+static inline void vbgo_tt_fill_at(uint32_t *d, uint16_t *c, uint32_t tag, unsigned cell)
 {
-   if (!vbgo_tag_lo(*d))
-      *d = tag;
+   if (!*d)
+      *d = tag, *c = (uint16_t)cell;
 }
 
 /* Whether a BG tile drawn from this cell may leave fills: non-blank tiles
@@ -252,11 +266,12 @@ static inline int vbgo_tt_fills_from(unsigned chr, unsigned cell)
 }
 
 /* A whole character row drawn by DrawBG's 8-pixel path: its 8 screen pixels
- * are tagged at d, d + VBGO_TT_COLUMN, ... pixels: the row as stored (tile
+ * are tagged at d, d + VBGO_TT_COLUMN, ... (cells at c, ...) pixels: the row as stored (tile
  * pixel n in bits 2n); flipped: drawn mirrored (screen pixel k shows tile
  * pixel 7 - k). bits: vbgo_tt_call_bits() | VBGO_TT_BG_BITS(chr, 0, sy, pal,
- * 0, cell). Drawn pixels and fills as one at a time would tag them. */
-static inline int vbgo_tt_tag_row8(uint64_t *d, unsigned pixels, int flipped, uint64_t bits, unsigned chr, unsigned cell)
+ * 0). Drawn pixels and fills as one at a time would tag them. */
+static inline int vbgo_tt_tag_row8(uint32_t *d, uint16_t *c, unsigned pixels, int flipped, uint32_t bits, unsigned chr,
+                                   unsigned cell)
 {
    /* (a row with every pixel drawn leaves no fills) */
    const int fills = ((pixels | (pixels >> 1)) & 0x5555) != 0x5555 && vbgo_tt_fills_from(chr, cell);
@@ -265,9 +280,10 @@ static inline int vbgo_tt_tag_row8(uint64_t *d, unsigned pixels, int flipped, ui
    if (!fills)
    {
       /* (unrolled: screen pixel k is d[k * VBGO_TT_COLUMN], tile pixel n = k, or 7 - k flipped) */
-#define VBGO_TT_PUT(k, n)                                                                      \
-   if ((pixels >> (2 * (n))) & 3)                                                               \
-      d[(k) * VBGO_TT_COLUMN] = bits | (uint64_t)(((n) << 11) | (((pixels >> (2 * (n))) & 3) << 20));
+#define VBGO_TT_PUT(k, n)                                                                          \
+   if ((pixels >> (2 * (n))) & 3)                                                                   \
+      d[(k) * VBGO_TT_COLUMN] = bits | ((n) << 11) | (((pixels >> (2 * (n))) & 3) << 20), \
+      c[(k) * VBGO_TT_COLUMN] = (uint16_t)cell;
       if (!pixels)
          return 0;
       if (flipped)
@@ -289,13 +305,13 @@ static inline int vbgo_tt_tag_row8(uint64_t *d, unsigned pixels, int flipped, ui
       pixels = ((pixels >> 4) & 0x0F0F) | ((pixels & 0x0F0F) << 4);
       pixels = ((pixels >> 8) & 0x00FF) | ((pixels & 0x00FF) << 8);
    }
-   for (k = 0; k < 8; k++, d += VBGO_TT_COLUMN, pixels >>= 2)
+   for (k = 0; k < 8; k++, d += VBGO_TT_COLUMN, c += VBGO_TT_COLUMN, pixels >>= 2)
    {
-      const uint64_t t = bits | (uint64_t)(((k ^ x7) << 11) | ((pixels & 3) << 20));
+      const uint32_t t = bits | ((k ^ x7) << 11) | ((pixels & 3) << 20);
       if (pixels & 3)
-         *d = t;
+         *d = t, *c = (uint16_t)cell;
       else
-         vbgo_tt_fill_at(d, t);
+         vbgo_tt_fill_at(d, c, t, cell);
    }
    return 2; /* (fills may be among them) */
 }

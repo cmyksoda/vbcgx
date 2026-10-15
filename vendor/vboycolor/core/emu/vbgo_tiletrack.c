@@ -7,7 +7,8 @@ int vbgo_tt_on = 0;
 int vbgo_tt_fill = VBGO_TT_FILLS_NONE;
 uint32_t vbgo_tt_world = 0;
 const uint8_t *vbgo_tt_block_base = NULL;
-uint64_t *vbgo_tt_dst[2];
+uint32_t *vbgo_tt_dst[2];
+uint16_t *vbgo_tt_cdst[2];
 static const uint8_t s_no_blank[2048];
 const uint8_t *vbgo_tt_blank = s_no_blank;
 uint8_t vbgo_tt_fill_cells[8192];
@@ -18,16 +19,17 @@ uint32_t vbgo_tt_clut_serial = 1;
  * (vbgo_tiletrack_share_pass) shares that buffer's slot, so a third slot is
  * always free for a pass of its own. */
 #define VBGO_TT_SLOTS 3
-static uint64_t s_tags[VBGO_TT_SLOTS][2][VBGO_TT_WIDTH * VBGO_TT_COLUMN] __attribute__((aligned(32)));
+static uint32_t s_tags[VBGO_TT_SLOTS][2][VBGO_TT_WIDTH * VBGO_TT_COLUMN] __attribute__((aligned(32)));
+/* ... and each tag's cell, the same layout (only read where the tag is drawn, so never cleared). */
+static uint16_t s_cells[VBGO_TT_SLOTS][2][VBGO_TT_WIDTH * VBGO_TT_COLUMN];
 
-/* One column of a band: 8 tags, two whole cache lines (dcbz skips reading what's about to be cleared). */
-static inline void ClearColumn(uint64_t *t)
+/* One column of a band: 8 tags, one whole cache line (dcbz skips reading what's about to be cleared). */
+static inline void ClearColumn(uint32_t *t)
 {
 #ifdef GEKKO
    __asm__ volatile("dcbz 0,%0" : : "r"(t) : "memory");
-   __asm__ volatile("dcbz 0,%0" : : "r"(t + 4) : "memory");
 #else
-   memset(t, 0, 8 * sizeof(uint64_t));
+   memset(t, 0, 8 * sizeof(uint32_t));
 #endif
 }
 
@@ -68,7 +70,8 @@ static uint32_t s_versions;
 /* The block being drawn as it was (this buffer's last pass's, if s_old_valid),
  * and what that pass's copies said about tiles and sprites, to tell which
  * cells come out the same. */
-static uint64_t s_old_tags[2][VBGO_TT_WIDTH * 8];
+static uint32_t s_old_tags[2][VBGO_TT_WIDTH * 8];
+static uint16_t s_old_cells[2][VBGO_TT_WIDTH * 8];
 static int s_old_valid;
 static uint32_t s_prev_hash[2048];
 static uint16_t s_prev_oam[VBGO_OAM_HALFWORDS];
@@ -183,6 +186,7 @@ static void Unshare(unsigned fb)
    from = s_slot[fb];
    to = FreeSlot();
    memcpy(s_tags[to], s_tags[from], sizeof(s_tags[to]));
+   memcpy(s_cells[to], s_cells[from], sizeof(s_cells[to]));
    memcpy(s_block_stamp[to], s_block_stamp[from], sizeof(s_block_stamp[to]));
    memcpy(s_band_pass[to], s_band_pass[from], sizeof(s_band_pass[to]));
    memcpy(s_block_chr[to], s_block_chr[from], sizeof(s_block_chr[to]));
@@ -345,6 +349,8 @@ void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *
    vbgo_tt_blank = s_blank[s_slot[fb]];
    vbgo_tt_dst[0] = &s_tags[s_slot[fb]][0][block_no * 8];
    vbgo_tt_dst[1] = &s_tags[s_slot[fb]][1][block_no * 8];
+   vbgo_tt_cdst[0] = &s_cells[s_slot[fb]][0][block_no * 8];
+   vbgo_tt_cdst[1] = &s_cells[s_slot[fb]][1][block_no * 8];
    vbgo_tt_world = 0;
    s_block_slot = s_slot[fb];
    s_block_no = block_no;
@@ -388,13 +394,17 @@ void vbgo_tiletrack_block_drawing(bool compare)
    for (e = 0; e < 2; e++)
       for (x = 0; x < VBGO_TT_WIDTH; x++)
       {
-         uint64_t *from = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
+         uint32_t *from = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
          if (s_old_valid)
          {
-            /* (spelled out: on the Wii a memcpy call per 64-byte column costs more than the copy itself) */
-            uint64_t *to = &s_old_tags[e][x * 8];
+            /* (spelled out: on the Wii a memcpy call per column costs more than the copy itself) */
+            const uint16_t *cfrom = vbgo_tt_cdst[e] + x * VBGO_TT_COLUMN;
+            uint32_t *to = &s_old_tags[e][x * 8];
+            uint16_t *cto = &s_old_cells[e][x * 8];
             to[0] = from[0], to[1] = from[1], to[2] = from[2], to[3] = from[3];
             to[4] = from[4], to[5] = from[5], to[6] = from[6], to[7] = from[7];
+            cto[0] = cfrom[0], cto[1] = cfrom[1], cto[2] = cfrom[2], cto[3] = cfrom[3];
+            cto[4] = cfrom[4], cto[5] = cfrom[5], cto[6] = cfrom[6], cto[7] = cfrom[7];
          }
          ClearColumn(from);
       }
@@ -408,16 +418,21 @@ static int SameCell(unsigned c)
    for (e = 0; e < 2; e++)
       for (x = c * 8; x < c * 8 + 8; x++)
       {
-         const uint64_t *was = &s_old_tags[e][x * 8], *is = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
+         const uint32_t *was = &s_old_tags[e][x * 8], *is = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
+         const uint16_t *was_cell = &s_old_cells[e][x * 8], *is_cell = vbgo_tt_cdst[e] + x * VBGO_TT_COLUMN;
          for (y = 0; y < 8; y++)
          {
+            uint64_t t;
             if (was[y] != is[y])
                return 0;
-            if (!vbgo_tag_lo(is[y]))
+            if (!is[y])
                continue;
-            if (s_block_chr_changed && (s_chr_changed[VBGO_TAG_CHAR(is[y]) >> 5] >> (VBGO_TAG_CHAR(is[y]) & 31) & 1))
+            if (was_cell[y] != is_cell[y])
                return 0;
-            if (VBGO_TAG_IS_OBJ(is[y]) && (s_obj_changed[VBGO_TAG_OBJ_NO(is[y]) >> 5] >> (VBGO_TAG_OBJ_NO(is[y]) & 31) & 1))
+            t = vbgo_tag_compose(is[y], is_cell[y]);
+            if (s_block_chr_changed && (s_chr_changed[VBGO_TAG_CHAR(t) >> 5] >> (VBGO_TAG_CHAR(t) & 31) & 1))
+               return 0;
+            if (VBGO_TAG_IS_OBJ(t) && (s_obj_changed[VBGO_TAG_OBJ_NO(t) >> 5] >> (VBGO_TAG_OBJ_NO(t) & 31) & 1))
                return 0;
          }
       }
@@ -542,8 +557,11 @@ void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
    /* (the blocks it repeated: the other buffer's tags, as this pass's) */
    for (e = 0; to != from && e < 2; e++)
       for (x = 0; x < VBGO_TT_WIDTH; x++)
-         memcpy(&s_tags[to][e][x * VBGO_TT_COLUMN], &s_tags[from][e][x * VBGO_TT_COLUMN],
-                (block_no < VBGO_TT_BLOCKS ? block_no : VBGO_TT_BLOCKS) * 8 * sizeof(uint64_t));
+      {
+         const unsigned rows = (block_no < VBGO_TT_BLOCKS ? block_no : VBGO_TT_BLOCKS) * 8;
+         memcpy(&s_tags[to][e][x * VBGO_TT_COLUMN], &s_tags[from][e][x * VBGO_TT_COLUMN], rows * sizeof(uint32_t));
+         memcpy(&s_cells[to][e][x * VBGO_TT_COLUMN], &s_cells[from][e][x * VBGO_TT_COLUMN], rows * sizeof(uint16_t));
+      }
    s_have[fb] = 1;
    s_cpu[fb] = 0;
    s_pass_open = 1;
@@ -621,7 +639,9 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view)
    for (x = 0; x < VBGO_TT_WIDTH; x++)
    {
       const uint8_t d = s_disp[eye & 1][x];
-      view->columns[x] = (d & 4) && (d & 1) == (unsigned)fb ? &s_tags[slot][(d >> 1) & 1][x * VBGO_TT_COLUMN] : NULL;
+      const int shown = (d & 4) && (d & 1) == (unsigned)fb;
+      view->columns[x] = shown ? &s_tags[slot][(d >> 1) & 1][x * VBGO_TT_COLUMN] : NULL;
+      view->cells[x] = shown ? &s_cells[slot][(d >> 1) & 1][x * VBGO_TT_COLUMN] : NULL;
       if (!view->columns[x] || ((d >> 1) & 1) != (eye & 1) || s_disp_clut[eye & 1][x] != view->clut)
          view->clut = 0;
    }
@@ -636,10 +656,11 @@ bool vbgo_tiletrack_records(unsigned eye, uint64_t *records, uint32_t *cells, bo
       return false;
    for (x = 0; x < VBGO_TT_WIDTH; x++)
    {
-      const uint64_t *col = view.columns[x];
+      const uint32_t *col = view.columns[x];
+      const uint16_t *col_cells = view.cells[x];
       for (y = 0; y < VBGO_TT_HEIGHT; y++)
       {
-         const uint64_t t = col ? col[y] : 0;
+         const uint64_t t = col ? vbgo_tag_compose(col[y], col_cells[y]) : 0;
          uint64_t out = 0;
          uint32_t cell = 0;
          if (t && vbgo_tag_drawn(t, view.band_key[y >> 3]) && (with_fills || VBGO_TAG_PIXEL(t)))

@@ -137,8 +137,9 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
         [=[ uint32 BGMap_Base = bgmap_base_raw << 12;]=]
         [=[ uint32 BGMap_Base = bgmap_base_raw << 12;
  unsigned vbgo_cell = 0; /* VirtualBoyGo */
- uint64_t *const vbgo_row = vbgo_tt_row(target); /* VirtualBoyGo: this row's tags (NULL = not tracking) */
- const uint64_t vbgo_bits = vbgo_tt_call_bits(); /* VirtualBoyGo */
+ uint32_t *const vbgo_row = vbgo_tt_row(target); /* VirtualBoyGo: this row's tags (NULL = not tracking) */
+ uint16_t *const vbgo_crow = vbgo_tt_cell_row(target); /* VirtualBoyGo: ... and their cells */
+ const uint32_t vbgo_bits = vbgo_tt_call_bits(); /* VirtualBoyGo */
  const uint32_t vbgo_wbit = 1u << VBGO_TAG_WORLD(vbgo_bits); /* VirtualBoyGo: cells this world tags (vbgo_tt_wcells) */]=]
         "vip_draw.inc (DrawBG locals)")
     _vbgo_replace_once(DRAW
@@ -275,8 +276,9 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
    SourceX += 8;]=]
         [=[   if(vbgo_row) /* VirtualBoyGo */
    {
-    const int tagged = vbgo_tt_tag_row8(vbgo_row + x * VBGO_TT_COLUMN, pixels, bgsc & 0x2000,
-                                        vbgo_bits | VBGO_TT_BG_BITS(char_no, 0, char_sub_y, palette_selector, 0, vbgo_cell), char_no, vbgo_cell);
+    const int tagged = vbgo_tt_tag_row8(vbgo_row + x * VBGO_TT_COLUMN, vbgo_crow + x * VBGO_TT_COLUMN, pixels, bgsc & 0x2000,
+                                        vbgo_bits | VBGO_TT_BG_BITS(char_no, 0, char_sub_y, palette_selector, 0),
+                                        char_no, vbgo_cell);
     if(tagged)
      vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_wcells[(x + 7) >> 3] |= vbgo_wbit;
     if(tagged == 2)
@@ -294,11 +296,12 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
    {
     target[x] = GPLT_Cache[palette_selector][pixel];
     if(vbgo_row) /* VirtualBoyGo */
-     vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, pixel, vbgo_cell),
-     vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
+     vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, pixel),
+     vbgo_crow[x * VBGO_TT_COLUMN] = (uint16_t)vbgo_cell, vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
    }
    else if(vbgo_row && vbgo_tt_fills_from(char_no, vbgo_cell)) /* VirtualBoyGo */
-    vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, 0, vbgo_cell)),
+    vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], &vbgo_crow[x * VBGO_TT_COLUMN],
+                    vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, 0), vbgo_cell),
     vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_fillc[x >> 3] = 1;
    SourceX++;]=]
         "vip_draw.inc (DrawBG per-pixel store)")
@@ -308,8 +311,9 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
         [=[ const uint16 *param_ptr = &DRAM[(ParamBase + 8 * (RealY - DestY)) & 0xFFFF];]=]
         [=[ const uint16 *param_ptr = &DRAM[(ParamBase + 8 * (RealY - DestY)) & 0xFFFF];
  unsigned vbgo_cell = 0; /* VirtualBoyGo */
- uint64_t *const vbgo_row = vbgo_tt_row(target); /* VirtualBoyGo: this row's tags (NULL = not tracking) */
- const uint64_t vbgo_bits = vbgo_tt_call_bits(); /* VirtualBoyGo */
+ uint32_t *const vbgo_row = vbgo_tt_row(target); /* VirtualBoyGo: this row's tags (NULL = not tracking) */
+ uint16_t *const vbgo_crow = vbgo_tt_cell_row(target); /* VirtualBoyGo: ... and their cells */
+ const uint32_t vbgo_bits = vbgo_tt_call_bits(); /* VirtualBoyGo */
  const uint32_t vbgo_wbit = 1u << VBGO_TAG_WORLD(vbgo_bits); /* VirtualBoyGo: cells this world tags (vbgo_tt_wcells) */]=]
         "vip_draw.inc (DrawAffine locals)")
     _vbgo_replace_once(DRAW
@@ -334,11 +338,12 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
   {
    target[x] = GPLT_Cache[bgsc >> 14][pixel];
    if(vbgo_row) /* VirtualBoyGo */
-    vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, char_sub_x >> 1, char_sub_y, bgsc >> 14, pixel, vbgo_cell),
-    vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
+    vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, char_sub_x >> 1, char_sub_y, bgsc >> 14, pixel),
+    vbgo_crow[x * VBGO_TT_COLUMN] = (uint16_t)vbgo_cell, vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
   }
   else if(vbgo_row && vbgo_tt_fills_from(bgsc & 0x7FF, vbgo_cell)) /* VirtualBoyGo */
-   vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, char_sub_x >> 1, char_sub_y, bgsc >> 14, 0, vbgo_cell)),
+   vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], &vbgo_crow[x * VBGO_TT_COLUMN],
+                   vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, char_sub_x >> 1, char_sub_y, bgsc >> 14, 0), vbgo_cell),
    vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_fillc[x >> 3] = 1;]=]
         "vip_draw.inc (DrawAffine no-rotation store)")
     _vbgo_replace_once(DRAW
@@ -361,11 +366,12 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
   {
    target[x] = GPLT_Cache[palette_selector][pixel];
    if(vbgo_row) /* VirtualBoyGo */
-    vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, pixel, vbgo_cell),
-    vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
+    vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, pixel),
+    vbgo_crow[x * VBGO_TT_COLUMN] = (uint16_t)vbgo_cell, vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
   }
   else if(vbgo_row && vbgo_tt_fills_from(char_no, vbgo_cell)) /* VirtualBoyGo */
-   vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, 0, vbgo_cell)),
+   vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], &vbgo_crow[x * VBGO_TT_COLUMN],
+                   vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, 0), vbgo_cell),
    vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_fillc[x >> 3] = 1;
 
   SourceX += dx;
@@ -384,7 +390,8 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
       {
        *target = JPLT_Cache[palette_selector][pixels & 3];
        if(vbgo_orow && (unsigned)(target - fb[lr] - ClipX0) <= (unsigned)(ClipX1 - ClipX0)) /* VirtualBoyGo */
-        vbgo_orow[(target - fb[lr]) * VBGO_TT_COLUMN] = vbgo_obits | (uint64_t)(((8 - meow) << 11) | ((pixels & 3) << 20));
+        vbgo_orow[(target - fb[lr]) * VBGO_TT_COLUMN] = vbgo_obits | ((8 - meow) << 11) | ((pixels & 3) << 20),
+        vbgo_ocrow[(target - fb[lr]) * VBGO_TT_COLUMN] = vbgo_ocell;
       }
       target--;]=]
         "vip_draw.inc (DrawOBJ flipped store)")
@@ -396,7 +403,8 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
       {
        *target = JPLT_Cache[palette_selector][pixels & 3];
        if(vbgo_orow && (unsigned)(target - fb[lr] - ClipX0) <= (unsigned)(ClipX1 - ClipX0)) /* VirtualBoyGo */
-        vbgo_orow[(target - fb[lr]) * VBGO_TT_COLUMN] = vbgo_obits | (uint64_t)(((8 - meow) << 11) | ((pixels & 3) << 20));
+        vbgo_orow[(target - fb[lr]) * VBGO_TT_COLUMN] = vbgo_obits | ((8 - meow) << 11) | ((pixels & 3) << 20),
+        vbgo_ocrow[(target - fb[lr]) * VBGO_TT_COLUMN] = vbgo_ocell;
       }
       target++;]=]
         "vip_draw.inc (DrawOBJ store)")
@@ -406,9 +414,10 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
 ]=]
         [=[    uint8 *target = &fb[lr][x];
     /* VirtualBoyGo: this sprite row's tags - all but the pixel's place in the tile and its value */
-    uint64_t *const vbgo_orow = vbgo_tt_row(fb[lr]);
-    const uint64_t vbgo_obits = vbgo_tt_call_bits() | VBGO_TT_OBJ_BITS(oam) |
-                                (uint64_t)(char_no | (char_sub_y << 14) | (palette_selector << 17) | (1u << 19));
+    uint32_t *const vbgo_orow = vbgo_tt_row(fb[lr]);
+    uint16_t *const vbgo_ocrow = vbgo_tt_cell_row(fb[lr]);
+    const uint32_t vbgo_obits = vbgo_tt_call_bits() | char_no | (char_sub_y << 14) | (palette_selector << 17) | (1u << 19);
+    const uint16_t vbgo_ocell = VBGO_TT_OBJ_CELL(oam);
 ]=]
         "vip_draw.inc (DrawOBJ sprite row)")
 
