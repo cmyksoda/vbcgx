@@ -1938,6 +1938,9 @@ static int Load(const uint8_t *data, size_t size)
          Map_Addresses[map_size++] = A + sub_A;
    }
    WRAM = VB_V810->SetFastMap(Map_Addresses, 65536, map_size, "WRAM");
+#ifdef GEKKO
+   VB_V810->SetJitWorkRam(WRAM);
+#endif
 
    // Round up the ROM size to 65536(we mirror it a little later)
    GPROM_Mask = (size < 65536) ? (65536 - 1) : (size - 1);

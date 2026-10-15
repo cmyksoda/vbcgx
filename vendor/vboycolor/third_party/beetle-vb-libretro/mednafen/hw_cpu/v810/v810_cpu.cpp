@@ -210,7 +210,9 @@ V810::V810()
 
 V810::~V810()
 {
-
+#ifdef GEKKO
+   free(BlockArena);
+#endif
 }
 
 INLINE void V810::RecalcIPendingCache(void)
@@ -413,12 +415,18 @@ void V810::Reset()
    in_bstr = false;
 
    RecalcIPendingCache();
+#ifdef GEKKO
+   FlushBlocks();
+#endif
 }
 
 bool V810::Init(V810_Emu_Mode mode, bool vb_mode)
 {
    EmuMode = mode;
    VBMode = vb_mode;
+#ifdef GEKKO
+   FlushBlocks();
+#endif
 
    in_bstr = false;
    in_bstr_to = 0;
@@ -442,6 +450,9 @@ bool V810::Init(V810_Emu_Mode mode, bool vb_mode)
 
 void V810::Kill(void)
 {
+#ifdef GEKKO
+   FlushBlocks();
+#endif
    for (uint8 *allocation : FastMapAllocList)
       free(allocation);
    FastMapAllocList.clear();
@@ -673,6 +684,11 @@ void V810::Run_Fast(int32 MDFN_FASTCALL (*event_handler)(const v810_timestamp_t 
  */
 #undef RB_GETPC
 #undef RB_RDOP
+
+#ifdef GEKKO
+#include "v810_blocks.inc"
+#include "v810_jit.inc"
+#endif
 
 v810_timestamp_t V810::Run(int32 MDFN_FASTCALL (*event_handler)(const v810_timestamp_t timestamp))
 {

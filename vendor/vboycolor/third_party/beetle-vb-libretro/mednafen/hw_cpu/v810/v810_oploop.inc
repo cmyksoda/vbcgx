@@ -67,6 +67,11 @@
      {
         P_REG[0] = 0; /* Zero the Zero Reg!!! */
 
+#ifdef GEKKO
+	if(!RB_AccurateMode && !IPendingCache && !Halted && !in_bstr && RunBlock(timestamp_rl))
+	   continue;
+#endif
+
 	RB_CPUHOOK(RB_GETPC());
 
 	{

@@ -226,6 +226,15 @@ class V810
  uint32 PC;
  uint8 *PC_ptr;
  uint8 *PC_base;
+#ifdef GEKKO
+ /* (the recompiler's, near P_REG so compiled code reaches them from it) */
+ uint32 JitTarget; /* (a compiled block's branch target, for RunBlock) */
+ uint32 *JitLinkSite; /* (... and the branch there to point at the target's code once it's compiled) */
+ uint32 JitLinkTarget;
+ uint32 *JitResumeAt; /* (where compiled code an event stopped would go on, at JitResumePc with JitResumeLastop) */
+ uint32 JitResumePc;
+ int32 JitResumeLastop;
+#endif
 
  uint32 IPendingCache;
  void RecalcIPendingCache(void);
@@ -363,6 +372,46 @@ class V810
 
 
  uint8 DummyRegion[V810_FAST_MAP_PSIZE + V810_FAST_MAP_TRAMPOLINE_SIZE];
+
+#ifdef GEKKO
+ /* The Wii's recompiler (v810_blocks.inc, v810_jit.inc): straight runs of ROM code, decoded once and turned into
+    Broadway code that does exactly what the interpreter would. Blocks live in one arena, cleared whole with the
+    code when either fills (decoding again gives the same blocks). */
+ struct BlockOp
+ {
+    uint8 kind, opcode, r1, r2;
+    uint32 imm;
+ };
+ struct Block
+ {
+    uint32 pc;
+    uint8 *code; /* (where it was decoded from: PC_ptr must match) */
+    uint32 count;
+    void *jit;   /* (its Broadway code, or NULL - see v810_jit.inc) */
+    uint32 jitTried;
+    Block *next; /* (another in the same slot) */
+    BlockOp ops[1];
+ };
+ enum { BLOCK_SLOTS = 16384, BLOCK_ARENA = 256 * 1024, BLOCK_MAX_OPS = 64 };
+ Block *BlockSlot[BLOCK_SLOTS];
+ uint8 *BlockArena = nullptr;
+ size_t BlockArenaUsed = 0;
+ bool RunBlock(v810_timestamp_t &timestamp);
+ Block *FindBlock(uint32 pc, bool decode);
+ /* Compiled blocks start only where a branch lands, after one, or after an op left to the interpreter:
+    an event can stop a block anywhere, and starting new ones there would never end. */
+ bool BlockEntryOk = true;
+ uint8 *BlockExpect = nullptr; /* (where the op the interpreter ran last would continue) */
+ void FlushBlocks(void);
+ void *CompileBlock(Block *block);
+ size_t JitCodeUsed = 0;
+ uint32 *JitStub[16]; /* (shared code at the code buffer's start: JIT_STUB_*) */
+ uint8 *JitWorkRam = nullptr;
+
+ public:
+ /* Work RAM (VB 0x05000000, 64 KiB) for compiled loads and stores. */
+ void SetJitWorkRam(uint8 *ram) { JitWorkRam = ram; FlushBlocks(); }
+#endif
 };
 
 #endif
