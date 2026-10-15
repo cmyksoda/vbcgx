@@ -249,7 +249,8 @@ class V810
  {
     const uint8 *code;
     bool storeFree, counter;
-    uint32 addr;
+    uint32 addr; /* (the counter: addr, plus counterBase's register unless that's 0) */
+    unsigned counterBase;
     int32 step;
     unsigned pollBase;
     int32 pollDisp;

@@ -95,29 +95,49 @@ static bool StoreFreeLoop(const uint8 *code)
 }
 
 /* Wario Land's wait for the VIP: a RAM counter raised each pass, then a poll
- * masked (setting every flag but the add's carry) and the branch back. */
-static bool CounterLoop(const uint8 *code, uint32 *addr, int32 *step, unsigned *pollBase, int32 *pollDisp)
+ * masked (setting every flag but the add's carry) and the branch back. The counter's address is a movhi's
+ * (Wario Land), or a register's plus a displacement (Teleroboxer: *counterBase, which no pass changes). */
+static bool CounterLoop(const uint8 *code, uint32 *addr, unsigned *counterBase, int32 *step, unsigned *pollBase, int32 *pollDisp)
 {
    #define H(i) LoadU16_LE((const uint16 *)(code + 2 * (i)))
-   const unsigned a = (H(0) >> 5) & 31, b = (H(2) >> 5) & 31;
-   unsigned i;
-   if((H(0) >> 10) != 0x2F || (H(0) & 31) || !a || (H(2) >> 10) != 0x33 || (H(2) & 31) != a || !b || b == a ||
-      (H(4) >> 10) != 0x11 || ((H(4) >> 5) & 31) != b || H(5) != H(0) || H(6) != H(1) ||
-      (H(7) >> 10) != 0x37 || (H(7) & 31) != a || ((H(7) >> 5) & 31) != b || H(8) != H(3))
+   unsigned i, b, poll;
+   if((H(0) >> 10) == 0x2F)
+   {
+      const unsigned a = (H(0) >> 5) & 31;
+      b = (H(2) >> 5) & 31;
+      if((H(0) & 31) || !a || (H(2) >> 10) != 0x33 || (H(2) & 31) != a || !b || b == a ||
+         (H(4) >> 10) != 0x11 || ((H(4) >> 5) & 31) != b || H(5) != H(0) || H(6) != H(1) ||
+         (H(7) >> 10) != 0x37 || (H(7) & 31) != a || ((H(7) >> 5) & 31) != b || H(8) != H(3))
+         return false;
+      *addr = ((uint32)H(1) << 16) + (int16)H(3);
+      *counterBase = 0;
+      *step = (H(4) & 0x10) ? (int32)(H(4) & 31) - 32 : (int32)(H(4) & 31);
+      poll = 9;
+   }
+   else
+   {
+      const unsigned base = H(0) & 31;
+      b = (H(0) >> 5) & 31;
+      if((H(0) >> 10) != 0x33 || !base || !b || b == base || (H(2) >> 10) != 0x11 || ((H(2) >> 5) & 31) != b ||
+         (H(3) >> 10) != 0x37 || (H(3) & 31) != base || ((H(3) >> 5) & 31) != b || H(4) != H(1))
+         return false;
+      *addr = (uint32)(int32)(int16)H(1);
+      *counterBase = base;
+      *step = (H(2) & 0x10) ? (int32)(H(2) & 31) - 32 : (int32)(H(2) & 31);
+      poll = 5;
+   }
+   if(((H(poll) >> 10) != 0x30 && (H(poll) >> 10) != 0x31 && (H(poll) >> 10) != 0x33) || ((H(poll) >> 5) & 31) != b ||
+      (H(poll) & 31) == b)
       return false;
-   if(((H(9) >> 10) != 0x30 && (H(9) >> 10) != 0x31 && (H(9) >> 10) != 0x33) || ((H(9) >> 5) & 31) != b || (H(9) & 31) == b)
-      return false;
-   *addr = ((uint32)H(1) << 16) + (int16)H(3);
-   *step = (H(4) & 0x10) ? (int32)(H(4) & 31) - 32 : (int32)(H(4) & 31);
-   *pollBase = H(9) & 31;
-   *pollDisp = (int16)H(10);
-   for(i = 11; i < 32; i += 2)
+   *pollBase = H(poll) & 31;
+   *pollDisp = (int16)H(poll + 1);
+   for(i = poll + 2; i < 32; i += 2)
    {
       const unsigned op = H(i) >> 10;
       if((op >> 3) == 4) /* the branch back to the head */
       {
          const int32 disp = (H(i) & 0x100) ? (int32)(H(i) & 0x1FF) - 0x200 : (int32)(H(i) & 0x1FF);
-         return i > 11 && (int32)(2 * i) + disp == 0;
+         return i > poll + 2 && (int32)(2 * i) + disp == 0;
       }
       if((op != 0x2C && op != 0x2D && op != 0x2E) || (H(i) & 31) != b || ((H(i) >> 5) & 31) != b)
          return false;
@@ -166,12 +186,12 @@ v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
          IdleShape &seen = IdleShapeSeen;
          seen.code = code;
          seen.storeFree = StoreFreeLoop(code);
-         seen.counter = !seen.storeFree && CounterLoop(code, &seen.addr, &seen.step, &seen.pollBase, &seen.pollDisp);
+         seen.counter = !seen.storeFree && CounterLoop(code, &seen.addr, &seen.counterBase, &seen.step, &seen.pollBase, &seen.pollDisp);
       }
       if(idle && !IdleShapeSeen.storeFree)
       {
          const IdleShape &seen = IdleShapeSeen;
-         counter = seen.addr;
+         counter = seen.addr + (seen.counterBase ? P_REG[seen.counterBase] : 0);
          step = seen.step;
          idle = seen.counter && ((counter >> 24) & 7) == 5 &&
                 ((P_REG[seen.pollBase] + seen.pollDisp) & ~3u) != (counter & ~3u);
