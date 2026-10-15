@@ -199,6 +199,9 @@ v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
          }
          timestamp += k * d;
       }
+      /* (the next pass reaches the horizon, so it isn't looked at; the one after starts afresh, keeping d one pass) */
+      IdleQuiet = 1;
+      IdleHead = ~0u;
       IdleAt = timestamp;
       vb_idle_unsteady = 0;
       return timestamp;
