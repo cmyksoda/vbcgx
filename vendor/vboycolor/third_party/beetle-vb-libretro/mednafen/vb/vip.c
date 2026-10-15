@@ -1829,12 +1829,36 @@ static void CopyFBColumnToTarget_HLI(void)
 /* Columns x0-x1 of the block just drawn into the drawing buffer's frame buffer. */
 static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1)
 {
-   int lr, x;
+   int lr, x, k;
    for(lr = 0; lr < 2; lr++)
    {
       const uint8 *rows = buffers[lr] + 8;
       uint8 *to = FB[DrawingFB][lr] + DrawingBlock * 2;
-      for(x = x0; x <= x1; x++)
+      for(x = x0; x <= x1 && (x & 3); x++)
+      {
+         to[64 * x + 0] = rows[x + 512 * 0] | (rows[x + 512 * 1] << 2) | (rows[x + 512 * 2] << 4) | (rows[x + 512 * 3] << 6);
+         to[64 * x + 1] = rows[x + 512 * 4] | (rows[x + 512 * 5] << 2) | (rows[x + 512 * 6] << 4) | (rows[x + 512 * 7] << 6);
+      }
+      /* 4 columns at a time, a byte each in a word: each row masked to the bits that stay in its byte, as the byte
+         arithmetic above keeps them */
+      for(; x + 3 <= x1; x += 4)
+      {
+         static const uint32 keep[4] = {0xFFFFFFFFu, 0x3F3F3F3Fu, 0x0F0F0F0Fu, 0x03030303u};
+         uint32 lo = 0, hi = 0, word;
+         uint8 bytes[8];
+         for(k = 0; k < 4; k++)
+         {
+            memcpy(&word, rows + x + 512 * k, 4);
+            lo |= (word & keep[k]) << (2 * k);
+            memcpy(&word, rows + x + 512 * (k + 4), 4);
+            hi |= (word & keep[k]) << (2 * k);
+         }
+         memcpy(bytes, &lo, 4);
+         memcpy(bytes + 4, &hi, 4);
+         for(k = 0; k < 4; k++)
+            to[64 * (x + k) + 0] = bytes[k], to[64 * (x + k) + 1] = bytes[4 + k];
+      }
+      for(; x <= x1; x++)
       {
          to[64 * x + 0] = rows[x + 512 * 0] | (rows[x + 512 * 1] << 2) | (rows[x + 512 * 2] << 4) | (rows[x + 512 * 3] << 6);
          to[64 * x + 1] = rows[x + 512 * 4] | (rows[x + 512 * 5] << 2) | (rows[x + 512 * 6] << 4) | (rows[x + 512 * 7] << 6);
