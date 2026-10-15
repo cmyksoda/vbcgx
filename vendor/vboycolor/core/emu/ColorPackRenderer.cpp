@@ -791,16 +791,17 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 for (unsigned gx = 0; gx < static_cast<unsigned>(kGridW); ++gx)
                 {
                     Cell &cell = cache.cells[gx];
+                    ContextGroupBits &cellMarkers = cache.marks[gx].markers;
                     if (keep[band] >> gx & 1)
                     {
-                        markers[row + gx] |= cell.markers;
+                        markers[row + gx] |= cellMarkers;
                         if (markerLayers && cell.markerLayer != 0xFF)
                             markerLayers[row + gx] = cell.markerLayer;
-                        if (cell.markers.Any() || (markerLayers && cell.markerLayer != 0xFF))
+                        if (cellMarkers.Any() || (markerLayers && cell.markerLayer != 0xFF))
                             NoteMarkerCell(row + gx);
                     }
                     else
-                        cell.markers = ContextGroupBits{}, cell.markerLayer = 0xFF;
+                        cellMarkers = ContextGroupBits{}, cell.markerLayer = 0xFF;
                 }
                 if (!any || keep[band] == (1ull << kGridW) - 1)
                     continue;
@@ -839,7 +840,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         const unsigned cell = (y >> 3) * kGridW + (x >> 3);
                         markers[cell] |= bits;
                         NoteMarkerCell(cell);
-                        cache.cells[x >> 3].markers |= bits;
+                        cache.marks[x >> 3].markers |= bits;
                         if (!sprite && markerLayers)
                             markerLayers[cell] = cache.cells[x >> 3].markerLayer = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
                     }
@@ -1333,7 +1334,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         for (unsigned b = 0; haveContexts && !m_layerBound.Any() && b < static_cast<unsigned>(kBands); ++b)
             for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
             {
-                Cell &cell = bands[b].cells[c];
+                CellMarks &cell = bands[b].marks[c];
                 const unsigned i = b * kGridW + c;
                 contextSame[b][c] = keptCell[b][c] && cell.nearSprites == m_nearSprites[i] &&
                                     cell.closeSprites == m_closeSprites[i];

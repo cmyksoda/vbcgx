@@ -133,6 +133,9 @@ private:
         uint8_t brightest = 0;
         uint8_t markerLayer = 0xFF;
         std::array<uint16_t, 32> extent{};
+    };
+    struct CellMarks // (a Cell's markers, kept apart: the painting loops never read them, so the cells stay small)
+    {
         ContextGroupBits markers; // (left eye: the marker pre-pass's grid cell)
         ContextGroupBits nearSprites, closeSprites; // (left eye: sprites' markers around it as its slow runs were painted)
     };
@@ -140,6 +143,7 @@ private:
     {
         uint32_t clut = 0, state = 0;
         std::array<Cell, VBGO_TT_WIDTH / 8> cells{};
+        std::array<CellMarks, VBGO_TT_WIDTH / 8> marks{};
         std::vector<uint64_t> pairSlots; // cell << 32 | left eye: chr | pairs << 11; right eye: chr | (pair + 1) << 11
     };
     std::array<std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2>, 2> m_bands; // [eye][buffer]
