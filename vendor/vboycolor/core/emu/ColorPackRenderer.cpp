@@ -1761,8 +1761,32 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
         }
     }
     const size_t eyeRows = static_cast<size_t>(VBGO_TT_HEIGHT) * 3 * kGuardedRow;
-    m_estimateBits.assign(static_cast<size_t>(count) * 2 * eyeRows, 0);
-    uint32_t *bits = m_estimateBits.data();
+    // (this buffer's last gather: kept if it had the same pairs in the same slots and the pictures' colors, buffers
+    // and shown columns are unchanged - then only cells whose version or band changed are gathered again; sprite
+    // pairs read sprite attributes the versions don't cover, so they're always gathered whole)
+    GatherCache &cache = m_gatherCache[view[0].fb & 1];
+    std::array<int8_t, 96> slots;
+    std::copy(layerSlot[0].begin(), layerSlot[0].end(), slots.begin());
+    std::copy(layerSlot[1].begin(), layerSlot[1].end(), slots.begin() + 32);
+    std::copy(spriteSlot.begin(), spriteSlot.end(), slots.begin() + 64);
+    bool keep = cache.count == count && cache.slots == slots && cache.wanted[0] == wanted[0] && cache.wanted[1] == wanted[1];
+    for (int k = 0; k < count; ++k)
+        keep &= !m_pairs[todo[k]].sprites;
+    std::array<uint64_t, VBGO_TT_WIDTH / 64> shown[2]{};
+    for (unsigned eye = 0; eye < 2; ++eye)
+    {
+        for (int x = 0; x < VBGO_TT_WIDTH; ++x)
+            shown[eye][x >> 6] |= static_cast<uint64_t>(view[eye].columns[x] != nullptr) << (x & 63);
+        keep &= view[eye].fb == cache.fb[eye] && view[eye].clut && view[eye].clut == cache.clut[eye] &&
+                view[eye].cell_version && shown[eye] == cache.shown[eye] &&
+                cache.version[eye].size() == static_cast<size_t>(kBands) * kGridW;
+    }
+    if (!keep)
+    {
+        cache.bits.assign(static_cast<size_t>(count) * 2 * eyeRows, 0);
+        cache.count = count, cache.slots = slots, cache.wanted[0] = wanted[0], cache.wanted[1] = wanted[1];
+    }
+    uint32_t *bits = cache.bits.data();
     for (unsigned eye = 0; eye < 2; ++eye)
     {
         const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
@@ -1779,38 +1803,63 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
                                                  : -1;
         }
         const uint32_t *worldsHere = view[eye].cell_worlds;
-        for (int x = 0; x < VBGO_TT_WIDTH; ++x)
+        const uint32_t *versions = view[eye].cell_version;
+        std::vector<uint32_t> &versionWas = cache.version[eye];
+        versionWas.resize(static_cast<size_t>(kBands) * kGridW);
+        for (int b = 0; b < kBands; ++b)
         {
-            const uint32_t *column = view[eye].columns[x];
-            const uint16_t *columnCells = view[eye].cells[x];
-            if (!column)
-                continue;
-            uint32_t *at = bits + static_cast<size_t>(eye) * eyeRows + kGuardWords + (x >> 5);
-            const uint32_t bit = 1u << (x & 31);
-            for (int b = 0; b < kBands; ++b)
+            const uint32_t bandKey = view[eye].band_key[b];
+            const bool bandSame = keep && bandKey == cache.bandKey[eye][b];
+            cache.bandKey[eye][b] = bandKey;
+            for (int c = 0; c < kGridW; ++c)
             {
-                const uint32_t bandKey = view[eye].band_key[b];
-                if (worldsHere && !(worldsHere[b * kGridW + (x >> 3)] & wanted[eye]))
-                {
-                    at += 8 * 3 * kGuardedRow;
+                const uint32_t version = versions ? versions[b * kGridW + c] : 0;
+                const bool same = bandSame && version && version == versionWas[b * kGridW + c];
+                versionWas[b * kGridW + c] = version;
+                if (same)
                     continue;
-                }
-                for (int y = b * 8; y < b * 8 + 8; ++y, at += 3 * kGuardedRow)
+                if (keep)
                 {
-                    const uint32_t t = column[y];
-                    if (!vbgo_tag_drawn(t, bandKey))
+                    // (the cell's 8 bits in every slot, shade and row of this eye start clear)
+                    const uint32_t mask = ~(0xFFu << ((c & 3) * 8));
+                    for (int k = 0; k < count; ++k)
+                    {
+                        uint32_t *row = bits + static_cast<size_t>(k) * 2 * eyeRows + eye * eyeRows + kGuardWords + (c >> 2);
+                        for (int y = b * 8; y < b * 8 + 8; ++y)
+                            for (int s = 0; s < 3; ++s)
+                                row[(y * 3 + s) * kGuardedRow] &= mask;
+                    }
+                }
+                if (worldsHere && !(worldsHere[b * kGridW + c] & wanted[eye]))
+                    continue;
+                for (int x = c * 8; x < c * 8 + 8; ++x)
+                {
+                    const uint32_t *column = view[eye].columns[x];
+                    const uint16_t *columnCells = view[eye].cells[x];
+                    if (!column)
                         continue;
-                    int k = slotOf[t >> 19 & 0xFF];
-                    if (k < 0)
-                        continue;
-                    if (k & 0x40 && EyeOnly(vbgo_tag_compose(t, columnCells[vbgo_tt_cell_at(static_cast<unsigned>(y))])) != (eye ? 2 : 1))
-                        continue;
-                    const unsigned shade = EyeTaggedPixel(eyeBits, eyeClut, static_cast<uint32_t>(x), static_cast<uint32_t>(y)) >> 24 & 3;
-                    if (shade)
-                        at[(k & 0x3F) * 2 * eyeRows + (shade - 1) * kGuardedRow] |= bit;
+                    uint32_t *at = bits + static_cast<size_t>(eye) * eyeRows + kGuardWords + (x >> 5) + b * 8 * 3 * kGuardedRow;
+                    const uint32_t bit = 1u << (x & 31);
+                    for (int y = b * 8; y < b * 8 + 8; ++y, at += 3 * kGuardedRow)
+                    {
+                        const uint32_t t = column[y];
+                        if (!vbgo_tag_drawn(t, bandKey))
+                            continue;
+                        int k = slotOf[t >> 19 & 0xFF];
+                        if (k < 0)
+                            continue;
+                        if (k & 0x40 && EyeOnly(vbgo_tag_compose(t, columnCells[vbgo_tt_cell_at(static_cast<unsigned>(y))])) != (eye ? 2 : 1))
+                            continue;
+                        const unsigned shade = EyeTaggedPixel(eyeBits, eyeClut, static_cast<uint32_t>(x), static_cast<uint32_t>(y)) >> 24 & 3;
+                        if (shade)
+                            at[(k & 0x3F) * 2 * eyeRows + (shade - 1) * kGuardedRow] |= bit;
+                    }
                 }
             }
         }
+        cache.fb[eye] = view[eye].fb;
+        cache.clut[eye] = view[eye].clut;
+        cache.shown[eye] = shown[eye];
     }
     for (int k = 0; k < count; ++k)
         EstimatePair(m_pairs[todo[k]], &bits[static_cast<size_t>(k) * 2 * eyeRows], &bits[(static_cast<size_t>(k) * 2 + 1) * eyeRows],

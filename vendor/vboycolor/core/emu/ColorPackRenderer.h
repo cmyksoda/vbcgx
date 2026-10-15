@@ -237,7 +237,20 @@ private:
     int EstimatePairs(const vbgo_tt_eye_view view[2]);
     bool PairDue(const Pair &pair, const uint16_t *worlds, std::array<uint16_t, 32> &attributes, uint32_t &others, bool &scrolled) const;
     void EstimatePair(Pair &pair, const uint32_t *leftBits, const uint32_t *rightBits, bool scrolled);
-    std::vector<uint32_t> m_estimateBits; // (EstimatePairs: the pictures' shades as bit rows)
+    // (EstimatePairs: the pictures' shades as bit rows, per frame buffer, with what they were gathered from - a
+    // cell whose version and band are unchanged keeps its bits when the rest is unchanged too)
+    struct GatherCache
+    {
+        std::vector<uint32_t> bits;
+        int count = 0;
+        std::array<int8_t, 96> slots{}; // (layerSlot[0], layerSlot[1], spriteSlot)
+        uint32_t wanted[2] = {0, 0}, clut[2] = {0, 0};
+        int fb[2] = {-1, -1};
+        std::array<uint64_t, VBGO_TT_WIDTH / 64> shown[2]{};
+        std::array<uint32_t, VBGO_TT_HEIGHT / 8> bandKey[2]{};
+        std::vector<uint32_t> version[2];
+    };
+    std::array<GatherCache, 2> m_gatherCache;
     // Tiles the left pictures of pairs draw this frame (by hash, with the
     // pairs whose left pictures draw them - bit per pair): a right
     // picture's pixel of a tile its own left picture draws is colored by
