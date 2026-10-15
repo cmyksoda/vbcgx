@@ -1921,30 +1921,43 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
             continue;
         const int previous = pair.estimated ? pair.disparity[band] : kNoDisparity;
         const int around = previous != kNoDisparity ? previous : 0;
-        auto same = [&](int d, int step) {
-            int n = 0;
-            for (int y = band * 8; y < band * 8 + 8; y += step)
+        // The coarse search: every other shift, every other row, all shifts counted per word at once (shift d reads the
+        // left row's words 2 + floor(d / 32) and the next past the right's, so its 6 words around are loaded once).
+        // (ties: the one nearer the last estimate, else nearer 0)
+        auto coarse = [&](int &bestD) {
+            static_assert(kMaxDisparity == 64, "coarse's word groups");
+            int n[kMaxDisparity + 1] = {}; // (shift 2k - kMaxDisparity)
+            for (int y = band * 8; y < band * 8 + 8; y += 2)
                 for (int s = 0; s < 3; ++s)
                 {
-                    const uint32_t *r = &rightBits[(y * 3 + s) * kGuardedRow];
+                    const uint32_t *r = &rightBits[(y * 3 + s) * kGuardedRow + kGuardWords];
                     const uint32_t *l = &leftBits[(y * 3 + s) * kGuardedRow];
                     for (int w = from; w <= to; ++w)
-                        if (r[kGuardWords + w]) // (most rows are sparse, and most shifts line little up; PowerPC counts bits in software)
-                            if (const uint32_t both = r[kGuardWords + w] & Shifted(l, w, d))
-                                n += CountSet(both);
+                    {
+                        const uint32_t right = r[w]; // (most rows are sparse, and most shifts line little up; PowerPC counts bits in software)
+                        if (!right)
+                            continue;
+                        const uint32_t *near = l + w;
+                        for (int g = 0; g < 4; ++g)
+                        {
+                            const uint32_t a = near[g], b = near[g + 1];
+                            if (const uint32_t both = right & a)
+                                n[16 * g] += CountSet(both);
+                            for (int sh = 2; sh < 32; sh += 2)
+                                if (const uint32_t both = right & ((a >> sh) | (b << (32 - sh))))
+                                    n[16 * g + sh / 2] += CountSet(both);
+                        }
+                        if (const uint32_t both = right & near[4])
+                            n[kMaxDisparity] += CountSet(both);
+                    }
                 }
-            return n;
-        };
-        // (ties: the one nearer the last estimate, else nearer 0)
-        auto search = [&](int lo, int hi, int stride, int step, int &bestD) {
             int best = -1;
-            for (int d = std::max(-kMaxDisparity, lo); d <= std::min(kMaxDisparity, hi); d += stride)
+            for (int k = 0; k <= kMaxDisparity; ++k)
             {
-                const int n = same(d, step);
-                if (n > best || (n == best && std::abs(d - around) < std::abs(bestD - around)))
-                    best = n, bestD = d;
+                const int d = 2 * k - kMaxDisparity;
+                if (n[k] > best || (n[k] == best && std::abs(d - around) < std::abs(bestD - around)))
+                    best = n[k], bestD = d;
             }
-            return best;
         };
         // (as search with stride and step 1, its counts kept)
         auto fine = [&](int lo, int hi, int &bestD) {
@@ -1968,9 +1981,9 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
             best = fine(previous - 4, previous + 4, bestD);
         else
         {
-            search(-kMaxDisparity, kMaxDisparity, 2, 2, bestD);
-            const int coarse = bestD;
-            best = fine(coarse - 2, coarse + 2, bestD);
+            coarse(bestD);
+            const int nearest = bestD;
+            best = fine(nearest - 2, nearest + 2, bestD);
         }
         if (best > 0)
         {
