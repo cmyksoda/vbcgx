@@ -121,7 +121,7 @@ static void RestampSlot(int k)
          {
             uint64_t *t = &s_tags[k][e][x * VBGO_TT_COLUMN + b * 8];
             for (y = 0; y < 8; y++)
-               t[y] = valid && (t[y] >> 48) == s_band_stamp[k][b] ? (t[y] & 0xFFFFFFFFFFFFull) | ((uint64_t)1 << 48) : 0;
+               t[y] = valid && vbgo_tag_drawn(t[y], s_band_stamp[k][b]) ? (t[y] & VBGO_TAG_DRAWING_BITS) | ((uint64_t)1 << 48) : 0;
          }
       s_block_stamp[k][b] = s_block_stamp[k][b] == s_stamp[k] ? 1 : 0;
       s_band_stamp[k][b] = s_band_pass[k][b] = valid ? 1 : 0;
@@ -401,8 +401,8 @@ bool vbgo_tiletrack_keep_cells(uint64_t cells)
          {
             uint64_t *t = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
             for (y = 0; y < 8; y++)
-               if ((t[y] >> 48) == s_band_was)
-                  t[y] = (t[y] & 0xFFFFFFFFFFFFull) | ((uint64_t)now << 48);
+               if (vbgo_tag_drawn(t[y], s_band_was))
+                  t[y] = (t[y] & VBGO_TAG_DRAWING_BITS) | ((uint64_t)now << 48);
          }
    return true;
 }
@@ -431,7 +431,7 @@ void vbgo_tiletrack_block_drawing(bool compare)
  * (A tag of the pass is never 0 but for its stamp: cell or sprite bit.) */
 static int SameCell(unsigned c)
 {
-   const uint32_t was_stamp = (uint32_t)s_old_stamp << 16, now_stamp = (uint32_t)(vbgo_tt_stamp_bits >> 32);
+   const uint32_t now = (uint32_t)(vbgo_tt_stamp_bits >> 48);
    unsigned e, x, y;
    for (e = 0; e < 2; e++)
       for (x = c * 8; x < c * 8 + 8; x++)
@@ -439,15 +439,14 @@ static int SameCell(unsigned c)
          const uint64_t *was = &s_old_tags[e][x * 8], *is = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
          for (y = 0; y < 8; y++)
          {
-            const uint32_t a_hi = (uint32_t)(was[y] >> 32), b_hi = (uint32_t)(is[y] >> 32);
-            if ((a_hi & 0xFFFF0000u) != was_stamp)
+            if (!vbgo_tag_drawn(was[y], s_old_stamp))
             {
-               if ((b_hi & 0xFFFF0000u) == now_stamp)
+               if (vbgo_tag_drawn(is[y], now))
                   return 0;
                continue;
             }
             /* (a tag of that pass: the same now but for the stamp) */
-            if (b_hi != (now_stamp | (a_hi & 0xFFFF)) || (uint32_t)was[y] != (uint32_t)is[y])
+            if (!vbgo_tag_drawn(is[y], now) || ((was[y] ^ is[y]) & VBGO_TAG_DRAWING_BITS))
                return 0;
             if (s_block_chr_changed && (s_chr_changed[VBGO_TAG_CHAR(is[y]) >> 5] >> (VBGO_TAG_CHAR(is[y]) & 31) & 1))
                return 0;
@@ -641,7 +640,7 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view)
       return false;
    slot = s_slot[fb];
    for (x = 0; x < VBGO_TT_BLOCKS; x++)
-      view->band_stamp[x] = s_band_pass[slot][x] == s_stamp[slot] ? s_band_stamp[slot][x] : 0x10000u;
+      view->band_key[x] = s_band_pass[slot][x] == s_stamp[slot] ? s_band_stamp[slot][x] : 0x10000u;
    view->hashes = s_hash[slot];
    view->blank = s_blank[slot];
    view->chr = s_chr[slot];
@@ -678,7 +677,7 @@ bool vbgo_tiletrack_records(unsigned eye, uint64_t *records, uint32_t *cells, bo
          const uint64_t t = col ? col[y] : 0;
          uint64_t out = 0;
          uint32_t cell = 0;
-         if (t && (t >> 48) == view.band_stamp[y >> 3] && (with_fills || VBGO_TAG_PIXEL(t)))
+         if (t && vbgo_tag_drawn(t, view.band_key[y >> 3]) && (with_fills || VBGO_TAG_PIXEL(t)))
          {
             const unsigned chr = VBGO_TAG_CHAR(t);
             out = (uint64_t)view.hashes[chr] | ((uint64_t)VBGO_TAG_SUBX(t) << 32) | ((uint64_t)VBGO_TAG_SUBY(t) << 35) |

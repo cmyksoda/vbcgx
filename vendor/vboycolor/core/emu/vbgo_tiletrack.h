@@ -60,6 +60,21 @@ extern "C" {
 #define VBGO_TAG_OBJ_NO(t)   ((unsigned)((t) >> 28) & 0x3FF)  /* sprites: the OBJ (0-1023) - same bits, no cell */
 #define VBGO_TAG_STAMP(t)    ((unsigned)((t) >> 48))          /* drawing pass that wrote it */
 
+/* What a tag says about the drawing, without which pass wrote it. */
+#define VBGO_TAG_DRAWING_BITS 0xFFFFFFFFFFFFull
+/* A run's key: the tag but for the pixel in the tile and its value (all of a run's tags share it). */
+#define VBGO_TAG_RUN_BITS (0x7FFull | (3ull << 17) | (1ull << 19) | (31ull << 22) | (1ull << 27) | (0xFFFFull << 28))
+
+/* Whether t was drawn by the pass a band's key names (else the pixel is background). */
+static inline int vbgo_tag_drawn(uint64_t t, uint32_t band_key) { return (t >> 48) == band_key; }
+
+/* A tag's words, for 32-bit compares: a run's drawn tags in one band share vbgo_tag_band_hi(key, band_key),
+ * and no drawn tag's high word is VBGO_TAG_NO_HI. */
+static inline uint32_t vbgo_tag_hi(uint64_t t) { return (uint32_t)(t >> 32); }
+static inline uint32_t vbgo_tag_lo(uint64_t t) { return (uint32_t)t; }
+static inline uint32_t vbgo_tag_band_hi(uint64_t key, uint32_t band_key) { return (uint32_t)(key >> 32) | (band_key << 16); }
+#define VBGO_TAG_NO_HI 0u
+
 /* ---- Records (captures, .tiles files, debug tools) ----------------------- */
 
 /* Field layout of one record (a tag resolved to the tile's content hash). */
@@ -116,14 +131,14 @@ void vbgo_tiletrack_set_fill_cells(const uint8_t *bits);
 
 /* What one eye showed in the frame most recently output by retro_run():
  * per column, the 224 tags of that column (NULL if the column was blank),
- * plus the stamp tags of each 8-row band must carry to belong to it and the
+ * plus each 8-row band's key (which of its tags the pass drew) and the
  * drawing pass's tile hashes / character memory (index by VBGO_TAG_CHAR). */
 typedef struct
 {
    const uint64_t *columns[VBGO_TT_WIDTH];
-   /* Compare with (tag >> 48) for a pixel in band y / 8 (none matches a band the pass didn't reach).
-    * A band the pass kept carries the stamp it was drawn with, so keeping one rewrites no tags. */
-   uint32_t band_stamp[VBGO_TT_HEIGHT / 8];
+   /* For vbgo_tag_drawn on a pixel in band y / 8 (no tag is drawn in a band the pass didn't reach).
+    * A band the pass kept keeps the key it was drawn with, so keeping one rewrites no tags. */
+   uint32_t band_key[VBGO_TT_HEIGHT / 8];
    const uint32_t *hashes;   /* 2048 */
    const uint8_t *blank;     /* 2048: 1 = all 64 pixels transparent */
    const uint16_t *chr;      /* 2048 * 8 rows (2 bits per pixel, pixel 0 in the low bits) */
