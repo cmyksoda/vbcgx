@@ -1207,11 +1207,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     {
                         // (a cell is read only where its tag may be drawn)
                         const uint32_t lo = column[y];
-                        if ((lo & kRunMaskLo) == runLo && columnCells[y] == skipHi && !run.slow)
+                        if ((lo & kRunMaskLo) == runLo && columnCells[vbgo_tt_cell_at(y)] == skipHi && !run.slow)
                             continue;
                         if (!vbgo_tag_drawn(lo, bandKey))
                             continue;
-                        const uint64_t t = vbgo_tag_compose(lo, columnCells[y]);
+                        const uint64_t t = vbgo_tag_compose(lo, columnCells[vbgo_tt_cell_at(y)]);
                         const unsigned pixel = VBGO_TAG_PIXEL(t);
                         const uint32_t rawPixel = EyeTaggedPixel(eyeBits, eyeClut, x, y);
                         if (pixel && !(rawPixel & 0xFFFFFFu))
@@ -1352,7 +1352,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             {
                 if (!vbgo_tag_drawn(column[y], bandKey))
                     continue; // nothing tracked here this frame (background)
-                uint64_t t = vbgo_tag_compose(column[y], columnCells[y]);
+                uint64_t t = vbgo_tag_compose(column[y], columnCells[vbgo_tt_cell_at(y)]);
                 size_t i = columnBase + y * rowBytes;
                 uint32_t rawPixel = EyeTaggedPixel(eyeBits, eyeClut, x, y); // B, G, R, tag (shade, brightness) from the low byte up
                 unsigned pixel = VBGO_TAG_PIXEL(t);
@@ -1406,9 +1406,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         while (y + 1 < end)
                         {
                             const uint32_t next = column[y + 1];
-                            if ((next & kRunMaskLo) != runLo || columnCells[y + 1] != runHi)
+                            if ((next & kRunMaskLo) != runLo || columnCells[vbgo_tt_cell_at(y + 1)] != runHi)
                                 break;
-                            ++y, i += rowBytes, t = vbgo_tag_compose(next, columnCells[y]);
+                            ++y, i += rowBytes, t = vbgo_tag_compose(next, columnCells[vbgo_tt_cell_at(y)]);
                             rawPixel = EyeTaggedPixel(eyeBits, eyeClut, x, y);
                             pixel = VBGO_TAG_PIXEL(t);
                             if (!pixel || (rawPixel & 0xFFFFFFu))
@@ -1808,7 +1808,9 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
                     if (!vbgo_tag_drawn(t, bandKey))
                         continue;
                     int k = slotOf[t >> 19 & 0xFF];
-                    if (k < 0 || (k & 0x40 && EyeOnly(vbgo_tag_compose(t, columnCells[y])) != (eye ? 2 : 1)))
+                    if (k < 0)
+                        continue;
+                    if (k & 0x40 && EyeOnly(vbgo_tag_compose(t, columnCells[vbgo_tt_cell_at(static_cast<unsigned>(y))])) != (eye ? 2 : 1))
                         continue;
                     const unsigned shade = EyeTaggedPixel(eyeBits, eyeClut, static_cast<uint32_t>(x), static_cast<uint32_t>(y)) >> 24 & 3;
                     if (shade)
@@ -2055,7 +2057,7 @@ void ColorPackRenderer::PaintAmbiguous(uint8_t *frame, uint32_t fbWidth, uint32_
     for (const auto &p : m_ambiguousPixels)
     {
         const int x = p.first, y = p.second;
-        const uint64_t t = view.columns[x] ? vbgo_tag_compose(view.columns[x][y], view.cells[x][y]) : 0;
+        const uint64_t t = view.columns[x] ? vbgo_tag_compose(view.columns[x][y], view.cells[x][vbgo_tt_cell_at(y)]) : 0;
         if (!vbgo_tag_drawn(t, view.band_key[y >> 3]))
             continue;
         const uint64_t same = t & kSame;
@@ -2068,7 +2070,8 @@ void ColorPackRenderer::PaintAmbiguous(uint8_t *frame, uint32_t fbWidth, uint32_
                 const int nx = x + dir[0] * d, ny = y + dir[1] * d;
                 if (nx < 0 || nx >= VBGO_TT_WIDTH || ny < 0 || ny >= VBGO_TT_HEIGHT || !view.columns[nx])
                     continue;
-                const uint64_t n = vbgo_tag_compose(view.columns[nx][ny], view.cells[nx][ny]);
+                const uint16_t cell = view.cells[nx][vbgo_tt_cell_at(static_cast<unsigned>(ny))];
+                const uint64_t n = vbgo_tag_compose(view.columns[nx][ny], cell);
                 if (vbgo_tag_drawn(n, view.band_key[ny >> 3]) && (n & kSame) == same && !m_slots[VBGO_TAG_CHAR(n)].ambiguous &&
                     (!sprite || vbgo_obj_parallax(m_oam, VBGO_TAG_OBJ_NO(n)) == jp))
                 {

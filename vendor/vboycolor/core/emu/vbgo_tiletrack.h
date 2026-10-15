@@ -44,6 +44,11 @@ extern "C" {
 /* Tags per column in the tag buffer (rows 0-223 used): a band's 8 tags are one aligned 32-byte line, and
  * unlike 256 (a 1 KB stride) the columns spread over the Wii's 128 L1 sets. */
 #define VBGO_TT_COLUMN 264
+/* Cells per column in the cell buffer: per band, eye 0's 8 then eye 1's (one aligned 32-byte line, cleared with
+ * the band's tags), 28 bands, padded to 29 lines (odd, so the columns spread over the L1 sets). */
+#define VBGO_TT_CELL_COLUMN 464
+/* Row y of a column's cells, from its eye's first (cells[x] in the view, vbgo_tt_cell_row's row). */
+static inline unsigned vbgo_tt_cell_at(unsigned y) { return y + (y & ~7u); }
 
 /* ---- Tags (the tracker's own per-pixel format) -------------------------- */
 
@@ -139,7 +144,7 @@ void vbgo_tiletrack_set_fill_cells(const uint8_t *bits);
 typedef struct
 {
    const uint32_t *columns[VBGO_TT_WIDTH];
-   const uint16_t *cells[VBGO_TT_WIDTH]; /* (meaningful only where the tag is drawn) */
+   const uint16_t *cells[VBGO_TT_WIDTH]; /* (row y at vbgo_tt_cell_at(y); meaningful only where the tag is drawn) */
    /* For vbgo_tag_drawn on a pixel in band y / 8: VBGO_TT_BAND_REACHED, or 0 for a band the pass didn't
     * reach (its tags are an older pass's). */
    uint32_t band_key[VBGO_TT_HEIGHT / 8];
@@ -222,7 +227,7 @@ extern uint32_t vbgo_tt_clut_serial;
 /* Background (map) drawing - DrawBG/DrawAffine - only ever draws pixels 0-383
  * of one row, so its tags are found once per call: pixel x of the row
  * row_target (that call's target) is tagged at row[x * VBGO_TT_COLUMN], its
- * cell at vbgo_tt_cell_row(row_target)[x * VBGO_TT_COLUMN]. NULL while tracking is off. */
+ * cell at vbgo_tt_cell_row(row_target)[x * VBGO_TT_CELL_COLUMN]. NULL while tracking is off. */
 static inline uint32_t *vbgo_tt_row(const void *row_target)
 {
    ptrdiff_t i;
@@ -266,7 +271,7 @@ static inline int vbgo_tt_fills_from(unsigned chr, unsigned cell)
 }
 
 /* A whole character row drawn by DrawBG's 8-pixel path: its 8 screen pixels
- * are tagged at d, d + VBGO_TT_COLUMN, ... (cells at c, ...) pixels: the row as stored (tile
+ * are tagged at d, d + VBGO_TT_COLUMN, ... (cells at c, c + VBGO_TT_CELL_COLUMN, ...) pixels: the row as stored (tile
  * pixel n in bits 2n); flipped: drawn mirrored (screen pixel k shows tile
  * pixel 7 - k). bits: vbgo_tt_call_bits() | VBGO_TT_BG_BITS(chr, 0, sy, pal,
  * 0). Drawn pixels and fills as one at a time would tag them. */
@@ -283,7 +288,7 @@ static inline int vbgo_tt_tag_row8(uint32_t *d, uint16_t *c, unsigned pixels, in
 #define VBGO_TT_PUT(k, n)                                                                          \
    if ((pixels >> (2 * (n))) & 3)                                                                   \
       d[(k) * VBGO_TT_COLUMN] = bits | ((n) << 11) | (((pixels >> (2 * (n))) & 3) << 20), \
-      c[(k) * VBGO_TT_COLUMN] = (uint16_t)cell;
+      c[(k) * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
       if (!pixels)
          return 0;
       if (flipped)
@@ -305,7 +310,7 @@ static inline int vbgo_tt_tag_row8(uint32_t *d, uint16_t *c, unsigned pixels, in
       pixels = ((pixels >> 4) & 0x0F0F) | ((pixels & 0x0F0F) << 4);
       pixels = ((pixels >> 8) & 0x00FF) | ((pixels & 0x00FF) << 8);
    }
-   for (k = 0; k < 8; k++, d += VBGO_TT_COLUMN, c += VBGO_TT_COLUMN, pixels >>= 2)
+   for (k = 0; k < 8; k++, d += VBGO_TT_COLUMN, c += VBGO_TT_CELL_COLUMN, pixels >>= 2)
    {
       const uint32_t t = bits | ((k ^ x7) << 11) | ((pixels & 3) << 20);
       if (pixels & 3)
@@ -351,6 +356,8 @@ uint64_t vbgo_tiletrack_world_cells(uint32_t changed, uint64_t cells);
 extern uint32_t vbgo_tt_wcells[48];
 /* Cells of the block being drawn where a fill may have been tagged. */
 extern uint8_t vbgo_tt_fillc[48];
+/* Cells of the block being drawn where a sprite may have been tagged (cleared by the tracker before drawing). */
+extern uint8_t vbgo_tt_ocells[48];
 bool vbgo_tiletrack_pass_reusable(unsigned src_fb);
 void vbgo_tiletrack_share_pass(unsigned fb, unsigned src_fb);
 void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no);
