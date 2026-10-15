@@ -795,22 +795,21 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     // around it (its own shade's pixels); a pixel that hasn't changed (nor
     // the right picture where it was shown) keeps its last disparity while
     // that still lines up about as well.
-    for (int y = 0; y < kHeight; ++y)
-        for (int x = 0; x < kWidth; ++x)
+    // (the candidates depend only on the block: listed once per block - its own, its neighbours', the main depths)
+    m_candidates.resize(static_cast<size_t>(kBlocks) * kCandidates);
+    m_candidateCount.resize(kBlocks);
+    for (int by = 0; by < kBlocksY; ++by)
+        for (int bx = 0; bx < kBlocksX; ++bx)
         {
-            const size_t i = static_cast<size_t>(y) * kWidth + x;
-            if (!want[0][i] || !shades[0][i])
-                continue;
-            const unsigned s = shades[0][i] - 1u;
-            const int bx = x >> 3, by = y >> 3;
-            int candidates[13], count = 0;
+            uint8_t *candidates = &m_candidates[static_cast<size_t>(by * kBlocksX + bx) * kCandidates];
+            int count = 0;
             auto add = [&](int di) {
                 if (di < 0)
                     return;
                 for (int k = 0; k < count; ++k)
                     if (candidates[k] == di)
                         return;
-                candidates[count++] = di;
+                candidates[count++] = static_cast<uint8_t>(di);
             };
             add(state.best[by * kBlocksX + bx]);
             for (int oy = -1; oy <= 1; ++oy)
@@ -822,6 +821,18 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                 }
             for (const int p : state.planes)
                 add(p);
+            m_candidateCount[by * kBlocksX + bx] = static_cast<uint8_t>(count);
+        }
+    for (int y = 0; y < kHeight; ++y)
+        for (int x = 0; x < kWidth; ++x)
+        {
+            const size_t i = static_cast<size_t>(y) * kWidth + x;
+            if (!want[0][i] || !shades[0][i])
+                continue;
+            const unsigned s = shades[0][i] - 1u;
+            const int b = (y >> 3) * kBlocksX + (x >> 3);
+            const uint8_t *const candidates = &m_candidates[static_cast<size_t>(b) * kCandidates];
+            const int count = m_candidateCount[b];
             int d = candidates[0] - kMaxDisparity, bestVotes = -1;
             unsigned left[7];
             bool haveLeft = false;
