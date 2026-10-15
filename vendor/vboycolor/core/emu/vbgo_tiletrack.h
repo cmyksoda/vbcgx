@@ -11,9 +11,9 @@
  * How it works: while the VIP draws a frame buffer, every drawn pixel gets a
  * 64-bit tag (character slot, pixel inside the tile, palette, layer, map
  * cell - see VBGO_TAG_*) written straight into a tag buffer laid out like
- * the VB's own column-major frame buffer, double-buffered the same way. Each
- * drawing pass has a stamp; tags from older passes simply don't match it, so
- * nothing is cleared per frame. At the start of each pass the character
+ * the VB's own column-major frame buffer, double-buffered the same way. A
+ * block's tags are cleared before it's drawn, so in a band the pass reached a
+ * nonzero tag is one it drew. At the start of each pass the character
  * memory is snapshotted and every tile hashed once, so a tag's tile is known
  * by content (hash) even after the game has streamed new graphics in.
  *
@@ -58,22 +58,20 @@ extern "C" {
 #define VBGO_TAG_HAS_CELL(t) ((unsigned)((t) >> 27) & 1)      /* drawn from a BG map cell (not a sprite) */
 #define VBGO_TAG_CELL(t)     ((unsigned)((t) >> 28) & 0xFFFF) /* that cell's halfword index in VIP DRAM */
 #define VBGO_TAG_OBJ_NO(t)   ((unsigned)((t) >> 28) & 0x3FF)  /* sprites: the OBJ (0-1023) - same bits, no cell */
-#define VBGO_TAG_STAMP(t)    ((unsigned)((t) >> 48))          /* drawing pass that wrote it */
 
-/* What a tag says about the drawing, without which pass wrote it. */
-#define VBGO_TAG_DRAWING_BITS 0xFFFFFFFFFFFFull
 /* A run's key: the tag but for the pixel in the tile and its value (all of a run's tags share it). */
 #define VBGO_TAG_RUN_BITS (0x7FFull | (3ull << 17) | (1ull << 19) | (31ull << 22) | (1ull << 27) | (0xFFFFull << 28))
 
-/* Whether t was drawn by the pass a band's key names (else the pixel is background). */
-static inline int vbgo_tag_drawn(uint64_t t, uint32_t band_key) { return (t >> 48) == band_key; }
-
-/* A tag's words, for 32-bit compares: a run's drawn tags in one band share vbgo_tag_band_hi(key, band_key),
- * and no drawn tag's high word is VBGO_TAG_NO_HI. */
+/* A tag's words, for 32-bit compares: a run's tags share vbgo_tag_key_hi(key), and no tag's high word is
+ * VBGO_TAG_NO_HI. A drawn tag's low word is never 0: it has the cell or sprite bit. */
 static inline uint32_t vbgo_tag_hi(uint64_t t) { return (uint32_t)(t >> 32); }
 static inline uint32_t vbgo_tag_lo(uint64_t t) { return (uint32_t)t; }
-static inline uint32_t vbgo_tag_band_hi(uint64_t key, uint32_t band_key) { return (uint32_t)(key >> 32) | (band_key << 16); }
-#define VBGO_TAG_NO_HI 0u
+static inline uint32_t vbgo_tag_key_hi(uint64_t key) { return (uint32_t)(key >> 32); }
+#define VBGO_TAG_NO_HI 0xFFFFFFFFu
+
+/* Whether t was drawn by the pass, in a band whose key is band_key (0 if the pass didn't reach it). */
+static inline int vbgo_tag_drawn(uint64_t t, uint32_t band_key) { return (vbgo_tag_lo(t) & band_key) != 0; }
+#define VBGO_TT_BAND_REACHED 0xFFFFFFFFu
 
 /* ---- Records (captures, .tiles files, debug tools) ----------------------- */
 
@@ -136,8 +134,8 @@ void vbgo_tiletrack_set_fill_cells(const uint8_t *bits);
 typedef struct
 {
    const uint64_t *columns[VBGO_TT_WIDTH];
-   /* For vbgo_tag_drawn on a pixel in band y / 8 (no tag is drawn in a band the pass didn't reach).
-    * A band the pass kept keeps the key it was drawn with, so keeping one rewrites no tags. */
+   /* For vbgo_tag_drawn on a pixel in band y / 8: VBGO_TT_BAND_REACHED, or 0 for a band the pass didn't
+    * reach (its tags are an older pass's). */
    uint32_t band_key[VBGO_TT_HEIGHT / 8];
    const uint32_t *hashes;   /* 2048 */
    const uint8_t *blank;     /* 2048: 1 = all 64 pixels transparent */
@@ -160,7 +158,7 @@ typedef struct
     * - every character a tag of the band can name (a bit each). */
    const uint32_t *band_chr;
    /* Per 8x8 cell [band * 48 + cell]: the version of what it shows; equal nonzero versions mean
-    * the same tags (but stamps), pixels and per-pass copies of what they read. */
+    * the same tags, pixels and per-pass copies of what they read. */
    const uint32_t *cell_version;
    /* Per 8x8 cell [band * 48 + cell], both eyes: a bit per world (layer) whose tags may be there (a
     * superset; sprites' tags not included). */
@@ -206,7 +204,6 @@ extern int vbgo_tt_fill;
 extern uint32_t vbgo_tt_world;
 extern const uint8_t *vbgo_tt_block_base;
 extern uint64_t *vbgo_tt_dst[2];
-extern uint64_t vbgo_tt_stamp_bits;
 extern const uint8_t *vbgo_tt_blank;
 extern uint8_t vbgo_tt_fill_cells[8192];
 /* Bumped by the core whenever its shades-to-colors table changes. */
@@ -229,9 +226,8 @@ static inline uint64_t *vbgo_tt_row(const void *row_target)
    return &vbgo_tt_dst[(i >> 12) & 1][(i >> 9) & 7];
 }
 
-/* What's the same for every tag of one drawing call: the pass's stamp and
- * the world drawing. */
-static inline uint64_t vbgo_tt_call_bits(void) { return vbgo_tt_stamp_bits | ((uint64_t)vbgo_tt_world << 22); }
+/* What's the same for every tag of one drawing call: the world drawing. */
+static inline uint64_t vbgo_tt_call_bits(void) { return (uint64_t)vbgo_tt_world << 22; }
 
 /* The rest of a BG pixel's tag (pv 0 = a fill). */
 #define VBGO_TT_BG_BITS(chr, sx, sy, pal, pv, cell)                                                       \
@@ -240,10 +236,10 @@ static inline uint64_t vbgo_tt_call_bits(void) { return vbgo_tt_stamp_bits | ((u
 
 /* A transparent pixel of a BG tile (only if vbgo_tt_fills_from) at d: tagged
  * as a fill (tag: pv 0) unless something was already drawn or filled there
- * this pass - the backmost tile wins, drawn pixels always win. */
+ * this pass (the block starts clear) - the backmost tile wins, drawn pixels always win. */
 static inline void vbgo_tt_fill_at(uint64_t *d, uint64_t tag)
 {
-   if ((*d >> 48) != (tag >> 48))
+   if (!vbgo_tag_lo(*d))
       *d = tag;
 }
 

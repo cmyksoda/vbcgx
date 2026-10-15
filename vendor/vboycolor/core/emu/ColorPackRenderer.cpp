@@ -1178,9 +1178,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 bool runSetUp = true;
                 for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
                 {
-                    // (a run going on into the band: its tags carry the band's key)
                     const uint32_t bandKey = v.band_key[b];
-                    runHi = vbgo_tag_band_hi(runKey, bandKey);
                     BandColumn &here = rightColumns[b * VBGO_TT_WIDTH + x];
                     const bool kept = keptRightCell[b][x >> 3];
                     if (kept)
@@ -1193,7 +1191,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             if (first != runKey)
                                 countRun(first, x, b * 8 + (here.first >> 48 & 7), static_cast<unsigned>(here.first >> 52 & 63), nullptr);
                             runKey = here.last;
-                            runHi = vbgo_tag_band_hi(here.last, bandKey);
+                            runHi = vbgo_tag_key_hi(here.last);
                             runLo = vbgo_tag_lo(here.last) & kRunMaskLo;
                             runSetUp = false;
                             continue;
@@ -1323,7 +1321,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
             {
             const uint32_t bandKey = v.band_key[b];
-            runHi = vbgo_tag_band_hi(runKey, bandKey);
             BandColumn &here = bandColumns[b * VBGO_TT_WIDTH + x];
             const bool kept = keptCell[b][x >> 3];
             if (kept)
@@ -1336,7 +1333,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     if (first != runKey)
                         countRun(first, x, b * 8 + (here.first >> 48 & 7), static_cast<unsigned>(here.first >> 52 & 63), nullptr);
                     runKey = here.last;
-                    runHi = vbgo_tag_band_hi(here.last, bandKey);
+                    runHi = vbgo_tag_key_hi(here.last);
                     runLo = vbgo_tag_lo(here.last) & kRunMaskLo;
                     runSetUp = false;
                     continue;
