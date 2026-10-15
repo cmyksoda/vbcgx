@@ -7,21 +7,31 @@
 
 namespace
 {
-// Per byte of x, how many of its bits are set (0-8) - summed over a
-// block's 8 rows, each byte still fits (at most 64).
-inline uint64_t ByteCounts(uint64_t x)
+// 32-bit word i of a guarded row (pixel x at bit x + 64 of the row), whichever the byte order.
+inline uint32_t Half(const uint64_t *row, int i)
 {
-    x = x - ((x >> 1) & 0x5555555555555555ull);
-    x = (x & 0x3333333333333333ull) + ((x >> 2) & 0x3333333333333333ull);
-    return (x + (x >> 4)) & 0x0F0F0F0F0F0F0F0Full;
+    uint32_t v;
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    std::memcpy(&v, reinterpret_cast<const char *>(row) + 4 * (i ^ 1), 4);
+#else
+    std::memcpy(&v, reinterpret_cast<const char *>(row) + 4 * i, 4);
+#endif
+    return v;
 }
 
-// Word k of a guarded row (pixel x at bit x + 64) shifted so that bit j
-// holds the row's pixel 64 k + j + d.
-inline uint64_t Shifted(const uint64_t *row, int k, int d)
+// Word k of a guarded row, half h, shifted so that bit j holds the row's pixel 64 k + 32 h + j + d.
+inline uint32_t Shifted32(const uint64_t *row, int k, int h, int d)
 {
-    const int bit = 64 * (k + 1) + d, w = bit >> 6, s = bit & 63;
-    return s ? (row[w] >> s) | (row[w + 1] << (64 - s)) : row[w];
+    const int bit = 64 * (k + 1) + 32 * h + d, w = bit >> 5, s = bit & 31;
+    return s ? (Half(row, w) >> s) | (Half(row, w + 1) << (32 - s)) : Half(row, w);
+}
+
+// Per byte of x, how many of its bits are set (0-8) - summed over a block's 8 rows, each byte still fits.
+inline uint32_t ByteCounts32(uint32_t x)
+{
+    x = x - ((x >> 1) & 0x55555555u);
+    x = (x & 0x33333333u) + ((x >> 2) & 0x33333333u);
+    return (x + (x >> 4)) & 0x0F0F0F0Fu;
 }
 
 // Pixels x - 3 to x + 3 of a guarded row, as bits 0-6 (by 32-bit halves where they fit: the Wii's CPU has no
@@ -55,6 +65,7 @@ constexpr int kSmallFull = 32;           // pixels a 24x24 window needs to count
 constexpr int kWideFull = 64;            // ... and an 88-wide strip
 constexpr int kWideBlocks = 5;           // the strip: 5 blocks either side
 constexpr int kStep = 30, kJump = 250;   // smoothing: a step of 1 in disparity to the next block, any bigger jump
+constexpr int16_t kWall = 16000;         // (beyond the disparities in the smoothing: never the cheapest)
 constexpr int kPlaneBonus = 60;          // the pull of the frame's main depths
 constexpr int kKeepNow = 154, kKeepLast = 102; // (out of 256: this frame's costs, the last frame's - 60 / 40 %)
 constexpr int kSwitch = 2;               // votes a pixel's neighbours' disparity needs over its own block's
@@ -336,6 +347,154 @@ void DepthColors::Update(const uint8_t *const shades[2], const uint8_t *const wa
     m_lastSignature = signature;
 }
 
+#ifdef GEKKO
+// Estimate's smoothing pass with paired singles: two disparities at a time, as floats loaded from and stored to
+// int16 (GQR7). Every value is a small integer, so the float sums and mins are exact.
+void DepthColors::SmoothPass(const int16_t *cost, int16_t *sumAll, int first, int step, int count, int lines, int lineStep,
+                             bool add)
+{
+    constexpr int kD = kDisparities, kS = kStride;
+    alignas(8) static const int16_t kConst[6] = {kStep, kStep, kJump, kJump, kWall, kWall};
+    // (prev[-2] at index 0: the walls left of disparity 0, and past disparity 80 for the last pair's loads)
+    alignas(8) int16_t rows[2][kS + 6];
+    for (auto &r : rows)
+        for (int i = 0; i < kS + 6; ++i)
+            r[i] = kWall;
+    alignas(8) int16_t low[2] = {kWall, kWall};
+    const int addFlag = add ? 1 : 0;
+    unsigned gqr7; // (loads and stores signed 16-bit, unscaled; put back after)
+    __asm__ volatile("mfspr %0, 919" : "=r"(gqr7));
+    __asm__ volatile("mtspr 919, %0\n\tisync" : : "r"(0x00070007u) : "memory");
+    for (int line = 0; line < lines; ++line)
+        for (int k = 0; k < count; ++k)
+        {
+            const int b = first + line * lineStep + k * step;
+            const int16_t *c = cost + static_cast<size_t>(b) * kS;
+            int16_t *sum = sumAll + static_cast<size_t>(b) * kS, *out = rows[k & 1] + 2;
+            const int16_t *prev = rows[(k & 1) ^ 1] + 2;
+            if (!k)
+            {
+                // (the line's first block: its own costs)
+                __asm__ volatile(
+                    "psq_l   12, 8(%[kc]), 0, 7\n\t"      /* NL = walls */
+                    "li      0, 40\n\t"
+                    "mtctr   0\n"
+                    "1:\n\t"
+                    "psq_l   10, 0(%[c]), 0, 7\n\t"
+                    "psq_st  10, 0(%[out]), 0, 7\n\t"
+                    "ps_sub  9, 12, 10\n\t"
+                    "ps_sel  12, 9, 10, 12\n\t"
+                    "cmpwi   %[add], 0\n\t"
+                    "beq     2f\n\t"
+                    "psq_l   11, 0(%[sum]), 0, 7\n\t"
+                    "ps_add  10, 10, 11\n"
+                    "2:\n\t"
+                    "psq_st  10, 0(%[sum]), 0, 7\n\t"
+                    "addi    %[c], %[c], 4\n\t"
+                    "addi    %[out], %[out], 4\n\t"
+                    "addi    %[sum], %[sum], 4\n\t"
+                    "bdnz    1b\n\t"
+                    /* disparity 80 (the pair's second is the unused entry) */
+                    "psq_l   10, 0(%[c]), 0, 7\n\t"
+                    "psq_st  10, 0(%[out]), 0, 7\n\t"
+                    "ps_merge00 11, 10, 10\n\t"
+                    "ps_sub  9, 12, 11\n\t"
+                    "ps_sel  12, 9, 11, 12\n\t"
+                    "cmpwi   %[add], 0\n\t"
+                    "beq     3f\n\t"
+                    "psq_l   11, 0(%[sum]), 0, 7\n\t"
+                    "ps_add  10, 10, 11\n"
+                    "3:\n\t"
+                    "psq_st  10, 0(%[sum]), 0, 7\n\t"
+                    "ps_merge10 9, 12, 12\n\t"           /* both halves: the lowest */
+                    "ps_sub  11, 12, 9\n\t"
+                    "ps_sel  12, 11, 9, 12\n\t"
+                    "psq_st  12, 0(%[low]), 0, 7\n\t"
+                    : [c] "+b"(c), [out] "+b"(out), [sum] "+b"(sum)
+                    : [kc] "b"(kConst), [add] "r"(addFlag), [low] "b"(low)
+                    : "r0", "ctr", "cr0", "fr9", "fr10", "fr11", "fr12", "memory");
+            }
+            else
+            {
+                __asm__ volatile(
+                    "psq_l   0, 0(%[low]), 0, 7\n\t"     /* LOW */
+                    "psq_l   1, 0(%[kc]), 0, 7\n\t"      /* kStep */
+                    "psq_l   2, 4(%[kc]), 0, 7\n\t"
+                    "ps_add  2, 2, 0\n\t"                 /* J = LOW + kJump */
+                    "psq_l   12, 8(%[kc]), 0, 7\n\t"     /* NL = walls */
+                    "psq_l   3, -4(%[prev]), 0, 7\n\t"   /* Pm = prev[-2], prev[-1] */
+                    "psq_l   4, 0(%[prev]), 0, 7\n\t"    /* P0 = prev[0], prev[1] */
+                    "li      0, 40\n\t"
+                    "mtctr   0\n"
+                    "1:\n\t"
+                    "psq_l   5, 4(%[prev]), 0, 7\n\t"    /* Pp */
+                    "ps_merge10 6, 3, 4\n\t"              /* L = prev[di - 1], prev[di] */
+                    "ps_merge10 7, 4, 5\n\t"              /* R = prev[di + 1], prev[di + 2] */
+                    "ps_sub  9, 6, 7\n\t"
+                    "ps_sel  6, 9, 7, 6\n\t"              /* min(L, R) */
+                    "ps_add  6, 6, 1\n\t"                 /* + kStep */
+                    "ps_sub  9, 4, 6\n\t"
+                    "ps_sel  8, 9, 6, 4\n\t"              /* V = min(P0, step) */
+                    "ps_sub  9, 8, 2\n\t"
+                    "ps_sel  8, 9, 2, 8\n\t"              /* V = min(V, J) */
+                    "psq_l   10, 0(%[c]), 0, 7\n\t"
+                    "ps_add  10, 10, 8\n\t"
+                    "ps_sub  10, 10, 0\n\t"               /* O = C + V - LOW */
+                    "psq_st  10, 0(%[out]), 0, 7\n\t"
+                    "ps_sub  9, 12, 10\n\t"
+                    "ps_sel  12, 9, 10, 12\n\t"           /* NL = min(NL, O) */
+                    "cmpwi   %[add], 0\n\t"
+                    "beq     2f\n\t"
+                    "psq_l   11, 0(%[sum]), 0, 7\n\t"
+                    "ps_add  10, 10, 11\n"
+                    "2:\n\t"
+                    "psq_st  10, 0(%[sum]), 0, 7\n\t"
+                    "ps_mr   3, 4\n\t"
+                    "ps_mr   4, 5\n\t"
+                    "addi    %[prev], %[prev], 4\n\t"
+                    "addi    %[c], %[c], 4\n\t"
+                    "addi    %[out], %[out], 4\n\t"
+                    "addi    %[sum], %[sum], 4\n\t"
+                    "bdnz    1b\n\t"
+                    /* disparity 80 */
+                    "psq_l   5, 4(%[prev]), 0, 7\n\t"
+                    "ps_merge10 6, 3, 4\n\t"
+                    "ps_merge10 7, 4, 5\n\t"
+                    "ps_sub  9, 6, 7\n\t"
+                    "ps_sel  6, 9, 7, 6\n\t"
+                    "ps_add  6, 6, 1\n\t"
+                    "ps_sub  9, 4, 6\n\t"
+                    "ps_sel  8, 9, 6, 4\n\t"
+                    "ps_sub  9, 8, 2\n\t"
+                    "ps_sel  8, 9, 2, 8\n\t"
+                    "psq_l   10, 0(%[c]), 0, 7\n\t"
+                    "ps_add  10, 10, 8\n\t"
+                    "ps_sub  10, 10, 0\n\t"
+                    "psq_st  10, 0(%[out]), 0, 7\n\t"
+                    "ps_merge00 11, 10, 10\n\t"
+                    "ps_sub  9, 12, 11\n\t"
+                    "ps_sel  12, 9, 11, 12\n\t"
+                    "cmpwi   %[add], 0\n\t"
+                    "beq     3f\n\t"
+                    "psq_l   11, 0(%[sum]), 0, 7\n\t"
+                    "ps_add  10, 10, 11\n"
+                    "3:\n\t"
+                    "psq_st  10, 0(%[sum]), 0, 7\n\t"
+                    "ps_merge10 9, 12, 12\n\t"
+                    "ps_sub  11, 12, 9\n\t"
+                    "ps_sel  12, 11, 9, 12\n\t"
+                    "psq_st  12, 0(%[low]), 0, 7\n\t"
+                    : [c] "+b"(c), [out] "+b"(out), [sum] "+b"(sum), [prev] "+b"(prev)
+                    : [kc] "b"(kConst), [add] "r"(addFlag), [low] "b"(low)
+                    : "r0", "ctr", "cr0", "fr0", "fr1", "fr2", "fr3", "fr4", "fr5", "fr6", "fr7", "fr8", "fr9", "fr10",
+                      "fr11", "fr12", "memory");
+            }
+            rows[k & 1][2 + kD] = kWall; // (the pair at disparity 80 wrote the wall after it)
+        }
+    __asm__ volatile("mtspr 919, %0\n\tisync" : : "r"(gqr7) : "memory");
+}
+#endif
+
 void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const want[2])
 {
     State &state = m_state;
@@ -345,41 +504,52 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     // their spot on screen at all (inside).
     m_matches.assign(static_cast<size_t>(kDisparities) * kBlocks, 0);
     m_inside.assign(static_cast<size_t>(kDisparities) * kBlocks, 0);
-    // (inside: all but the left edge's word for d < 0, the right edge's for d > 0)
-    uint64_t edgeMask[kDisparities];
+    // (inside: all but the left edge's word for d < 0, the right edge's for d > 0; by 32-bit halves throughout, as
+    // the Wii's CPU works 64-bit words in pairs of instructions)
+    uint32_t edgeMask[kDisparities][2];
     for (int di = 0; di < kDisparities; ++di)
     {
         const int d = di - kMaxDisparity;
-        edgeMask[di] = d < 0 ? ~0ull << -d : d > 0 ? ~0ull >> d : ~0ull;
+        const uint64_t mask = d < 0 ? ~0ull << -d : d > 0 ? ~0ull >> d : ~0ull;
+        edgeMask[di][0] = static_cast<uint32_t>(mask), edgeMask[di][1] = static_cast<uint32_t>(mask >> 32);
     }
     for (int by = 0; by < kBlocksY; ++by)
     {
-        uint64_t acc[kDisparities][kRowWords] = {};
-        uint64_t total[kRowWords] = {}, edge[kDisparities] = {};
+        uint32_t acc[kDisparities][2 * kRowWords] = {};
+        uint32_t total[2 * kRowWords] = {}, edge[kDisparities][2] = {};
         for (int y = by * 8; y < by * 8 + 8; ++y)
         {
             const uint64_t *l1 = m_bits[0][0][y].data(), *l2 = m_bits[0][1][y].data(), *l3 = m_bits[0][2][y].data();
             const uint64_t *r1 = m_bits[1][0][y].data(), *r2 = m_bits[1][1][y].data(), *r3 = m_bits[1][2][y].data();
             for (int k = 0; k < kRowWords; ++k)
-            {
-                const uint64_t w1 = l1[k + 1], w2 = l2[k + 1], w3 = l3[k + 1], lw = w1 | w2 | w3;
-                if (!lw)
-                    continue;
-                total[k] += ByteCounts(lw);
-                for (int di = 0; di < kDisparities; ++di)
+                for (int h = 0; h < 2; ++h)
                 {
-                    const int d = di - kMaxDisparity;
-                    acc[di][k] += ByteCounts((w1 & Shifted(r1, k, d)) | (w2 & Shifted(r2, k, d)) | (w3 & Shifted(r3, k, d)));
+                    const int i = 2 * (k + 1) + h;
+                    const uint32_t w1 = Half(l1, i), w2 = Half(l2, i), w3 = Half(l3, i), lw = w1 | w2 | w3;
+                    if (!lw)
+                        continue;
+                    total[2 * k + h] += ByteCounts32(lw);
+                    for (int di = 0; di < kDisparities; ++di)
+                    {
+                        const int d = di - kMaxDisparity;
+                        acc[di][2 * k + h] +=
+                            ByteCounts32((w1 & Shifted32(r1, k, h, d)) | (w2 & Shifted32(r2, k, h, d)) | (w3 & Shifted32(r3, k, h, d)));
+                    }
                 }
+            uint32_t first[2], last[2];
+            for (int h = 0; h < 2; ++h)
+            {
+                first[h] = Half(l1, 2 + h) | Half(l2, 2 + h) | Half(l3, 2 + h);
+                last[h] = Half(l1, 2 * kRowWords + h) | Half(l2, 2 * kRowWords + h) | Half(l3, 2 * kRowWords + h);
             }
-            const uint64_t first = l1[1] | l2[1] | l3[1], last = l1[kRowWords] | l2[kRowWords] | l3[kRowWords];
             for (int di = 0; di < kDisparities; ++di)
             {
                 const int d = di - kMaxDisparity;
-                if (d < 0)
-                    edge[di] += ByteCounts(first & edgeMask[di]);
-                else if (d > 0)
-                    edge[di] += ByteCounts(last & edgeMask[di]);
+                for (int h = 0; h < 2; ++h)
+                    if (d < 0)
+                        edge[di][h] += ByteCounts32(first[h] & edgeMask[di][h]);
+                    else if (d > 0)
+                        edge[di][h] += ByteCounts32(last[h] & edgeMask[di][h]);
             }
         }
         for (int di = 0; di < kDisparities; ++di)
@@ -388,14 +558,15 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
             uint8_t *m = &m_matches[static_cast<size_t>(di) * kBlocks + by * kBlocksX];
             uint8_t *in = &m_inside[static_cast<size_t>(di) * kBlocks + by * kBlocksX];
             for (int k = 0; k < kRowWords; ++k)
-            {
-                const uint64_t t = (d < 0 && k == 0) || (d > 0 && k == kRowWords - 1) ? edge[di] : total[k];
-                for (int j = 0; j < 8; ++j)
+                for (int h = 0; h < 2; ++h)
                 {
-                    m[k * 8 + j] = static_cast<uint8_t>(acc[di][k] >> (8 * j));
-                    in[k * 8 + j] = static_cast<uint8_t>(t >> (8 * j));
+                    const uint32_t t = (d < 0 && k == 0) || (d > 0 && k == kRowWords - 1) ? edge[di][h] : total[2 * k + h];
+                    for (int j = 0; j < 4; ++j)
+                    {
+                        m[k * 8 + h * 4 + j] = static_cast<uint8_t>(acc[di][2 * k + h] >> (8 * j));
+                        in[k * 8 + h * 4 + j] = static_cast<uint8_t>(t >> (8 * j));
+                    }
                 }
-            }
         }
     }
 
@@ -411,6 +582,7 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
         return t;
     }();
     constexpr size_t kVolume = static_cast<size_t>(kBlocks) * kDisparities;
+    static_assert(kStride == kDisparities + 1 && kStride % 2 == 0, "(the smoothing's pairs)");
     const bool hadLast = state.estimated && state.cost.size() == kVolume;
     m_costByDisparity.resize(kVolume);
     m_blockPixels.assign(kBlocks, 0);
@@ -535,24 +707,32 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                         c[b] = static_cast<int16_t>(c[b] - kPlaneBonus);
             }
     }
-    // (block-major for the smoothing - transposed in tiles)
-    m_cost.resize(kVolume);
+    // (block-major for the smoothing - transposed in tiles; kStride: each block's disparities start on a 4-byte
+    // boundary, its last entry unused)
+    m_cost.resize(static_cast<size_t>(kBlocks) * kStride);
     for (int b0 = 0; b0 < kBlocks; b0 += 16)
+    {
         for (int di = 0; di < kDisparities; ++di)
         {
             const int16_t *src = &m_costByDisparity[static_cast<size_t>(di) * kBlocks];
             for (int b = b0; b < std::min(b0 + 16, kBlocks); ++b)
-                m_cost[static_cast<size_t>(b) * kDisparities + di] = src[b];
+                m_cost[static_cast<size_t>(b) * kStride + di] = src[b];
         }
+        for (int b = b0; b < std::min(b0 + 16, kBlocks); ++b)
+            m_cost[static_cast<size_t>(b) * kStride + kDisparities] = 0;
+    }
 
     // 5. Smoothed over the block grid: along each row and column of blocks,
     // both ways, a block's cost at a disparity plus the cheapest way to get
     // there from its neighbour's (the same disparity free, one step kStep,
     // any jump kJump) - summed over the four ways, the cheapest wins.
     m_sum.resize(m_cost.size());
-    constexpr int16_t kWall = 16000; // (beyond the disparities: never the cheapest)
     // (the first pass sets the sums, the rest add; each block's lowest is found while it's written, for the next)
     auto pass = [&](int first, int step, int count, int lines, int lineStep, bool add) {
+#ifdef GEKKO
+        SmoothPass(m_cost.data(), m_sum.data(), first, step, count, lines, lineStep, add);
+        return;
+#endif
         int16_t rows[2][kDisparities + 2];
         for (auto &r : rows)
             r[0] = r[kDisparities + 1] = kWall;
@@ -563,8 +743,8 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
             for (int k = 0; k < count; ++k)
             {
                 const int b = first + line * lineStep + k * step;
-                const int16_t *c = &m_cost[static_cast<size_t>(b) * kDisparities];
-                int16_t *sum = &m_sum[static_cast<size_t>(b) * kDisparities];
+                const int16_t *c = &m_cost[static_cast<size_t>(b) * kStride];
+                int16_t *sum = &m_sum[static_cast<size_t>(b) * kStride];
                 int16_t *out = rows[k & 1] + 1;
                 int nextLow = kWall;
                 if (!prev)
@@ -605,7 +785,7 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     state.best.resize(kBlocks);
     for (int b = 0; b < kBlocks; ++b)
     {
-        const int16_t *sum = &m_sum[static_cast<size_t>(b) * kDisparities];
+        const int16_t *sum = &m_sum[static_cast<size_t>(b) * kStride];
         state.best[b] = static_cast<int16_t>(std::min_element(sum, sum + kDisparities) - sum);
     }
 

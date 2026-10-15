@@ -87,6 +87,7 @@ public:
 
 private:
     static constexpr int kDisparities = 2 * kMaxDisparity + 1;
+    static constexpr int kStride = kDisparities + 1; // (per block in m_cost and m_sum)
     static constexpr int kBlocksX = kWidth / 8, kBlocksY = kHeight / 8, kBlocks = kBlocksX * kBlocksY;
     // A row of one shade's pixels as bits (pixel x at bit x + 64): a guard
     // word before and two after, so a shift by up to 64 either way stays inside.
@@ -101,6 +102,8 @@ private:
         bool estimated = false;
     };
     void Estimate(const uint8_t *const shades[2], const uint8_t *const want[2]);
+    // (the Wii's smoothing pass, paired singles - see Estimate)
+    static void SmoothPass(const int16_t *cost, int16_t *sum, int first, int step, int count, int lines, int lineStep, bool add);
     int Votes(unsigned s, const unsigned left[7], int x, int y, int d) const;
     void LeftWindow(unsigned s, int x, int y, unsigned left[7]) const;
 
