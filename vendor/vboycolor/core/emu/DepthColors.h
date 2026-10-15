@@ -118,7 +118,7 @@ private:
 
     // Scratch (kept to avoid reallocating every frame).
     std::vector<uint8_t> m_matches, m_inside;             // per disparity, block: matching / countable pixels
-    std::vector<int16_t> m_costByDisparity, m_cost, m_sum; // the costs per disparity and block; per block and disparity; smoothed
+    std::vector<int16_t> m_cost, m_sum; // the costs per block and disparity (state.cost turned around); smoothed
     std::vector<int32_t> m_blockPixels;                   // per block: pixels in the 3x3 blocks around it
     struct Sample
     {

@@ -584,7 +584,7 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     constexpr size_t kVolume = static_cast<size_t>(kBlocks) * kDisparities;
     static_assert(kStride == kDisparities + 1 && kStride % 2 == 0, "(the smoothing's pairs)");
     const bool hadLast = state.estimated && state.cost.size() == kVolume;
-    m_costByDisparity.resize(kVolume);
+    state.cost.resize(kVolume); // (worked out in place: each block's cost blends with its own last one)
     m_blockPixels.assign(kBlocks, 0);
     int32_t *blockPixels = m_blockPixels.data();
     int16_t sums[4][kBlocks]; // the 3-wide and 11-wide sums of matches and countable pixels, along the rows of blocks
@@ -622,12 +622,13 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
             const int b = by * kBlocksX + bx;
             blockPixels[b] = sums[1][b] + (by > 0 ? sums[1][b - kBlocksX] : 0) + (by + 1 < kBlocksY ? sums[1][b + kBlocksX] : 0);
         }
+    const int32_t *const perMille = kPerMille.data();
     for (int di = 0; di < kDisparities; ++di)
     {
         rowSums(di);
         const size_t row = static_cast<size_t>(di) * kBlocks;
-        const int16_t *last = hadLast ? &state.cost[row] : nullptr;
-        int16_t *out = &m_costByDisparity[row];
+        int16_t *out = &state.cost[row];
+        const int16_t *last = hadLast ? out : nullptr;
         for (int by = 0; by < kBlocksY; ++by)
             for (int bx = 0; bx < kBlocksX; ++bx)
             {
@@ -640,11 +641,16 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                         m += sums[0][b - kBlocksX], in += sums[1][b - kBlocksX];
                     if (by + 1 < kBlocksY)
                         m += sums[0][b + kBlocksX], in += sums[1][b + kBlocksX];
+                    // (a window full enough counts fully: w * x >> 5 is x itself then)
                     const int w = std::min<int>(in, kSmallFull);
-                    const int small = in ? (w * (1000 - ((m * kPerMille[in]) >> 16)) + (kSmallFull - w) * kNeutral) >> 5 : kNeutral;
+                    const int small = in >= kSmallFull ? 1000 - ((m * perMille[in]) >> 16)
+                                      : in            ? (w * (1000 - ((m * perMille[in]) >> 16)) + (kSmallFull - w) * kNeutral) >> 5
+                                                      : kNeutral;
                     const int32_t wm = sums[2][b], wn = sums[3][b];
                     const int ww = std::min<int>(wn, kWideFull);
-                    const int wide = wn ? (ww * (1000 - ((wm * kPerMille[wn]) >> 16)) + (kWideFull - ww) * kNeutral) >> 6 : kNeutral;
+                    const int wide = wn >= kWideFull ? 1000 - ((wm * perMille[wn]) >> 16)
+                                     : wn            ? (ww * (1000 - ((wm * perMille[wn]) >> 16)) + (kWideFull - ww) * kNeutral) >> 6
+                                                     : kNeutral;
                     c = (small + wide) >> 1;
                 }
                 // (and a little for every pixel away from the screen's plane: where several
@@ -657,21 +663,21 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                 out[b] = static_cast<int16_t>(c);
             }
     }
-    state.cost = m_costByDisparity;
     state.estimated = true;
     static_assert(kSmallFull == 32 && kWideFull == 64, "(the shifts above)");
 
     // 4. The frame's main depths: the most common cheapest disparities of
     // blocks with something in them (weighted by how much), apart by 3 or
     // more - each pulls the blocks near it a little.
+    bool pulled[kDisparities] = {};
     {
         int16_t low[kBlocks];
         uint8_t at[kBlocks];
         for (int b = 0; b < kBlocks; ++b)
-            low[b] = m_costByDisparity[b], at[b] = 0;
+            low[b] = state.cost[b], at[b] = 0;
         for (int di = 1; di < kDisparities; ++di)
         {
-            const int16_t *c = &m_costByDisparity[static_cast<size_t>(di) * kBlocks];
+            const int16_t *c = &state.cost[static_cast<size_t>(di) * kBlocks];
             for (int b = 0; b < kBlocks; ++b)
             {
                 const bool lower = c[b] < low[b];
@@ -683,7 +689,6 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
         for (int b = 0; b < kBlocks; ++b)
             if (blockPixels[b])
                 histogram[at[b]] += std::min(blockPixels[b], 64);
-        bool pulled[kDisparities] = {};
         for (int p = 0; p < 4; ++p)
         {
             const int i = static_cast<int>(std::max_element(histogram, histogram + kDisparities) - histogram);
@@ -698,25 +703,21 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
             for (int k = std::max(0, i - 1); k <= std::min(kDisparities - 1, i + 1); ++k)
                 pulled[k] = true;
         }
-        for (int di = 0; di < kDisparities; ++di)
-            if (pulled[di])
-            {
-                int16_t *c = &m_costByDisparity[static_cast<size_t>(di) * kBlocks];
-                for (int b = 0; b < kBlocks; ++b)
-                    if (blockPixels[b])
-                        c[b] = static_cast<int16_t>(c[b] - kPlaneBonus);
-            }
     }
-    // (block-major for the smoothing - transposed in tiles; kStride: each block's disparities start on a 4-byte
-    // boundary, its last entry unused)
+    // (block-major for the smoothing - transposed in tiles, the main depths' pull taken off on the way; kStride: each
+    // block's disparities start on a 4-byte boundary, its last entry unused)
     m_cost.resize(static_cast<size_t>(kBlocks) * kStride);
     for (int b0 = 0; b0 < kBlocks; b0 += 16)
     {
         for (int di = 0; di < kDisparities; ++di)
         {
-            const int16_t *src = &m_costByDisparity[static_cast<size_t>(di) * kBlocks];
-            for (int b = b0; b < std::min(b0 + 16, kBlocks); ++b)
-                m_cost[static_cast<size_t>(b) * kStride + di] = src[b];
+            const int16_t *src = &state.cost[static_cast<size_t>(di) * kBlocks];
+            if (pulled[di])
+                for (int b = b0; b < std::min(b0 + 16, kBlocks); ++b)
+                    m_cost[static_cast<size_t>(b) * kStride + di] = static_cast<int16_t>(src[b] - (blockPixels[b] ? kPlaneBonus : 0));
+            else
+                for (int b = b0; b < std::min(b0 + 16, kBlocks); ++b)
+                    m_cost[static_cast<size_t>(b) * kStride + di] = src[b];
         }
         for (int b = b0; b < std::min(b0 + 16, kBlocks); ++b)
             m_cost[static_cast<size_t>(b) * kStride + kDisparities] = 0;
