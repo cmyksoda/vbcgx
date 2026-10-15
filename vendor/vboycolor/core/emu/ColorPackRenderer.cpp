@@ -1878,6 +1878,30 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
     found.fill(kNoDisparity);
     std::array<int8_t, kBands> wordFrom{}, wordTo{};
     std::array<uint8_t, kBands> bandMatch{}; // (how much of the band lines up at its disparity, percent)
+    // Per 8 columns of a band, how many right-picture pixels line up with the left's at shift d (bytes of a word add up
+    // 8 columns at a time - at most 8 rows x 3 shades x 8 pixels, so no carry). Their sum is the band's count, so a
+    // band's fine search keeps them for its blocks' searches below.
+    auto scoreRow = [&](uint8_t *row, int by, int from, int to, int d) {
+        std::memset(row, 0, kBlocksX);
+        uint32_t sum[kRowWords] = {};
+        for (int y = by * 8; y < by * 8 + 8; ++y)
+            for (int s = 0; s < 3; ++s)
+            {
+                const uint32_t *r = &rightBits[(y * 3 + s) * kGuardedRow];
+                const uint32_t *l = &leftBits[(y * 3 + s) * kGuardedRow];
+                for (int w = from; w <= to; ++w)
+                    if (r[kGuardWords + w])
+                        sum[w] += ByteCounts(r[kGuardWords + w] & Shifted(l, w, d));
+            }
+        for (int w = from; w <= to; ++w)
+            for (int j = 0; j < 4; ++j)
+                row[w * 4 + j] = static_cast<uint8_t>(sum[w] >> (8 * j));
+    };
+    constexpr int kFineShifts = 9;
+    m_fineScores.resize(static_cast<size_t>(kBands) * kFineShifts * kBlocksX);
+    std::array<int16_t, kBands> fineFrom;
+    std::array<int8_t, kBands> fineCount{};
+    fineFrom.fill(kNoDisparity);
     for (int band = 0; band < kBands; ++band)
     {
         int lit = 0, from = kRowWords, to = -1;
@@ -1920,14 +1944,31 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
             }
             return best;
         };
+        // (as search with stride and step 1, its counts kept)
+        auto fine = [&](int lo, int hi, int &bestD) {
+            lo = std::max(-kMaxDisparity, lo), hi = std::min(kMaxDisparity, hi);
+            fineFrom[band] = static_cast<int16_t>(lo), fineCount[band] = static_cast<int8_t>(hi - lo + 1);
+            int best = -1;
+            for (int d = lo; d <= hi; ++d)
+            {
+                uint8_t *row = &m_fineScores[(static_cast<size_t>(band) * kFineShifts + (d - lo)) * kBlocksX];
+                scoreRow(row, band, from, to, d);
+                int n = 0;
+                for (int i = from * 4; i < to * 4 + 4; ++i)
+                    n += row[i];
+                if (n > best || (n == best && std::abs(d - around) < std::abs(bestD - around)))
+                    best = n, bestD = d;
+            }
+            return best;
+        };
         int bestD = around, best;
         if (scrolled && previous != kNoDisparity)
-            best = search(previous - 4, previous + 4, 1, 1, bestD);
+            best = fine(previous - 4, previous + 4, bestD);
         else
         {
             search(-kMaxDisparity, kMaxDisparity, 2, 2, bestD);
             const int coarse = bestD;
-            best = search(coarse - 2, coarse + 2, 1, 1, bestD);
+            best = fine(coarse - 2, coarse + 2, bestD);
         }
         if (best > 0)
         {
@@ -1986,24 +2027,14 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
         uint8_t score[kShifts][kBlocksX];
         bool scored[kShifts] = {};
         auto scoreAt = [&](int d) -> const uint8_t * {
+            if (fineFrom[by] != kNoDisparity && d >= fineFrom[by] && d < fineFrom[by] + fineCount[by])
+                return &m_fineScores[(static_cast<size_t>(by) * kFineShifts + (d - fineFrom[by])) * kBlocksX];
             uint8_t *row = score[d + kMaxDisparity];
-            if (scored[d + kMaxDisparity])
-                return row;
-            scored[d + kMaxDisparity] = true;
-            std::memset(row, 0, kBlocksX);
-            uint32_t sum[kRowWords] = {};
-            for (int y = by * 8; y < by * 8 + 8; ++y)
-                for (int s = 0; s < 3; ++s)
-                {
-                    const uint32_t *r = &rightBits[(y * 3 + s) * kGuardedRow];
-                    const uint32_t *l = &leftBits[(y * 3 + s) * kGuardedRow];
-                    for (int w = from; w <= to; ++w)
-                        if (r[kGuardWords + w])
-                            sum[w] += ByteCounts(r[kGuardWords + w] & Shifted(l, w, d));
-                }
-            for (int w = from; w <= to; ++w)
-                for (int j = 0; j < 4; ++j)
-                    row[w * 4 + j] = static_cast<uint8_t>(sum[w] >> (8 * j));
+            if (!scored[d + kMaxDisparity])
+            {
+                scored[d + kMaxDisparity] = true;
+                scoreRow(row, by, from, to, d);
+            }
             return row;
         };
         for (int bx = 0; bx < kBlocksX; ++bx)

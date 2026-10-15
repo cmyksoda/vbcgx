@@ -251,6 +251,7 @@ private:
         std::vector<uint32_t> version[2];
     };
     std::array<GatherCache, 2> m_gatherCache;
+    std::vector<uint8_t> m_fineScores; // (EstimatePair: each band's fine search, per shift and 8 columns, for its blocks)
     // Tiles the left pictures of pairs draw this frame (by hash, with the
     // pairs whose left pictures draw them - bit per pair): a right
     // picture's pixel of a tile its own left picture draws is colored by
