@@ -618,6 +618,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
 {
     const TileColorPack *pack = m_packShown ? m_pack : nullptr;
     m_settled = false;
+    m_painted.fill((1ull << kGridW) - 1);
     if (!pack && !m_auto)
     {
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
@@ -734,6 +735,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 keepRight[b] |= static_cast<uint64_t>(keptRightCell[b][c]) << c;
             }
         }
+    for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+        m_painted[b] = ~keep[b] & ((1ull << kGridW) - 1);
     ContextGroupBits *markers = nullptr; // this frame's marker grid (Near reads it and the two before it)
     uint8_t *markerLayers = nullptr;
     if (haveContexts)
@@ -1342,6 +1345,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     continue;
                 }
                 shade.column(x, b * 8, 8); // (painted again; its bookkeeping is kept)
+                m_painted[b] |= 1ull << (x >> 3);
             }
             Band &band = bands[b];
             Cell &sums = kept ? unkept : band.cells[x >> 3];
@@ -1513,6 +1517,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     }
     if (depth)
     {
+        m_painted.fill((1ull << kGridW) - 1);
         brightest = std::max(brightest, PaintDepth(frame, fbWidth, eyeOffset, view, have, bg));
         for (Band &band : bands)
             for (Cell &cell : band.cells)

@@ -412,6 +412,15 @@ namespace
     unsigned g_frameW = 0, g_frameH = 0;
     size_t g_framePitch = 0;
     std::vector<uint8_t> g_colored[2]; // per frame buffer (see ColorPackRenderer::Paint)
+    // Per colored picture: the cells (bit per 8 columns, per band) its last present changed, and the present
+    // count when it was shown before that (0: never) and last. The count only grows, so a picture allocated
+    // where an old one was can't pass for it.
+    struct ShownCells
+    {
+        uint64_t changed[VBGO_TT_HEIGHT / 8];
+        uint32_t since, at;
+    } g_shown[2];
+    uint32_t g_presents;
     uint32_t g_lastPicture; // (the VIP's id for the last frame's picture)
     bool g_repaint = true;  // the next frame is colored in full regardless
 
@@ -666,11 +675,14 @@ namespace
         const size_t rowBytes = g_framePitch >= static_cast<size_t>(w) * 4 && !(g_framePitch & 3) ? g_framePitch : static_cast<size_t>(w) * 4;
         const size_t pixels = rowBytes / 4 * h;
         const bool painting = g_shadeColors && g_renderer.Active() && vbgo_tiletrack_is_enabled();
-        std::vector<uint8_t> &colored = g_colored[painting ? ColorPackRenderer::ShownBuffer() : 0];
+        const int shown = painting ? ColorPackRenderer::ShownBuffer() : 0;
+        std::vector<uint8_t> &colored = g_colored[shown];
+        bool whole = !painting;
         if (colored.size() != pixels * 4)
         {
             colored.resize(pixels * 4);
             g_renderer.ForgetBands();
+            whole = true;
         }
         // (the picture Beetle drew, each eye kept compact: the side-by-side surface isn't written)
         const uint8_t *const bits[2] = {vbgo_vip_eye_bits(0), vbgo_vip_eye_bits(1)};
@@ -712,6 +724,11 @@ namespace
                     out[x] = g_brightness[vbgo_eye_word(bits[0], clut[0], x, y) >> 16 & 0xFF];
             }
         }
+        ShownCells &cells = g_shown[shown];
+        for (unsigned b = 0; b < VBGO_TT_HEIGHT / 8; ++b)
+            cells.changed[b] = whole || !g_shadeColors ? ~0ull : g_renderer.PaintedCells()[b];
+        cells.since = whole ? 0 : cells.at;
+        cells.at = ++g_presents;
         g_video(colored.data(), VBGO_TT_WIDTH, h, rowBytes);
     }
 } // namespace
@@ -891,6 +908,21 @@ extern "C"
         for (auto &colored : g_colored)
             std::vector<uint8_t>().swap(colored);
         g_loaded = false;
+    }
+
+    // For a frontend that keeps a converted copy of each picture: if frame is a colored picture, its cells (per
+    // band, bit per 8 columns) that changed since it was shown at *since (0: unknown - all of it), and *at, this
+    // showing's count. NULL for any other frame.
+    RETRO_API const uint64_t *vboycolor_changed_cells(const void *frame, uint32_t *since, uint32_t *at)
+    {
+        for (int k = 0; k < 2; ++k)
+            if (!g_colored[k].empty() && frame == g_colored[k].data())
+            {
+                *since = g_shown[k].since;
+                *at = g_shown[k].at;
+                return g_shown[k].changed;
+            }
+        return nullptr;
     }
 
     RETRO_API unsigned retro_get_region(void) { return beetle_retro_get_region(); }

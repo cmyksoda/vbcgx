@@ -26,26 +26,48 @@ inline uint32_t BytesInOrder(uint32_t a, uint32_t b, uint32_t c, uint32_t d)
 
 // Coverage reduction protects thin lines when the frame exceeds the output
 // resolution. GX receives RGBA8 tiles with explicit byte order.
-inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned sourceH, size_t pitch,
-    uint8_t *tiled, unsigned w, unsigned h)
+// One 4x4 tile of a picture shown 1:1, from its top left pixel: a line of alpha-red pairs and a line of
+// green-blue ones, two pixels a word.
+inline void ConvertTile(const uint8_t *bgrx, size_t pitch, uint8_t *tile)
 {
-    if (w == sourceW && h == sourceH) {
-        // (each tile: a line of alpha-red pairs and a line of green-blue ones, two pixels a word)
-        for (unsigned by = 0; by < h; by += 4) {
-            for (unsigned bx = 0; bx < w; bx += 4) {
-                ZeroLine32(tiled);
-                ZeroLine32(tiled + 32);
-                for (unsigned y = 0; y < 4; ++y) {
-                    const uint8_t *src = bgrx + (by + y) * pitch + bx * 4;
-                    for (unsigned x = 0; x < 4; x += 2, src += 8) {
-                        const uint32_t ar = BytesInOrder(255, src[2], 255, src[6]), gb = BytesInOrder(src[1], src[0], src[5], src[4]);
-                        std::memcpy(tiled + y * 8 + x * 2, &ar, 4);
-                        std::memcpy(tiled + 32 + y * 8 + x * 2, &gb, 4);
-                    }
-                }
-                tiled += 64;
-            }
+    ZeroLine32(tile);
+    ZeroLine32(tile + 32);
+    for (unsigned y = 0; y < 4; ++y) {
+        const uint8_t *src = bgrx + y * pitch;
+        for (unsigned x = 0; x < 4; x += 2, src += 8) {
+            const uint32_t ar = BytesInOrder(255, src[2], 255, src[6]), gb = BytesInOrder(src[1], src[0], src[5], src[4]);
+            std::memcpy(tile + y * 8 + x * 2, &ar, 4);
+            std::memcpy(tile + 32 + y * 8 + x * 2, &gb, 4);
         }
+    }
+}
+
+// A picture shown 1:1 whose tiles already hold its last showing: only the 8x8 cells changed since (per band,
+// bit per 8 columns) are converted again.
+inline void ConvertVBCells(const uint8_t *bgrx, size_t pitch, uint8_t *tiled, unsigned w, unsigned h,
+    const uint64_t *changed)
+{
+    for (unsigned band = 0; band < h / 8; ++band)
+        for (uint64_t cells = changed[band]; cells; cells &= cells - 1) {
+            const unsigned x = static_cast<unsigned>(__builtin_ctzll(cells)) * 8;
+            for (unsigned y = band * 8; y < band * 8 + 8; y += 4)
+                for (unsigned bx = x; bx < x + 8; bx += 4)
+                    ConvertTile(bgrx + y * pitch + bx * 4, pitch, tiled + ((y / 4) * (w / 4) + bx / 4) * 64);
+        }
+}
+
+// changed: if tiled already holds this picture's last showing, its cells changed since (see ConvertVBCells).
+inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned sourceH, size_t pitch,
+    uint8_t *tiled, unsigned w, unsigned h, const uint64_t *changed = nullptr)
+{
+    if (changed && w == sourceW && h == sourceH && !(h % 8) && w <= 64 * 8) {
+        ConvertVBCells(bgrx, pitch, tiled, w, h, changed);
+        return;
+    }
+    if (w == sourceW && h == sourceH) {
+        for (unsigned by = 0; by < h; by += 4)
+            for (unsigned bx = 0; bx < w; bx += 4, tiled += 64)
+                ConvertTile(bgrx + by * pitch + bx * 4, pitch, tiled);
         return;
     }
     if (w == sourceW && h < sourceH && h <= 512) {

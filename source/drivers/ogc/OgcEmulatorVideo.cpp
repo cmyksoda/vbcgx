@@ -70,13 +70,22 @@ void OgcEmulatorVideo::presentFrame(const uint8_t *buffer, size_t pitch)
     unsigned w = std::min(vbWidth, static_cast<unsigned>(std::max(4.0f, logicalW)));
     unsigned h = std::min(vbHeight, static_cast<unsigned>(std::max(4.0f, logicalH * mode->efbHeight / 480.0f)));
     w = (w + 3) & ~3u; h = (h + 3) & ~3u;
-    if (w != textureW || h != textureH) {
-        videoDriver->getImageRenderer()->destroyTexture(texture);
-        texture = videoDriver->getImageRenderer()->createTexture(w, h);
-        textureW = w; textureH = h;
+    Copy *copy = copies[1].src == buffer ? &copies[1] : copies[0].src == buffer || copies[0].used <= copies[1].used
+        ? &copies[0] : &copies[1];
+    copy->used = ++presented;
+    if (w != copy->w || h != copy->h) {
+        videoDriver->getImageRenderer()->destroyTexture(copy->texture);
+        copy->texture = videoDriver->getImageRenderer()->createTexture(w, h);
+        copy->w = w; copy->h = h; copy->at = 0;
     }
-    if (!texture) { videoDriver->presentBuffer(); return; }
-    ReduceVBFrame(buffer, vbWidth, vbHeight, pitch, (uint8_t *)texture, w, h);
+    void *texture = copy->texture;
+    if (!texture) { copy->src = nullptr; videoDriver->presentBuffer(); return; }
+    uint32_t since = 0, at = 0;
+    const uint64_t *changed = vboycolor_changed_cells(buffer, &since, &at);
+    const bool held = changed && copy->src == buffer && copy->at && since == copy->at;
+    ReduceVBFrame(buffer, vbWidth, vbHeight, pitch, (uint8_t *)texture, w, h, held ? changed : nullptr);
+    copy->src = buffer;
+    copy->at = changed ? at : 0;
     DCFlushRange(texture, w * h * 4);
     GX_InvalidateTexAll();
     GXTexObj tex;
@@ -100,6 +109,13 @@ void OgcEmulatorVideo::presentFrame(const uint8_t *buffer, size_t pitch)
     gameScreenPng.scaleX = logicalW / vbWidth; gameScreenPng.scaleY = logicalH / vbHeight;
     gameScreenPng.xoffset = EmuSettings.videoXshift; gameScreenPng.yoffset = EmuSettings.videoYshift;
 }
+void OgcEmulatorVideo::forgetFrame()
+{
+    shown = nullptr;
+    for (Copy &copy : copies)
+        copy.src = nullptr, copy.at = 0;
+}
+
 void OgcEmulatorVideo::readFrameRGB24(uint8_t *dst)
 {
     if (!shown) {

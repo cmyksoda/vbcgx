@@ -87,6 +87,9 @@ public:
                const Shade &shade);
     // The frame buffer the left eye shows (0 or 1): each keeps a colored picture of its own.
     static int ShownBuffer();
+    // Per band, the left eye's cells (bit per 8 columns) the last Paint may have written: the rest of the
+    // picture is as it was.
+    const uint64_t *PaintedCells() const { return m_painted.data(); }
     // Forget what the colored pictures hold (something else drew in them).
     void ForgetBands();
     // Instead of painting the same frame again after a Paint that left
@@ -140,6 +143,7 @@ private:
         std::vector<uint64_t> pairSlots; // cell << 32 | left eye: chr | pairs << 11; right eye: chr | (pair + 1) << 11
     };
     std::array<std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2>, 2> m_bands; // [eye][buffer]
+    std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_painted{};
     std::array<std::array<std::vector<BandColumn>, 2>, 2> m_bandColumns;
     // What painting a band depends on beyond its drawing (bumps m_paintState when it changes).
     struct PaintState
