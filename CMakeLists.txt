@@ -5,7 +5,7 @@ set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/vendor/vboycolor)
 set(VB_CORE_DIR ${REPO}/third_party/beetle-vb-libretro)
 set(GENERATED ${CMAKE_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${GENERATED})
-file(WRITE ${GENERATED}/Version.h "static constexpr const char *kGeneratedVersionString = \"0.2.38-dev\";\n")
+file(WRITE ${GENERATED}/Version.h "static constexpr const char *kGeneratedVersionString = \"0.2.39-dev\";\n")
 # ---- Beetle VB (its retro_* entry points renamed beetle_retro_*) ----
 include(${REPO}/cmake/PatchBeetleVip.cmake)
 vbgo_generate_patched_vip(${VB_CORE_DIR} ${GENERATED}/beetle-vb)
