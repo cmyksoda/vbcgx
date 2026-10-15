@@ -244,6 +244,16 @@ class V810
  uint32 IdleQuiet = 0, IdleHead = ~0u;
  v810_timestamp_t IdleAt = 0, IdleNext = 0;
  uint32 IdleRegs[64];
+ /* (what StoreFreeLoop and CounterLoop found at the loop last looked at: only its code decides) */
+ struct IdleShape
+ {
+    const uint8 *code;
+    bool storeFree, counter;
+    uint32 addr;
+    int32 step;
+    unsigned pollBase;
+    int32 pollDisp;
+ } IdleShapeSeen = {};
  v810_timestamp_t IdleLoop(v810_timestamp_t timestamp, const uint8 *code);
 
  public:

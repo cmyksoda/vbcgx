@@ -126,6 +126,30 @@ static bool CounterLoop(const uint8 *code, uint32 *addr, int32 *step, unsigned *
    #undef H
 }
 
+/* The registers a pass can change: all of P_REG, and the system registers SetSREG and exceptions write (the rest
+ * change only at reset or a state load, between frames, and Run starts each frame afresh). Word by word, as memcmp
+ * cost more than the loop being looked at. */
+static inline bool SameRegs(const uint32 *saved, const uint32 *p, const uint32 *s)
+{
+   uint32 diff = 0;
+   for(unsigned i = 0; i < 32; ++i)
+      diff |= saved[i] ^ p[i];
+   for(unsigned i = EIPC; i <= PSW; ++i)
+      diff |= saved[32 + i] ^ s[i];
+   diff |= (saved[32 + CHCW] ^ s[CHCW]) | (saved[32 + ADDTRE] ^ s[ADDTRE]);
+   return !diff;
+}
+
+static inline void SaveRegs(uint32 *saved, const uint32 *p, const uint32 *s)
+{
+   for(unsigned i = 0; i < 32; ++i)
+      saved[i] = p[i];
+   for(unsigned i = EIPC; i <= PSW; ++i)
+      saved[32 + i] = s[i];
+   saved[32 + CHCW] = s[CHCW];
+   saved[32 + ADDTRE] = s[ADDTRE];
+}
+
 /* A pass back to the loop head with no register changed, nothing stored but such
  * a counter and no timer or pad read can only repeat until the next event. */
 v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
@@ -134,16 +158,23 @@ v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
    /* (an event in between may have changed what the loop read before it) */
    if(head == IdleHead && IdleNext == next_event_ts)
    {
-      bool idle = !vb_idle_unsteady && !IPendingCache && !memcmp(IdleRegs, P_REG, sizeof(P_REG)) &&
-                  !memcmp(IdleRegs + 32, S_REG, sizeof(S_REG));
+      bool idle = !vb_idle_unsteady && !IPendingCache && SameRegs(IdleRegs, P_REG, S_REG);
       uint32 counter = 0;
       int32 step = 0;
-      if(idle && !StoreFreeLoop(code))
+      if(idle && IdleShapeSeen.code != code)
       {
-         unsigned pollBase;
-         int32 pollDisp;
-         idle = CounterLoop(code, &counter, &step, &pollBase, &pollDisp) && ((counter >> 24) & 7) == 5 &&
-                ((P_REG[pollBase] + pollDisp) & ~3u) != (counter & ~3u);
+         IdleShape &seen = IdleShapeSeen;
+         seen.code = code;
+         seen.storeFree = StoreFreeLoop(code);
+         seen.counter = !seen.storeFree && CounterLoop(code, &seen.addr, &seen.step, &seen.pollBase, &seen.pollDisp);
+      }
+      if(idle && !IdleShapeSeen.storeFree)
+      {
+         const IdleShape &seen = IdleShapeSeen;
+         counter = seen.addr;
+         step = seen.step;
+         idle = seen.counter && ((counter >> 24) & 7) == 5 &&
+                ((P_REG[seen.pollBase] + seen.pollDisp) & ~3u) != (counter & ~3u);
       }
       if(!idle)
       {
@@ -173,8 +204,7 @@ v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
       return timestamp;
    }
    IdleHead = head;
-   memcpy(IdleRegs, P_REG, sizeof(P_REG));
-   memcpy(IdleRegs + 32, S_REG, sizeof(S_REG));
+   SaveRegs(IdleRegs, P_REG, S_REG);
    IdleAt = timestamp;
    IdleNext = next_event_ts;
    vb_idle_unsteady = 0;
@@ -424,6 +454,7 @@ bool V810::Init(V810_Emu_Mode mode, bool vb_mode)
 {
    EmuMode = mode;
    VBMode = vb_mode;
+   IdleShapeSeen.code = nullptr;
 #ifdef GEKKO
    FlushBlocks();
 #endif
