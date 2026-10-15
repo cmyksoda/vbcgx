@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(vboycolorgx_core LANGUAGES C CXX)
+project(vbcgx_core LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/vendor/vboycolor)
 set(VB_CORE_DIR ${REPO}/third_party/beetle-vb-libretro)

@@ -417,7 +417,7 @@ static void CreditsWindow()
 	txt[i] = new GuiText("Credits", 30, MenuPaletteCurrent().textOnAccent);
 	txt[i]->setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP); txt[i]->setPosition(0,y); i++; y+=56;
 
-	txt[i] = new GuiText("Official Site: https://github.com/cmyksoda/vboycolorgx", 20, MenuPaletteCurrent().label);
+	txt[i] = new GuiText("Official Site: https://github.com/cmyksoda/vbcgx", 20, MenuPaletteCurrent().label);
 	txt[i]->setAlignment(ALIGN_H::CENTRE, ALIGN_V::TOP); txt[i]->setPosition(0,y); i++; y+=32;
 
 	GuiText::setPresets(20, MenuPaletteCurrent().label, 0, GUI_TEXT_JUSTIFY_LEFT | GUI_TEXT_ALIGN_TOP, ALIGN_H::LEFT, ALIGN_V::TOP);

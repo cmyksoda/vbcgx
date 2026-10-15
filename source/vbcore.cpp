@@ -42,7 +42,7 @@ static bool Environment(unsigned command, void *data)
     }
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
     case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
-        *(const char **)data = "sd:/vboycolorgx"; return true;
+        *(const char **)data = "sd:/" APPFOLDER; return true;
     case RETRO_ENVIRONMENT_SET_GEOMETRY: {
         auto *g = (retro_game_geometry *)data;
         VBSetGeometry(g->base_width, g->base_height, g->aspect_ratio); return true;

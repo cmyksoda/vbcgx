@@ -19,7 +19,7 @@
 
 #define APPNAME			"VBoy Color GX"
 #define APPVERSION		"0.2.29-dev"
-#define APPFOLDER 		"vboycolorgx"
+#define APPFOLDER 		"vbcgx"
 #define PREF_FILE_NAME	"settings.xml"
 
 #define MAXPATHLEN 1024

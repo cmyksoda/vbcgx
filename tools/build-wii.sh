@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
-cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/vboycolorgx"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/vbcgx"
 build_image='ghcr.io/extremscorner/libogc2@sha256:237d779ab1ef1c0d8d828dd585afcd9ba990af5624f517f26ba2d949d237fc4b'
 smb_revision='92e087c15e79e6adfdb3ff9a7ba81243c3c741d0'
 mkdir -p "$cache_dir"
