@@ -1700,7 +1700,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
                 if (!w[x])
                     continue;
                 const size_t i = (static_cast<size_t>(y) * fbWidth + eyeOffset[eye] + x) * 4;
-                int d = m_depth.Disparity(eye, x, y);
+                int d = m_depth.Disparity(x, y);
                 const unsigned shade = shades[eye][y * VBGO_TT_WIDTH + x];
                 uint8_t own[3];
                 const uint8_t *rgb = own;

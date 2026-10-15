@@ -92,8 +92,8 @@ void DepthColors::Reset()
     {
         m_lastShades[e].clear();
         m_lastWant[e].clear();
-        m_disparity[e].clear();
     }
+    m_disparity.clear();
     m_lastDisparity.clear();
     m_haveLast = false;
 }
@@ -130,9 +130,9 @@ void DepthColors::Update(const uint8_t *const shades[2], const uint8_t *const wa
     if (m_haveLast && std::memcmp(shades[0], m_lastShades[0].data(), n) == 0 && std::memcmp(shades[1], m_lastShades[1].data(), n) == 0 &&
         std::memcmp(want[0], m_lastWant[0].data(), n) == 0 && std::memcmp(want[1], m_lastWant[1].data(), n) == 0)
         return; // both pictures as last time
+    m_disparity.assign(n, kUnknown);
     for (int e = 0; e < 2; ++e)
     {
-        m_disparity[e].assign(n, kUnknown);
         for (int s = 0; s < 3; ++s)
         {
             m_bits[e][s].resize(kHeight);
@@ -176,7 +176,7 @@ void DepthColors::Update(const uint8_t *const shades[2], const uint8_t *const wa
                     return false;
             return true;
         };
-        std::vector<int16_t> &left = m_disparity[0];
+        std::vector<int16_t> &left = m_disparity;
         m_flatLabel.assign(n, -1);
         for (int y = 3; y < kHeight - 3; ++y)
             for (int x = 3; x < kWidth - 3; ++x)
@@ -295,55 +295,12 @@ void DepthColors::Update(const uint8_t *const shades[2], const uint8_t *const wa
         }
     }
 
-    // The right picture: each pixel the disparity of the left pixel it shows
-    // (in front wins where two land on one); the rest, their row's nearest
-    // such pixel (the same shade within 6 pixels, any within 12), else their
-    // block's in the left picture.
-    std::vector<int16_t> &right = m_disparity[1];
-    for (int y = 0; y < kHeight; ++y)
-        for (int x = 0; x < kWidth; ++x)
-        {
-            const size_t i = static_cast<size_t>(y) * kWidth + x;
-            const int d = m_disparity[0][i];
-            if (d == kUnknown)
-                continue;
-            const int xr = x + d;
-            if (xr < 0 || xr >= kWidth)
-                continue;
-            const size_t j = static_cast<size_t>(y) * kWidth + xr;
-            if (shades[1][j] == shades[0][i] && (right[j] == kUnknown || d < right[j]))
-                right[j] = static_cast<int16_t>(d);
-        }
-    std::vector<int16_t> mapped(kWidth);
-    for (int y = 0; y < kHeight; ++y)
-    {
-        const size_t row = static_cast<size_t>(y) * kWidth;
-        std::copy(right.begin() + row, right.begin() + row + kWidth, mapped.begin());
-        for (int x = 0; x < kWidth; ++x)
-        {
-            if (!want[1][row + x] || mapped[x] != kUnknown)
-                continue;
-            const uint8_t shade = shades[1][row + x];
-            int found = kUnknown;
-            for (int r = 1; r <= 12 && found == kUnknown; ++r)
-                for (const int xx : {x - r, x + r})
-                    if (xx >= 0 && xx < kWidth && mapped[xx] != kUnknown && (r > 6 || shades[1][row + xx] == shade))
-                    {
-                        found = mapped[xx];
-                        break;
-                    }
-            if (found == kUnknown && !m_state.best.empty())
-                found = m_state.best[(y >> 3) * kBlocksX + (x >> 3)] - kMaxDisparity;
-            right[row + x] = static_cast<int16_t>(found == kUnknown ? 0 : found);
-        }
-    }
-
     for (int e = 0; e < 2; ++e)
     {
         m_lastShades[e].assign(shades[e], shades[e] + n);
         m_lastWant[e].assign(want[e], want[e] + n);
     }
-    m_lastDisparity = m_disparity[0];
+    std::swap(m_lastDisparity, m_disparity);
     m_haveLast = true;
 }
 
@@ -684,6 +641,6 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                         d = last;
                 }
             }
-            m_disparity[0][i] = static_cast<int16_t>(d);
+            m_disparity[i] = static_cast<int16_t>(d);
         }
 }
