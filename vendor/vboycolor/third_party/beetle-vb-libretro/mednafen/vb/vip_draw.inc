@@ -264,13 +264,11 @@ if(dy == 0)	/* Optimization for no rotation. */
 else
 {
  int x;
+ /* As above, with the cell in both directions (SourceX >> 12, SourceY >> 12: 14 bits each); rotated, the row in
+    the character can change from one pixel to the next. */
+ uint32 cell_at = ~0u, bgsc = 0, char_no = 0, palette_selector = 0, hflip_xor = 0, vflip_xor = 0;
  for(x = start_x; x <= final_x; x++)
  {
-  uint32 bgsc;
-  uint32 char_no;
-  uint32 palette_selector;
-  uint32 hflip_xor;
-  uint32 vflip_xor;
   uint8 pixel = 0;
   unsigned int char_sub_y;
   unsigned int char_sub_x;
@@ -278,29 +276,33 @@ else
   SourceX &= SourceX_Mask;
   SourceY &= SourceY_Mask;
 
-  bgsc = bgsc_overplane;
-
-  if(SourceX < (SourceX_Size << 9) && SourceY < (SourceY_Size << 9))
+  if(((SourceX >> 12) | ((SourceY >> 12) << 14)) != cell_at)
   {
-   uint32 m_index = ((SourceX >> 6) & ~0xFFF) + (((SourceY >> 6) & ~0xFFF) << scx);
-   uint32 sub_index = ((SourceX >> 12) & 0x3F) + (((SourceY >> 12) & 0x3F) * 0x40);
+   cell_at = (SourceX >> 12) | ((SourceY >> 12) << 14);
+   bgsc = bgsc_overplane;
 
-   bgsc = BGMap[(BGMap_Base | m_index | sub_index) & 0xFFFF];
+   if(SourceX < (SourceX_Size << 9) && SourceY < (SourceY_Size << 9))
+   {
+    uint32 m_index = ((SourceX >> 6) & ~0xFFF) + (((SourceY >> 6) & ~0xFFF) << scx);
+    uint32 sub_index = ((SourceX >> 12) & 0x3F) + (((SourceY >> 12) & 0x3F) * 0x40);
+
+    bgsc = BGMap[(BGMap_Base | m_index | sub_index) & 0xFFFF];
+   }
+   char_no = bgsc & 0x7FF;
+   palette_selector = bgsc >> 14;
+   hflip_xor = bgsc & 0x2000 ? 7 : 0;
+   vflip_xor = bgsc & 0x1000 ? 7 : 0;
+   if(char_no != used_chr)
+   {
+    USE_BG_CHR(char_no);
+    used_chr = char_no;
+   }
   }
-  char_no = bgsc & 0x7FF;
-  palette_selector = bgsc >> 14;
-  hflip_xor = bgsc & 0x2000 ? 7 : 0;
-  vflip_xor = bgsc & 0x1000 ? 7 : 0;
 
   char_sub_y = vflip_xor ^ ((SourceY >> 9) & 0x7);
   char_sub_x = hflip_xor ^ ((SourceX >> 9) & 0x7);
 
   pixel = (CHR16[char_no * 8 + char_sub_y] >> (char_sub_x * 2)) & 0x3;
-  if(char_no != used_chr)
-  {
-   USE_BG_CHR(char_no);
-   used_chr = char_no;
-  }
 
   if(pixel)
    target[x] = GPLT_Cache[palette_selector][pixel];

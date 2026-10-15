@@ -311,7 +311,7 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
         [=[ const uint16 *param_ptr = &DRAM[(ParamBase + 8 * (RealY - DestY)) & 0xFFFF];]=]
         [=[ const uint16 *param_ptr = &DRAM[(ParamBase + 8 * (RealY - DestY)) & 0xFFFF];
  unsigned vbgo_cell = 0; /* VirtualBoyGo */
- int vbgo_fills = 0; /* VirtualBoyGo: whether the no-rotation path's current cell may leave fills */
+ int vbgo_fills = 0; /* VirtualBoyGo: whether the current cell may leave fills */
  uint32_t *const vbgo_row = vbgo_tt_row(target); /* VirtualBoyGo: this row's tags (NULL = not tracking) */
  uint16_t *const vbgo_crow = vbgo_tt_cell_row(target); /* VirtualBoyGo: ... and their cells */
  const uint32_t vbgo_bits = vbgo_tt_call_bits(); /* VirtualBoyGo */
@@ -349,14 +349,15 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
    vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_fillc[x >> 3] = 1;]=]
         "vip_draw.inc (DrawAffine no-rotation store)")
     _vbgo_replace_once(DRAW
-        [=[   bgsc = BGMap[(BGMap_Base | m_index | sub_index) & 0xFFFF];
-  }]=]
-        [=[   vbgo_cell = (BGMap_Base | m_index | sub_index) & 0xFFFF; /* VirtualBoyGo */
-   bgsc = BGMap[vbgo_cell];
-   USE_ROW(vbgo_cell);
-  }
-  else
-   vbgo_cell = OverplaneChar & 0xFFFF; /* VirtualBoyGo */]=]
+        [=[    bgsc = BGMap[(BGMap_Base | m_index | sub_index) & 0xFFFF];
+   }]=]
+        [=[    vbgo_cell = (BGMap_Base | m_index | sub_index) & 0xFFFF; /* VirtualBoyGo */
+    bgsc = BGMap[vbgo_cell];
+    USE_ROW(vbgo_cell);
+   }
+   else
+    vbgo_cell = OverplaneChar & 0xFFFF; /* VirtualBoyGo */
+   vbgo_fills = vbgo_row && vbgo_tt_fills_from(bgsc & 0x7FF, vbgo_cell); /* VirtualBoyGo */]=]
         "vip_draw.inc (DrawAffine general map read)")
     _vbgo_replace_once(DRAW
         [=[  if(pixel)
@@ -371,7 +372,7 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
     vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, pixel),
     vbgo_crow[x * VBGO_TT_CELL_COLUMN] = (uint16_t)vbgo_cell, vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
   }
-  else if(vbgo_row && vbgo_tt_fills_from(char_no, vbgo_cell)) /* VirtualBoyGo */
+  else if(vbgo_fills) /* VirtualBoyGo */
    vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], &vbgo_crow[x * VBGO_TT_CELL_COLUMN],
                    vbgo_bits | VBGO_TT_BG_BITS(char_no, char_sub_x, char_sub_y, palette_selector, 0), vbgo_cell),
    vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_fillc[x >> 3] = 1;
