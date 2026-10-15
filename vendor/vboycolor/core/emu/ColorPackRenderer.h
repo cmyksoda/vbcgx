@@ -236,8 +236,8 @@ private:
     // Pairs' disparities, where out of date (once a frame, before the right eye).
     int EstimatePairs(const vbgo_tt_eye_view view[2]);
     bool PairDue(const Pair &pair, const uint16_t *worlds, std::array<uint16_t, 32> &attributes, uint32_t &others, bool &scrolled) const;
-    void EstimatePair(Pair &pair, const uint64_t *leftBits, const uint64_t *rightBits, bool scrolled);
-    std::vector<uint64_t> m_estimateBits; // (EstimatePairs: the pictures' shades as bit rows)
+    void EstimatePair(Pair &pair, const uint32_t *leftBits, const uint32_t *rightBits, bool scrolled);
+    std::vector<uint32_t> m_estimateBits; // (EstimatePairs: the pictures' shades as bit rows)
     // Tiles the left pictures of pairs draw this frame (by hash, with the
     // pairs whose left pictures draw them - bit per pair): a right
     // picture's pixel of a tile its own left picture draws is colored by

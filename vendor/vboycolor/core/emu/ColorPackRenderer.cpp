@@ -18,29 +18,24 @@ int Sign9(uint16_t v)
     return (v & 0x100) ? static_cast<int>(v) - 0x200 : static_cast<int>(v);
 }
 
-inline int CountSet(uint64_t x)
+inline int CountSet(uint32_t x)
 {
-#if defined(__GNUC__) || defined(__clang__)
-    return __builtin_popcountll(x);
-#elif defined(_MSC_VER) && defined(_M_X64)
-    return static_cast<int>(__popcnt64(x));
-#else
-    x = x - ((x >> 1) & 0x5555555555555555ull);
-    x = (x & 0x3333333333333333ull) + ((x >> 2) & 0x3333333333333333ull);
-    x = (x + (x >> 4)) & 0x0F0F0F0F0F0F0F0Full;
-    return static_cast<int>((x * 0x0101010101010101ull) >> 56);
-#endif
+    x = x - ((x >> 1) & 0x55555555u);
+    x = (x & 0x33333333u) + ((x >> 2) & 0x33333333u);
+    x = (x + (x >> 4)) & 0x0F0F0F0Fu;
+    return static_cast<int>((x * 0x01010101u) >> 24);
 }
 
-// A row of one shade's pixels as bits (pixel x at bit x), with a guard word
-// before and two after, so a shift by up to 64 pixels either way stays inside.
-constexpr int kRowWords = VBGO_TT_WIDTH / 64, kGuardedRow = kRowWords + 3;
+// A row of one shade's pixels as bits (pixel x at bit x % 32 of word x / 32), in 32-bit words (Broadway's own:
+// 64-bit shifts cost it long sequences), with two guard words before and three after, so a shift by up to 64
+// pixels either way stays inside.
+constexpr int kRowWords = VBGO_TT_WIDTH / 32, kGuardWords = 2, kGuardedRow = kRowWords + kGuardWords + 3;
 
 // Word k of the row shifted so that bit x holds the row's bit x + d.
-inline uint64_t Shifted(const uint64_t *row, int k, int d)
+inline uint32_t Shifted(const uint32_t *row, int k, int d)
 {
-    const int bit = 64 * (k + 1) + d, w = bit >> 6, s = bit & 63;
-    return s ? (row[w] >> s) | (row[w + 1] << (64 - s)) : row[w];
+    const int bit = 32 * (k + kGuardWords) + d, w = bit >> 5, s = bit & 31;
+    return s ? (row[w] >> s) | (row[w + 1] << (32 - s)) : row[w];
 }
 
 constexpr int kMaxDisparity = 64;
@@ -1681,11 +1676,11 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
 namespace
 {
 // Per byte of x, how many of its bits are set (0-8).
-inline uint64_t ByteCounts(uint64_t x)
+inline uint32_t ByteCounts(uint32_t x)
 {
-    x = x - ((x >> 1) & 0x5555555555555555ull);
-    x = (x & 0x3333333333333333ull) + ((x >> 2) & 0x3333333333333333ull);
-    return (x + (x >> 4)) & 0x0F0F0F0F0F0F0F0Full;
+    x = x - ((x >> 1) & 0x55555555u);
+    x = (x & 0x33333333u) + ((x >> 2) & 0x33333333u);
+    return (x + (x >> 4)) & 0x0F0F0F0Fu;
 }
 } // namespace
 
@@ -1767,8 +1762,7 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
     }
     const size_t eyeRows = static_cast<size_t>(VBGO_TT_HEIGHT) * 3 * kGuardedRow;
     m_estimateBits.assign(static_cast<size_t>(count) * 2 * eyeRows, 0);
-    uint64_t *bits = m_estimateBits.data();
-    typedef uint32_t __attribute__((__may_alias__)) BitHalf; // (one pixel's bit is in one half of its word)
+    uint32_t *bits = m_estimateBits.data();
     for (unsigned eye = 0; eye < 2; ++eye)
     {
         const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
@@ -1791,23 +1785,17 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
             const uint16_t *columnCells = view[eye].cells[x];
             if (!column)
                 continue;
-
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-            const unsigned half = x & 32 ? 0 : 1;
-#else
-            const unsigned half = x & 32 ? 1 : 0;
-#endif
-            BitHalf *at = reinterpret_cast<BitHalf *>(bits + static_cast<size_t>(eye) * eyeRows + 1 + (x >> 6)) + half;
+            uint32_t *at = bits + static_cast<size_t>(eye) * eyeRows + kGuardWords + (x >> 5);
             const uint32_t bit = 1u << (x & 31);
             for (int b = 0; b < kBands; ++b)
             {
                 const uint32_t bandKey = view[eye].band_key[b];
                 if (worldsHere && !(worldsHere[b * kGridW + (x >> 3)] & wanted[eye]))
                 {
-                    at += 8 * 2 * 3 * kGuardedRow;
+                    at += 8 * 3 * kGuardedRow;
                     continue;
                 }
-                for (int y = b * 8; y < b * 8 + 8; ++y, at += 2 * 3 * kGuardedRow)
+                for (int y = b * 8; y < b * 8 + 8; ++y, at += 3 * kGuardedRow)
                 {
                     const uint32_t t = column[y];
                     if (!vbgo_tag_drawn(t, bandKey))
@@ -1819,7 +1807,7 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
                         continue;
                     const unsigned shade = EyeTaggedPixel(eyeBits, eyeClut, static_cast<uint32_t>(x), static_cast<uint32_t>(y)) >> 24 & 3;
                     if (shade)
-                        at[2 * ((k & 0x3F) * 2 * eyeRows + (shade - 1) * kGuardedRow)] |= bit;
+                        at[(k & 0x3F) * 2 * eyeRows + (shade - 1) * kGuardedRow] |= bit;
                 }
             }
         }
@@ -1830,7 +1818,7 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
     return count;
 }
 
-void ColorPackRenderer::EstimatePair(Pair &pair, const uint64_t *leftBits, const uint64_t *rightBits, bool scrolled)
+void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const uint32_t *rightBits, bool scrolled)
 {
     // Per 8-row band: the shift that lines up the most right-picture pixels
     // with left-picture pixels of the same shade (within kMaxDisparity) -
@@ -1847,7 +1835,7 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint64_t *leftBits, const
         for (int y = band * 8; y < band * 8 + 8; ++y)
             for (int s = 0; s < 3; ++s)
                 for (int w = 0; w < kRowWords; ++w)
-                    if (const uint64_t r = rightBits[(y * 3 + s) * kGuardedRow + 1 + w])
+                    if (const uint32_t r = rightBits[(y * 3 + s) * kGuardedRow + kGuardWords + w])
                     {
                         lit += CountSet(r);
                         from = std::min(from, w);
@@ -1864,11 +1852,11 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint64_t *leftBits, const
             for (int y = band * 8; y < band * 8 + 8; y += step)
                 for (int s = 0; s < 3; ++s)
                 {
-                    const uint64_t *r = &rightBits[(y * 3 + s) * kGuardedRow];
-                    const uint64_t *l = &leftBits[(y * 3 + s) * kGuardedRow];
+                    const uint32_t *r = &rightBits[(y * 3 + s) * kGuardedRow];
+                    const uint32_t *l = &leftBits[(y * 3 + s) * kGuardedRow];
                     for (int w = from; w <= to; ++w)
-                        if (r[1 + w]) // (most rows are sparse; PowerPC counts bits in software)
-                            n += CountSet(r[1 + w] & Shifted(l, w, d));
+                        if (r[kGuardWords + w]) // (most rows are sparse; PowerPC counts bits in software)
+                            n += CountSet(r[kGuardWords + w] & Shifted(l, w, d));
                 }
             return n;
         };
@@ -1935,14 +1923,14 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint64_t *leftBits, const
             continue;
         uint8_t lit[kBlocksX] = {};
         {
-            uint64_t sum[kRowWords] = {};
+            uint32_t sum[kRowWords] = {};
             for (int y = by * 8; y < by * 8 + 8; ++y)
                 for (int s = 0; s < 3; ++s)
                     for (int w = from; w <= to; ++w)
-                        sum[w] += ByteCounts(rightBits[(y * 3 + s) * kGuardedRow + 1 + w]);
+                        sum[w] += ByteCounts(rightBits[(y * 3 + s) * kGuardedRow + kGuardWords + w]);
             for (int w = from; w <= to; ++w)
-                for (int j = 0; j < 8; ++j)
-                    lit[w * 8 + j] = static_cast<uint8_t>(sum[w] >> (8 * j));
+                for (int j = 0; j < 4; ++j)
+                    lit[w * 4 + j] = static_cast<uint8_t>(sum[w] >> (8 * j));
         }
         // Per shift (worked out when first needed), per block: how many of
         // its pixels line up.
@@ -1954,19 +1942,19 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint64_t *leftBits, const
                 return row;
             scored[d + kMaxDisparity] = true;
             std::memset(row, 0, kBlocksX);
-            uint64_t sum[kRowWords] = {};
+            uint32_t sum[kRowWords] = {};
             for (int y = by * 8; y < by * 8 + 8; ++y)
                 for (int s = 0; s < 3; ++s)
                 {
-                    const uint64_t *r = &rightBits[(y * 3 + s) * kGuardedRow];
-                    const uint64_t *l = &leftBits[(y * 3 + s) * kGuardedRow];
+                    const uint32_t *r = &rightBits[(y * 3 + s) * kGuardedRow];
+                    const uint32_t *l = &leftBits[(y * 3 + s) * kGuardedRow];
                     for (int w = from; w <= to; ++w)
-                        if (r[1 + w])
-                            sum[w] += ByteCounts(r[1 + w] & Shifted(l, w, d));
+                        if (r[kGuardWords + w])
+                            sum[w] += ByteCounts(r[kGuardWords + w] & Shifted(l, w, d));
                 }
             for (int w = from; w <= to; ++w)
-                for (int j = 0; j < 8; ++j)
-                    row[w * 8 + j] = static_cast<uint8_t>(sum[w] >> (8 * j));
+                for (int j = 0; j < 4; ++j)
+                    row[w * 4 + j] = static_cast<uint8_t>(sum[w] >> (8 * j));
             return row;
         };
         for (int bx = 0; bx < kBlocksX; ++bx)
