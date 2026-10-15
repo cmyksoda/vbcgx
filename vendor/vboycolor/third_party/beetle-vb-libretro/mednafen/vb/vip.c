@@ -1651,6 +1651,13 @@ static void CopyFBColumnToTarget_CScope(void)
       CopyFBColumnToTarget_CScope_BASE(DisplayActive, 1, 1 ^ VB3DReverse);
 }
 
+/* VirtualBoyGo: nothing shows the right half, so it's kept compact - per frame buffer and column,
+ * its 2-bit pixels and brightness table as the copy would have left them (vbgo_tiletrack.h). */
+static uint8 RightBits[2][384][56];
+static uint32 RightClut[2][384][4];
+const uint8 *vbgo_vip_right_bits(void) { return &RightBits[ShownFB][0][0]; }
+const uint32 *vbgo_vip_right_clut(void) { return &RightClut[ShownFB][0][0]; }
+
 static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, const int lr, const int dest_lr)
 {
    const int fb = DisplayFB;
@@ -1667,6 +1674,8 @@ static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, c
    {
       const bool sameClut = ShownClut[fb][dest_lr & 1][Column] == vbgo_tt_clut_serial;
       ShownClut[fb][dest_lr & 1][Column] = vbgo_tt_clut_serial;
+      if(dest_lr)
+         memcpy(RightClut[fb][Column], BrightCLUT[lr], sizeof(RightClut[0][0]));
       for(block = 0; block < 28; block++, fb_source += 2, target += 8 * pitch32)
       {
          int byte;
@@ -1674,6 +1683,12 @@ static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, c
          if(sameClut && content && shown[block] == content)
             continue;
          shown[block] = content;
+         if(dest_lr)
+         {
+            RightBits[fb][Column][block * 2] = fb_source[0];
+            RightBits[fb][Column][block * 2 + 1] = fb_source[1];
+            continue;
+         }
          for(byte = 0; byte < 2; byte++)
          {
             uint32 source_bits = fb_source[byte];
@@ -1688,8 +1703,11 @@ static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, c
    else
    {
       int y;
-      for(y = 0; y < 224; y++)
-         target[y * pitch32] = 0;
+      if(dest_lr)
+         memset(RightClut[fb][Column], 0, sizeof(RightClut[0][0]));
+      else
+         for(y = 0; y < 224; y++)
+            target[y * pitch32] = 0;
       for(block = 0; block < 28; block++)
          shown[block] = 0;
    }

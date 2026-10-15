@@ -95,7 +95,8 @@ float ShadeColorizer::Fade(int level) const
     return std::min(1.0f, std::pow(std::clamp(level, 0, 63) / reference, 1.0f / 2.2f));
 }
 
-void ShadeColorizer::Observe(const uint8_t *src, size_t width, size_t height, size_t strideBytes)
+void ShadeColorizer::Observe(const uint8_t *src, size_t width, size_t height, size_t strideBytes, size_t rightX,
+                             const uint8_t *rightBits, const uint32_t *rightClut)
 {
     if (!m_gradient)
         return;
@@ -112,6 +113,14 @@ void ShadeColorizer::Observe(const uint8_t *src, size_t width, size_t height, si
         for (size_t x = 0; x < width; x += 3)
         {
             const uint8_t *p = src + y * strideBytes + x * 4;
+            uint8_t right[4]; // (the right eye from its compact copy - see vbgo_vip_right_bits)
+            if (x >= rightX)
+            {
+                const size_t column = x - rightX;
+                const uint32_t value = rightClut[column * 4 + (rightBits[column * 56 + y / 4] >> ((y & 3) * 2) & 3)];
+                std::memcpy(right, &value, 4);
+                p = right;
+            }
             const int shade = p[3] & 3, level = p[3] >> 2;
             if (shade == 0 || level == 0 || (p[0] | p[1] | p[2]) == 0)
                 continue;

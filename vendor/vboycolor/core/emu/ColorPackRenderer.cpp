@@ -55,6 +55,18 @@ inline uint64_t Shifted(const uint64_t *row, int k, int d)
 
 constexpr int kMaxDisparity = 64;
 
+// The right eye's pixel y of a column, as ReadTaggedPixel would read it from the copied picture
+// (the right eye is kept compact instead - see vbgo_vip_right_bits).
+inline uint32_t RightTaggedPixel(const uint8_t *bits, const uint32_t *clut, uint32_t y)
+{
+    const uint32_t value = clut[bits[y >> 2] >> ((y & 3) * 2) & 3];
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    return __builtin_bswap32(value);
+#else
+    return value;
+#endif
+}
+
 const TileColorPack::Tile kNoTile{}; // (no tile colors: nothing painted)
 } // namespace
 
@@ -1161,14 +1173,14 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
             static const uint32_t kNoVersions[kGridW] = {};
             for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
                 startCells(rightBands[b], keepRight[b], v.cell_version ? &v.cell_version[b * kGridW] : kNoVersions, v.clut);
-            const size_t rowBytes = static_cast<size_t>(fbWidth) * 4;
             Cell unkept;
             for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
             {
                 const uint64_t *column = v.columns[x];
                 if (!column)
                     continue;
-                const uint8_t *r = &raw[(static_cast<size_t>(eyeOffset[1]) + x) * 4];
+                const uint8_t *rightBits = vbgo_vip_right_bits() + x * 56;
+                const uint32_t *rightClut = vbgo_vip_right_clut() + x * 4;
                 uint64_t runKey = ~0ull;
                 uint32_t runHi = 0, runLo = ~0u;
                 Run run;
@@ -1210,7 +1222,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *raw, uint32_t fbWid
                         if ((t >> 48) != stamp)
                             continue;
                         const unsigned pixel = VBGO_TAG_PIXEL(t);
-                        const uint32_t rawPixel = ReadTaggedPixel(r + y * rowBytes);
+                        const uint32_t rawPixel = RightTaggedPixel(rightBits, rightClut, y);
                         if (pixel && !(rawPixel & 0xFFFFFFu))
                             continue;
                         const bool firstHere = !counted;
@@ -1623,10 +1635,11 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, const uint8_t *raw, uint3
         {
             const uint64_t *column = have[eye] ? view[eye].columns[x] : nullptr;
             const uint8_t *src = &raw[(static_cast<size_t>(eyeOffset[eye]) + x) * 4];
+            const uint8_t *rightBits = vbgo_vip_right_bits() + x * 56;
+            const uint32_t *rightClut = vbgo_vip_right_clut() + x * 4;
             for (uint32_t y = 0; y < VBGO_TT_HEIGHT; ++y, src += rowBytes)
             {
-                uint32_t rawPixel;
-                rawPixel = ReadTaggedPixel(src);
+                const uint32_t rawPixel = eye ? RightTaggedPixel(rightBits, rightClut, y) : ReadTaggedPixel(src);
                 const unsigned shade = (rawPixel >> 24) & 3;
                 if (!shade || !(rawPixel & 0xFFFFFFu))
                     continue;
@@ -1781,6 +1794,8 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8
             if (!column)
                 continue;
             const uint8_t *shades = &raw[(static_cast<size_t>(eyeOffset[eye]) + x) * 4 + 3];
+            const uint8_t *rightBits = vbgo_vip_right_bits() + x * 56;
+            const uint32_t *rightClut = vbgo_vip_right_clut() + x * 4;
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
             const unsigned half = x & 32 ? 0 : 1;
 #else
@@ -1804,7 +1819,8 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2], const uint8
                     int k = slotOf[static_cast<uint32_t>(t) >> 19 & 0xFF];
                     if (k < 0 || (k & 0x40 && EyeOnly(t) != (eye ? 2 : 1)))
                         continue;
-                    const unsigned shade = shades[static_cast<size_t>(y) * fbWidth * 4] & 3;
+                    const unsigned shade = eye ? RightTaggedPixel(rightBits, rightClut, static_cast<uint32_t>(y)) >> 24 & 3
+                                               : shades[static_cast<size_t>(y) * fbWidth * 4] & 3;
                     if (shade)
                         at[2 * ((k & 0x3F) * 2 * eyeRows + (shade - 1) * kGuardedRow)] |= bit;
                 }

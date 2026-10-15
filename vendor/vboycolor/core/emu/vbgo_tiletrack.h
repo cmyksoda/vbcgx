@@ -94,6 +94,11 @@ void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr);
 /* The VIP's frame buffers, FB[fb][lr][0x6000] (a function the patched vip.c
  * adds - see cmake/PatchBeetleVip.cmake). */
 const uint8_t *vbgo_vip_framebuffers(void);
+/* The right eye of the picture last shown, which the side-by-side surface doesn't hold: per column,
+ * 56 bytes of 2-bit pixels (row y: byte y / 4, bits (y % 4) * 2) and the 4 pixel values they index
+ * (0: the display was off). */
+const uint8_t *vbgo_vip_right_bits(void);
+const uint32_t *vbgo_vip_right_clut(void);
 
 #define VBGO_TT_FILLS_NONE 0
 #define VBGO_TT_FILLS_PACK 1 /* only in cells marked with vbgo_tiletrack_set_fill_cells */

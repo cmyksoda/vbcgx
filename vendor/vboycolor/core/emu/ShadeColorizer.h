@@ -58,7 +58,8 @@ public:
     // output (same layout as Colorize's src); call once per frame before
     // Colorize. Cheap: a sparse scan, and the table is only rebuilt when
     // something changed.
-    void Observe(const uint8_t *src, size_t width, size_t height, size_t strideBytes);
+    void Observe(const uint8_t *src, size_t width, size_t height, size_t strideBytes, size_t rightX = SIZE_MAX,
+                 const uint8_t *rightBits = nullptr, const uint32_t *rightClut = nullptr);
     // How far a shade is toward its full color at a fade level (0-63) - the
     // factor Colorize uses.
     float Fade(int level) const;

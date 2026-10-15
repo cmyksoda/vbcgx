@@ -684,7 +684,7 @@ namespace
         if (g_shadeColors)
         {
             if (g_colorizer.IsGradient())
-                g_colorizer.Observe(raw, w, h, rowBytes);
+                g_colorizer.Observe(raw, w, h, rowBytes, w - VBGO_TT_WIDTH, vbgo_vip_right_bits(), vbgo_vip_right_clut());
             auto shadeRows = [&](unsigned first, unsigned count) {
                 for (unsigned y = first; y < first + count && y < h; ++y)
                     g_colorizer.Colorize(raw + y * rowBytes, &colored[y * rowBytes], VBGO_TT_WIDTH);
