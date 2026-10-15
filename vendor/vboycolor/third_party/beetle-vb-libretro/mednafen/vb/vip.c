@@ -1944,7 +1944,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                         const uint8 *from = FB[DrawingFB][lr] + DrawingBlock * 2;
                         for(x = 0; x < 384; x++)
                            if(!partial || (dirty >> (x >> 3) & 1))
-                              before[lr][x * 2] = from[64 * x], before[lr][x * 2 + 1] = from[64 * x + 1];
+                              memcpy(&before[lr][x * 2], &from[64 * x], 2); /* (a column's 2 bytes as one halfword) */
                      }
                   if(partial)
                   {
@@ -2022,7 +2022,12 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                         {
                            const uint8 *to = FB[DrawingFB][lr] + DrawingBlock * 2;
                            for(x = c * 8; x < c * 8 + 8; x++)
-                              differs |= (to[64 * x] ^ before[lr][x * 2]) | (to[64 * x + 1] ^ before[lr][x * 2 + 1]);
+                           {
+                              uint16 now, was;
+                              memcpy(&now, &to[64 * x], 2);
+                              memcpy(&was, &before[lr][x * 2], 2);
+                              differs |= now ^ was;
+                           }
                         }
                         same |= (uint64)!differs << c;
                      }
