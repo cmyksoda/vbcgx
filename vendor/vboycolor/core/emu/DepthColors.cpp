@@ -4,26 +4,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
-#if defined(_MSC_VER) && defined(_M_X64)
-#include <intrin.h>
-#endif
 
 namespace
 {
-inline int CountSet(uint64_t x)
-{
-#if defined(__GNUC__) || defined(__clang__)
-    return __builtin_popcountll(x);
-#elif defined(_MSC_VER) && defined(_M_X64)
-    return static_cast<int>(__popcnt64(x));
-#else
-    x = x - ((x >> 1) & 0x5555555555555555ull);
-    x = (x & 0x3333333333333333ull) + ((x >> 2) & 0x3333333333333333ull);
-    x = (x + (x >> 4)) & 0x0F0F0F0F0F0F0F0Full;
-    return static_cast<int>((x * 0x0101010101010101ull) >> 56);
-#endif
-}
-
 // Per byte of x, how many of its bits are set (0-8) - summed over a
 // block's 8 rows, each byte still fits (at most 64).
 inline uint64_t ByteCounts(uint64_t x)
@@ -41,13 +24,30 @@ inline uint64_t Shifted(const uint64_t *row, int k, int d)
     return s ? (row[w] >> s) | (row[w + 1] << (64 - s)) : row[w];
 }
 
-// Pixels x - 3 to x + 3 of a guarded row, as bits 0-6.
+// Pixels x - 3 to x + 3 of a guarded row, as bits 0-6 (by 32-bit halves where they fit: the Wii's CPU has no
+// 64-bit shifts).
 inline unsigned Window7(const uint64_t *row, int x)
 {
     const int bit = 64 + x - 3, w = bit >> 6, s = bit & 63;
-    const uint64_t v = s ? (row[w] >> s) | (row[w + 1] << (64 - s)) : row[w];
-    return static_cast<unsigned>(v & 0x7F);
+    if (s > 57)
+        return static_cast<unsigned>(((row[w] >> s) | (row[w + 1] << (64 - s))) & 0x7F);
+    const uint64_t v = row[w];
+    const uint32_t lo = static_cast<uint32_t>(v), hi = static_cast<uint32_t>(v >> 32);
+    if (s >= 32)
+        return (hi >> (s - 32)) & 0x7F;
+    return (s <= 25 ? lo >> s : (lo >> s) | (hi << (32 - s))) & 0x7F;
 }
+
+// Bits set in each 7-bit value.
+constexpr struct SetIn7
+{
+    uint8_t n[128];
+    constexpr SetIn7() : n()
+    {
+        for (int i = 0; i < 128; ++i)
+            n[i] = static_cast<uint8_t>((i & 1) + (i >> 1 & 1) + (i >> 2 & 1) + (i >> 3 & 1) + (i >> 4 & 1) + (i >> 5 & 1) + (i >> 6 & 1));
+    }
+} kSetIn7;
 
 // Costs are 0-1000 (1000: nothing lines up).
 constexpr int kNeutral = 500;            // what a disparity costs where there's nothing to tell (capped)
@@ -109,7 +109,7 @@ int DepthColors::Votes(unsigned s, const unsigned left[7], int x, int y, int d) 
     {
         const int yy = y - 3 + k;
         if (left[k] && yy >= 0 && yy < kHeight)
-            votes += CountSet(left[k] & Window7(r[yy].data(), x + d));
+            votes += kSetIn7.n[left[k] & Window7(r[yy].data(), x + d)];
     }
     return votes;
 }
