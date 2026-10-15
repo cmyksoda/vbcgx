@@ -1208,7 +1208,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
                 {
                     const uint32_t bandKey = v.band_key[b];
-                    BandColumn &here = rightColumns[b * VBGO_TT_WIDTH + x];
+                    BandColumn &here = rightColumns[x * kBands + b];
                     const bool kept = keptRightCell[b][x >> 3];
                     if (kept)
                     {
@@ -1360,7 +1360,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
             {
             const uint32_t bandKey = v.band_key[b];
-            BandColumn &here = bandColumns[b * VBGO_TT_WIDTH + x];
+            BandColumn &here = bandColumns[x * kBands + b];
             const bool kept = keptCell[b][x >> 3];
             if (kept)
             {

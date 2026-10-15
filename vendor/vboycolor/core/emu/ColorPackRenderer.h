@@ -144,7 +144,7 @@ private:
     };
     std::array<std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2>, 2> m_bands; // [eye][buffer]
     std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_painted{};
-    std::array<std::array<std::vector<BandColumn>, 2>, 2> m_bandColumns;
+    std::array<std::array<std::vector<BandColumn>, 2>, 2> m_bandColumns; // [eye][buffer][column * bands + band]: a column's bands together
     // What painting a band depends on beyond its drawing (bumps m_paintState when it changes).
     struct PaintState
     {
