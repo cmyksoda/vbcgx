@@ -1826,8 +1826,9 @@ static void CopyFBColumnToTarget_HLI(void)
       CopyFBColumnToTarget_HLI_BASE(DisplayActive, 1, 1 ^ VB3DReverse);
 }
 
-/* Columns x0-x1 of the block just drawn into the drawing buffer's frame buffer. */
-static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1)
+/* Columns x0-x1 of the block just drawn into the drawing buffer's frame buffer; differs[cell] gets the bits that
+   changed there in either eye (each column is read as it's overwritten: on the Wii every column is its own cache line). */
+static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1, uint8 *differs)
 {
    int lr, x, k;
    for(lr = 0; lr < 2; lr++)
@@ -1836,8 +1837,10 @@ static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1)
       uint8 *to = FB[DrawingFB][lr] + DrawingBlock * 2;
       for(x = x0; x <= x1 && (x & 3); x++)
       {
-         to[64 * x + 0] = rows[x + 512 * 0] | (rows[x + 512 * 1] << 2) | (rows[x + 512 * 2] << 4) | (rows[x + 512 * 3] << 6);
-         to[64 * x + 1] = rows[x + 512 * 4] | (rows[x + 512 * 5] << 2) | (rows[x + 512 * 6] << 4) | (rows[x + 512 * 7] << 6);
+         const uint8 lo = rows[x + 512 * 0] | (rows[x + 512 * 1] << 2) | (rows[x + 512 * 2] << 4) | (rows[x + 512 * 3] << 6);
+         const uint8 hi = rows[x + 512 * 4] | (rows[x + 512 * 5] << 2) | (rows[x + 512 * 6] << 4) | (rows[x + 512 * 7] << 6);
+         differs[x >> 3] |= (to[64 * x] ^ lo) | (to[64 * x + 1] ^ hi);
+         to[64 * x + 0] = lo, to[64 * x + 1] = hi;
       }
       /* 4 columns at a time, a byte each in a word: each row masked to the bits that stay in its byte, as the byte
          arithmetic above keeps them */
@@ -1856,12 +1859,18 @@ static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1)
          memcpy(bytes, &lo, 4);
          memcpy(bytes + 4, &hi, 4);
          for(k = 0; k < 4; k++)
-            to[64 * (x + k) + 0] = bytes[k], to[64 * (x + k) + 1] = bytes[4 + k];
+         {
+            uint8 *at = to + 64 * (x + k);
+            differs[(x + k) >> 3] |= (at[0] ^ bytes[k]) | (at[1] ^ bytes[4 + k]);
+            at[0] = bytes[k], at[1] = bytes[4 + k];
+         }
       }
       for(; x <= x1; x++)
       {
-         to[64 * x + 0] = rows[x + 512 * 0] | (rows[x + 512 * 1] << 2) | (rows[x + 512 * 2] << 4) | (rows[x + 512 * 3] << 6);
-         to[64 * x + 1] = rows[x + 512 * 4] | (rows[x + 512 * 5] << 2) | (rows[x + 512 * 6] << 4) | (rows[x + 512 * 7] << 6);
+         const uint8 lo = rows[x + 512 * 0] | (rows[x + 512 * 1] << 2) | (rows[x + 512 * 2] << 4) | (rows[x + 512 * 3] << 6);
+         const uint8 hi = rows[x + 512 * 4] | (rows[x + 512 * 5] << 2) | (rows[x + 512 * 6] << 4) | (rows[x + 512 * 7] << 6);
+         differs[x >> 3] |= (to[64 * x] ^ lo) | (to[64 * x + 1] ^ hi);
+         to[64 * x + 0] = lo, to[64 * x + 1] = hi;
       }
    }
 }
@@ -1904,7 +1913,6 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
             }
             else
             {
-               int lr;
                if(PassRepeats)
                {
                   /* (its inputs changed: the rest is drawn) */
@@ -1922,7 +1930,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   /* (what the buffer held, to tell which cells come out the same) */
                   static BlockInputs now; /* (only its sprites changed: their lists now) */
                   const uint64 all = (1ull << 48) - 1;
-                  uint8 before[2][384 * 2];
+                  uint8 differs[48] = {}; /* (what PackBlock changed, per cell) */
                   const bool hadDrawing = block->valid;
                   uint64 same = 0, unchanged = change == 0 ? all : 0, dirty = all, spriteDirty = all;
                   bool partial = false;
@@ -1936,16 +1944,6 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      /* (the cells it covers drawn again, the rest kept) */
                      partial = hadDrawing && dirty != all && vbgo_tiletrack_keep_cells(unchanged);
                   }
-                  /* (a partial drawing changes only its cells' pixels) */
-                  if(hadDrawing)
-                     for(lr = 0; lr < 2; lr++)
-                     {
-                        int x;
-                        const uint8 *from = FB[DrawingFB][lr] + DrawingBlock * 2;
-                        for(x = 0; x < 384; x++)
-                           if(!partial || (dirty >> (x >> 3) & 1))
-                              memcpy(&before[lr][x * 2], &from[64 * x], 2); /* (a column's 2 bytes as one halfword) */
-                     }
                   if(partial)
                   {
                      block->objs = now.objs;
@@ -1969,7 +1967,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                         ClipX0 = c * 8;
                         ClipX1 = end * 8 - 1;
                         VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
-                        PackBlock(DrawingBuffers, ClipX0, ClipX1);
+                        PackBlock(DrawingBuffers, ClipX0, ClipX1, differs);
                         c = end;
                      }
                      ClipX0 = 0;
@@ -2003,34 +2001,20 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      memset(vbgo_tt_wcells, 0, sizeof(vbgo_tt_wcells));
                      memset(vbgo_tt_fillc, 0, sizeof(vbgo_tt_fillc));
                      VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
-                     PackBlock(DrawingBuffers, 0, 383);
+                     PackBlock(DrawingBuffers, 0, 383, differs);
                      {
                         const uint64 maybe = vbgo_tiletrack_world_cells(change == 3 ? ChangedWorlds : 0, all);
                         if(change == 3)
                            unchanged = ~(maybe | spriteDirty) & all;
                      }
                   }
+                  /* (a partial drawing changes only its cells' pixels) */
                   if(partial)
                      same = ~dirty & all;
                   if(hadDrawing)
                      for(c = 0; c < 48; c++)
-                     {
-                        int x, differs = 0;
-                        if(partial && !(dirty >> c & 1))
-                           continue;
-                        for(lr = 0; lr < 2 && !differs; lr++)
-                        {
-                           const uint8 *to = FB[DrawingFB][lr] + DrawingBlock * 2;
-                           for(x = c * 8; x < c * 8 + 8; x++)
-                           {
-                              uint16 now, was;
-                              memcpy(&now, &to[64 * x], 2);
-                              memcpy(&was, &before[lr][x * 2], 2);
-                              differs |= now ^ was;
-                           }
-                        }
-                        same |= (uint64)!differs << c;
-                     }
+                        if(!partial || (dirty >> c & 1))
+                           same |= (uint64)!differs[c] << c;
                   {
                      const uint32 fresh = NewContent();
                      for(c = 0; c < 48; c++)
