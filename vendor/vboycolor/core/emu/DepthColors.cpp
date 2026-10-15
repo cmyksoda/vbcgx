@@ -560,49 +560,59 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     // both ways, a block's cost at a disparity plus the cheapest way to get
     // there from its neighbour's (the same disparity free, one step kStep,
     // any jump kJump) - summed over the four ways, the cheapest wins.
-    m_sum.assign(m_cost.size(), 0);
+    m_sum.resize(m_cost.size());
     constexpr int16_t kWall = 16000; // (beyond the disparities: never the cheapest)
-    auto pass = [&](int first, int step, int count, int lines, int lineStep) {
+    // (the first pass sets the sums, the rest add; each block's lowest is found while it's written, for the next)
+    auto pass = [&](int first, int step, int count, int lines, int lineStep, bool add) {
         int16_t rows[2][kDisparities + 2];
         for (auto &r : rows)
             r[0] = r[kDisparities + 1] = kWall;
         for (int line = 0; line < lines; ++line)
         {
             int16_t *prev = nullptr;
+            int low = kWall;
             for (int k = 0; k < count; ++k)
             {
                 const int b = first + line * lineStep + k * step;
                 const int16_t *c = &m_cost[static_cast<size_t>(b) * kDisparities];
                 int16_t *sum = &m_sum[static_cast<size_t>(b) * kDisparities];
                 int16_t *out = rows[k & 1] + 1;
+                int nextLow = kWall;
                 if (!prev)
                 {
                     for (int di = 0; di < kDisparities; ++di)
-                        out[di] = c[di];
+                    {
+                        const int o = c[di];
+                        out[di] = static_cast<int16_t>(o);
+                        nextLow = std::min(nextLow, o);
+                        sum[di] = static_cast<int16_t>((add ? sum[di] : 0) + o);
+                    }
                 }
                 else
                 {
-                    int16_t low = kWall;
-                    for (int di = 0; di < kDisparities; ++di)
-                        low = std::min(low, prev[di]);
-                    const int16_t jump = static_cast<int16_t>(low + kJump);
+                    const int jump = low + kJump;
+                    int before = prev[-1], here = prev[0];
                     for (int di = 0; di < kDisparities; ++di)
                     {
-                        const int16_t step1 = static_cast<int16_t>(std::min(prev[di - 1], prev[di + 1]) + kStep);
-                        const int16_t v = std::min(std::min(prev[di], step1), jump);
-                        out[di] = static_cast<int16_t>(c[di] + v - low);
+                        const int after = prev[di + 1];
+                        const int step1 = static_cast<int16_t>(std::min(before, after) + kStep);
+                        const int v = std::min(std::min(here, step1), jump);
+                        const int o = static_cast<int16_t>(c[di] + v - low);
+                        out[di] = static_cast<int16_t>(o);
+                        nextLow = std::min(nextLow, o);
+                        sum[di] = static_cast<int16_t>((add ? sum[di] : 0) + o);
+                        before = here, here = after;
                     }
                 }
-                for (int di = 0; di < kDisparities; ++di)
-                    sum[di] = static_cast<int16_t>(sum[di] + out[di]);
                 prev = out;
+                low = nextLow;
             }
         }
     };
-    pass(0, 1, kBlocksX, kBlocksY, kBlocksX);                          // left to right
-    pass(kBlocksX - 1, -1, kBlocksX, kBlocksY, kBlocksX);              // right to left
-    pass(0, kBlocksX, kBlocksY, kBlocksX, 1);                          // top to bottom
-    pass((kBlocksY - 1) * kBlocksX, -kBlocksX, kBlocksY, kBlocksX, 1); // bottom to top
+    pass(0, 1, kBlocksX, kBlocksY, kBlocksX, false);                         // left to right
+    pass(kBlocksX - 1, -1, kBlocksX, kBlocksY, kBlocksX, true);              // right to left
+    pass(0, kBlocksX, kBlocksY, kBlocksX, 1, true);                          // top to bottom
+    pass((kBlocksY - 1) * kBlocksX, -kBlocksX, kBlocksY, kBlocksX, 1, true); // bottom to top
     state.best.resize(kBlocks);
     for (int b = 0; b < kBlocks; ++b)
     {
