@@ -444,11 +444,13 @@ static int SameCell(unsigned c)
       {
          const uint32_t *was = &s_old_tags[e][x * 8], *is = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
          const uint16_t *was_cell = &s_old_cells[e][x * 8], *is_cell = vbgo_tt_cdst[e] + x * VBGO_TT_CELL_COLUMN;
+         /* (the column's 8 tags at once: most cells that differ differ there) */
+         if ((was[0] ^ is[0]) | (was[1] ^ is[1]) | (was[2] ^ is[2]) | (was[3] ^ is[3]) | (was[4] ^ is[4]) |
+             (was[5] ^ is[5]) | (was[6] ^ is[6]) | (was[7] ^ is[7]))
+            return 0;
          for (y = 0; y < 8; y++)
          {
             uint64_t t;
-            if (was[y] != is[y])
-               return 0;
             if (!is[y])
                continue;
             if (was_cell[y] != is_cell[y])
