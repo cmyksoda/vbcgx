@@ -174,6 +174,8 @@ typedef struct
    /* Per 8x8 cell [band * 48 + cell], both eyes: a bit per world (layer) whose tags may be there (a
     * superset; sprites' tags not included). */
    const uint32_t *cell_worlds;
+   /* Per band, a bit per 8x8 cell that may hold a tag in either eye (0: all its tags are 0). */
+   const uint64_t *tagged;
    int fb; /* the frame buffer shown */
    /* vbgo_tt_clut_serial as every column was shown, or 0 if they differed (or
     * a column showed nothing, or the other eye): the core's shades to colors. */

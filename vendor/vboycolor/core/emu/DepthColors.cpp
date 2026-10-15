@@ -124,6 +124,18 @@ void DepthColors::LeftWindow(unsigned s, int x, int y, unsigned left[7]) const
     }
 }
 
+uint8_t *DepthColors::NextShades(unsigned eye)
+{
+    m_nextShades[eye].assign(static_cast<size_t>(kWidth) * kHeight, 0);
+    return m_nextShades[eye].data();
+}
+
+uint8_t *DepthColors::NextWant(unsigned eye)
+{
+    m_nextWant[eye].assign(static_cast<size_t>(kWidth) * kHeight, 0);
+    return m_nextWant[eye].data();
+}
+
 void DepthColors::Update(const uint8_t *const shades[2], const uint8_t *const want[2])
 {
     const size_t n = static_cast<size_t>(kWidth) * kHeight;
@@ -297,8 +309,14 @@ void DepthColors::Update(const uint8_t *const shades[2], const uint8_t *const wa
 
     for (int e = 0; e < 2; ++e)
     {
-        m_lastShades[e].assign(shades[e], shades[e] + n);
-        m_lastWant[e].assign(want[e], want[e] + n);
+        if (shades[e] == m_nextShades[e].data())
+            m_lastShades[e].swap(m_nextShades[e]);
+        else
+            m_lastShades[e].assign(shades[e], shades[e] + n);
+        if (want[e] == m_nextWant[e].data())
+            m_lastWant[e].swap(m_nextWant[e]);
+        else
+            m_lastWant[e].assign(want[e], want[e] + n);
     }
     std::swap(m_lastDisparity, m_disparity);
     m_haveLast = true;

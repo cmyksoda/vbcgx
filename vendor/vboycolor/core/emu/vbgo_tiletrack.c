@@ -684,6 +684,7 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view)
    view->band_chr = &s_block_chr[slot][0][0];
    view->cell_version = &s_cell_version[slot][0][0];
    view->cell_worlds = &s_cell_worlds[slot][0][0];
+   view->tagged = s_tagged[slot];
    view->fb = fb;
    view->clut = s_disp_clut[eye & 1][0];
    for (x = 0; x < VBGO_TT_WIDTH; x++)

@@ -362,7 +362,6 @@ private:
     unsigned PaintDepth(uint8_t *frame, uint32_t fbWidth, const uint32_t eyeOffset[2], const vbgo_tt_eye_view view[2],
                         const bool have[2], const int bg[3]);
     DepthColors m_depth;
-    std::vector<uint8_t> m_depthShades[2], m_depthWant[2];
 
     bool m_settled = false;
     bool m_pairsChecked = false; // (the last Paint ran EstimatePairs)

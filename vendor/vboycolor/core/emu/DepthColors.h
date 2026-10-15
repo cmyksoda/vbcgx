@@ -54,6 +54,9 @@ public:
     // there), row-major kWidth x kHeight. want[eye]: 1 where a pixel needs a
     // depth color. Works out the left eye's pixels' disparities (only the left eye is shown).
     void Update(const uint8_t *const shades[2], const uint8_t *const want[2]);
+    // Cleared buffers for the next Update's shades and want (kept: Update takes them over instead of copying them).
+    uint8_t *NextShades(unsigned eye);
+    uint8_t *NextWant(unsigned eye);
     // A wanted left-eye pixel's disparity as last worked out (kUnknown: none).
     int Disparity(unsigned x, unsigned y) const { return m_lastDisparity[y * kWidth + x]; }
     // The color (R, G, B) for a disparity and shade 1-3.
@@ -83,6 +86,7 @@ private:
     std::vector<Row> m_bits[2][3]; // per eye and shade 1-3: kHeight rows
     State m_state;
     std::vector<uint8_t> m_lastShades[2], m_lastWant[2];
+    std::vector<uint8_t> m_nextShades[2], m_nextWant[2];
     std::vector<int16_t> m_disparity;        // the left eye's, per pixel, while Update works them out (kUnknown: none)
     std::vector<int16_t> m_lastDisparity;    // ... as last worked out (Disparity's; a pixel that hasn't changed keeps it)
     bool m_haveLast = false;

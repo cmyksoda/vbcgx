@@ -1130,6 +1130,17 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
         const uint32_t *const eyeClut = vbgo_vip_eye_clut(static_cast<int>(eye));
         setUp.flatObjPalettes = v.flat_obj_palettes;
+        uint32_t taggedBands[kGridW]; // (v.tagged turned around: per 8 columns, a bit per band that may hold tags)
+        for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
+            taggedBands[c] = 0;
+        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+        {
+            const uint32_t lo = v.tagged ? static_cast<uint32_t>(v.tagged[b]) : ~0u, hi = v.tagged ? static_cast<uint32_t>(v.tagged[b] >> 32) : ~0u;
+            for (unsigned c = 0; c < 32; ++c)
+                taggedBands[c] |= (lo >> c & 1) << b;
+            for (unsigned c = 32; c < static_cast<unsigned>(kGridW); ++c)
+                taggedBands[c] |= (hi >> (c - 32) & 1) << b;
+        }
         if (pack)
             ResolveSlots(v.hashes);
         if (eye == 1 && pairs)
@@ -1193,6 +1204,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 uint32_t runHi = 0, runLo = ~0u;
                 Run run;
                 bool runSetUp = true;
+                const uint32_t tagged = taggedBands[x >> 3];
                 for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
                 {
                     const uint32_t bandKey = v.band_key[b];
@@ -1213,6 +1225,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             runSetUp = false;
                             continue;
                         }
+                    }
+                    if (!(tagged >> b & 1))
+                    {
+                        if (!kept)
+                            here.first = kNoKey; // (no tags there: the loop below would find none)
+                        continue;
                     }
                     Band &band = rightBands[b];
                     Cell &sums = kept ? unkept : band.cells[x >> 3];
@@ -1338,6 +1356,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             bool runSetUp = true; // (false: a kept band's last run - run isn't it)
             int nearCell = -1; // (context: the last pixel's markers nearby, by cell and layer)
             NearBits nearBits{};
+            const uint32_t tagged = taggedBands[x >> 3];
             for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
             {
             const uint32_t bandKey = v.band_key[b];
@@ -1360,6 +1379,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 }
                 shade.column(x, b * 8, 8); // (painted again; its bookkeeping is kept)
                 m_painted[b] |= 1ull << (x >> 3);
+            }
+            if (!(tagged >> b & 1))
+            {
+                if (!kept)
+                    here.first = kNoKey; // (no tags there: the loop below would find none)
+                continue;
             }
             Band &band = bands[b];
             Cell &sums = kept ? unkept : band.cells[x >> 3];
@@ -1632,16 +1657,14 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
 {
     // Each eye's shades, and the lit pixels no tile drew this frame (a
     // shade the game switched off counts as nothing).
-    constexpr size_t kPixels = VBGO_TT_EYE_PIXELS;
     bool any = false;
+    uint8_t *eyeShades[2], *eyeWant[2];
     unsigned brightest = 0;
     for (unsigned eye = 0; eye < 2; ++eye)
     {
         const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
         const uint32_t *const eyeClut = vbgo_vip_eye_clut(static_cast<int>(eye));
-        m_depthShades[eye].assign(kPixels, 0);
-        m_depthWant[eye].assign(kPixels, 0);
-        uint8_t *shades = m_depthShades[eye].data(), *want = m_depthWant[eye].data();
+        uint8_t *shades = eyeShades[eye] = m_depth.NextShades(eye), *want = eyeWant[eye] = m_depth.NextWant(eye);
         for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
         {
             const uint32_t *column = have[eye] ? view[eye].columns[x] : nullptr;
@@ -1677,8 +1700,8 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
         m_autoMaxLevel = brightest; // (before painting: the very first frame fades right too)
         SetFadeReference(brightest);
     }
-    const uint8_t *const shades[2] = {m_depthShades[0].data(), m_depthShades[1].data()};
-    const uint8_t *const want[2] = {m_depthWant[0].data(), m_depthWant[1].data()};
+    const uint8_t *const shades[2] = {eyeShades[0], eyeShades[1]};
+    const uint8_t *const want[2] = {eyeWant[0], eyeWant[1]};
     m_depth.Update(shades, want);
     const uint8_t *const leftBits = vbgo_vip_eye_bits(0);
     const uint32_t *const leftClut = vbgo_vip_eye_clut(0);
