@@ -30,6 +30,7 @@ private:
         uint32_t at = 0, used = 0;
     } copies[2];
     uint32_t presented = 0;
+    bool drawing = false; // (the GPU may still be drawing the last frame's quad from its texture)
     const uint8_t *shown = nullptr;
     size_t shownPitch = 0;
 };

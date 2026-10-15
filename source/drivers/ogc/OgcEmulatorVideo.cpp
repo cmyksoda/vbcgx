@@ -33,6 +33,10 @@ void OgcEmulatorVideo::resetVideo()
 void OgcEmulatorVideo::presentFrame(const uint8_t *buffer, size_t pitch)
 {
     videoDriver->waitForBufferReady();
+    if (drawing) {
+        GX_WaitDrawDone();
+        drawing = false;
+    }
     shown = buffer;
     shownPitch = pitch;
     auto *mode = videoDriver->getVideoMode();
@@ -103,7 +107,10 @@ void OgcEmulatorVideo::presentFrame(const uint8_t *buffer, size_t pitch)
     GX_Position3f32(x+logicalW, y+logicalH, 0); GX_Color4u8(255,255,255,255); GX_TexCoord2f32(1,1);
     GX_Position3f32(x, y+logicalH, 0); GX_Color4u8(255,255,255,255); GX_TexCoord2f32(0,1);
     GX_End();
-    GX_DrawDone();
+    // (not waited for here: the copy to the TV's buffer follows it in the GPU's queue, and the next frame waits
+    // before it writes a texture again)
+    GX_SetDrawDone();
+    drawing = true;
     videoDriver->presentBuffer();
     gameScreenPng.width = vbWidth; gameScreenPng.height = vbHeight;
     gameScreenPng.scaleX = logicalW / vbWidth; gameScreenPng.scaleY = logicalH / vbHeight;
