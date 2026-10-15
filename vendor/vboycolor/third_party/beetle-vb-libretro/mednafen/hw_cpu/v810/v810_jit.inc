@@ -63,6 +63,7 @@ public:
    void Cntlzw(unsigned ra, unsigned rs) { X(rs, ra, 0, 26); }
    void Extsb(unsigned ra, unsigned rs) { X(rs, ra, 0, 954); }
    void Extsh(unsigned ra, unsigned rs) { X(rs, ra, 0, 922); }
+   void Lwzx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 23); }
    void Lbzx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 87); }
    void Lhbrx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 790); }
    void Lwbrx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 534); }
@@ -154,6 +155,7 @@ void *V810::CompileBlock(Block *block)
       return NULL;
    const unsigned n = block->count;
    static_assert(JIT_STUBS <= sizeof(JitStub) / sizeof(JitStub[0]), "JitStub");
+   static_assert(JIT_LOOKUP_SIZE == 4096 && sizeof(JitLookupEntry) == 8, "BK_JMP's index into JitLookup");
 
    uint32 *const flushFrom = JitCode + JitCodeUsed;
    PpcWriter w(flushFrom, JitCode + JIT_BYTES / 4);
@@ -895,18 +897,34 @@ void *V810::CompileBlock(Block *block)
          ended = true;
          continue;
       case BK_JMP:
-         Get(3, arg1);
-         w.Rlwinm(3, 3, 0, 0, 30);
-         w.Stw(3, offTarget, JR_REGS);
+      {
+         Get(5, arg1);
+         w.Rlwinm(5, 5, 0, 0, 30);
+         w.Stw(5, offTarget, JR_REGS);
          w.Li(4, op.opcode);
          w.Stw(4, offLastop, JR_REGS);
          w.Mfctr(9);
          w.Addi(9, 9, -3);
          w.Mtctr(9);
+         w.Cmpwi(9, 0);
+         uint32 *const due = w.Bc(BO_FALSE, CR_GT);
+         /* (straight on when the target's code is in JitLookup, else back to the C side, which finds it) */
+         w.Rlwinm(6, 5, 2, 17, 28);
+         w.Imm32(7, (uint32)(uintptr_t)JitLookup);
+         w.Lwzx(8, 7, 6);
+         w.Cmpw(8, 5);
+         uint32 *const miss = w.Bc(BO_FALSE, CR_EQ);
+         w.Addi(7, 7, 4);
+         w.Lwzx(8, 7, 6);
+         w.Mtlr(8);
+         w.Blr();
+         w.Patch(due, w.at);
+         w.Patch(miss, w.at);
          w.Li(3, JIT_EXIT_BRANCH);
          w.BTo(JitStub[JIT_STUB_LEAVE]);
          ended = true;
          continue;
+      }
       }
       /* (the ALU ops and NOP: one cycle, lastop the opcode) */
       lastopNow = op.opcode;

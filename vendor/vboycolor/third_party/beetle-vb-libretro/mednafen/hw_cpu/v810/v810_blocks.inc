@@ -54,6 +54,15 @@ const uint8 kBlockKinds[128] = {
    BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE,
 };
 
+/* Compiled code by ROM address, for register jumps (v810_jit.inc), filled as RunBlock dispatches blocks. */
+struct JitLookupEntry
+{
+   uint32 pc;
+   void *code;
+};
+enum { JIT_LOOKUP_SIZE = 4096 };
+JitLookupEntry JitLookup[JIT_LOOKUP_SIZE];
+
 inline unsigned BlockOpLength(unsigned kind)
 {
    return (kind >= BK_MOVEA && kind <= BK_ST_W) || kind == BK_JR || kind == BK_JAL ? 4 : 2;
@@ -67,6 +76,7 @@ void V810::FlushBlocks(void)
    JitCodeUsed = 0;
    JitLinkSite = NULL;
    JitResumeAt = NULL;
+   memset(JitLookup, 0, sizeof(JitLookup));
 }
 
 V810::Block *V810::FindBlock(uint32 pc, bool decode)
@@ -172,6 +182,8 @@ int V810::RunBlock(v810_timestamp_t &timestamp)
          return 0;
       }
       code = block->jit;
+      if(block->code == &FastMap[block_pc >> V810_FAST_MAP_SHIFT][block_pc]) /* (as a jump there finds it) */
+         JitLookup[(block_pc >> 1) & (JIT_LOOKUP_SIZE - 1)] = JitLookupEntry{block_pc, code};
       if(JitLinkSite && JitLinkTarget == block_pc)
       {
          /* (the branch that came here now jumps straight into this block's code) */
