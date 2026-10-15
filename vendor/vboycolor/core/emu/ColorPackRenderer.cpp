@@ -42,15 +42,32 @@ constexpr int kMaxDisparity = 64;
 
 // An eye's pixel x, y: B, G, R and the tag (shade, brightness) from the low byte up, as the core
 // writes them on either byte order (each eye is kept compact - see vbgo_vip_eye_bits).
-inline uint32_t EyeTaggedPixel(const uint8_t *bits, const uint32_t *clut, uint32_t x, uint32_t y)
+inline uint32_t EyeTaggedWord(uint32_t value)
 {
-    const uint32_t value = vbgo_eye_word(bits, clut, x, y);
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
     return __builtin_bswap32(value);
 #else
     return value;
 #endif
 }
+
+inline uint32_t EyeTaggedPixel(const uint8_t *bits, const uint32_t *clut, uint32_t x, uint32_t y)
+{
+    return EyeTaggedWord(vbgo_eye_word(bits, clut, x, y));
+}
+
+// EyeTaggedPixel down one column, its 4 words worked out once (vbgo_eye_word's layout).
+struct EyeColumn
+{
+    const uint8_t *bits;
+    uint32_t words[4];
+    EyeColumn(const uint8_t *eyeBits, const uint32_t *eyeClut, uint32_t x) : bits(eyeBits + x * 56)
+    {
+        for (uint32_t i = 0; i < 4; ++i)
+            words[i] = EyeTaggedWord(eyeClut[x * 4 + i]);
+    }
+    uint32_t operator[](uint32_t y) const { return words[bits[y >> 2] >> ((y & 3) * 2) & 3]; }
+};
 
 const TileColorPack::Tile kNoTile{}; // (no tile colors: nothing painted)
 } // namespace
@@ -1171,6 +1188,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 const uint16_t *columnCells = v.cells[x];
                 if (!column)
                     continue;
+                const EyeColumn eyeColumn(eyeBits, eyeClut, x);
                 uint64_t runKey = ~0ull;
                 uint32_t runHi = 0, runLo = ~0u;
                 Run run;
@@ -1211,7 +1229,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             continue;
                         const uint64_t t = vbgo_tag_compose(lo, columnCells[vbgo_tt_cell_at(y)]);
                         const unsigned pixel = VBGO_TAG_PIXEL(t);
-                        const uint32_t rawPixel = EyeTaggedPixel(eyeBits, eyeClut, x, y);
+                        const uint32_t rawPixel = eyeColumn[y];
                         if (pixel && !(rawPixel & 0xFFFFFFu))
                             continue;
                         const bool firstHere = !counted;
@@ -1312,6 +1330,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             const uint16_t *columnCells = v.cells[x];
             if (!column)
                 continue;
+            const EyeColumn eyeColumn(eyeBits, eyeClut, x);
             const size_t columnBase = (static_cast<size_t>(eyeOffset[0]) + x) * 4;
             uint64_t runKey = ~0ull;
             uint32_t runHi = 0, runLo = ~0u;
@@ -1353,7 +1372,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     continue; // nothing tracked here this frame (background)
                 uint64_t t = vbgo_tag_compose(column[y], columnCells[vbgo_tt_cell_at(y)]);
                 size_t i = columnBase + y * rowBytes;
-                uint32_t rawPixel = EyeTaggedPixel(eyeBits, eyeClut, x, y); // B, G, R, tag (shade, brightness) from the low byte up
+                uint32_t rawPixel = eyeColumn[y]; // B, G, R, tag (shade, brightness) from the low byte up
                 unsigned pixel = VBGO_TAG_PIXEL(t);
                 if (pixel && !(rawPixel & 0xFFFFFFu))
                     continue; // drawn in a shade the game switched off - stays background
@@ -1408,7 +1427,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             if ((next & kRunMaskLo) != runLo || columnCells[vbgo_tt_cell_at(y + 1)] != runHi)
                                 break;
                             ++y, i += rowBytes, t = vbgo_tag_compose(next, columnCells[vbgo_tt_cell_at(y)]);
-                            rawPixel = EyeTaggedPixel(eyeBits, eyeClut, x, y);
+                            rawPixel = eyeColumn[y];
                             pixel = VBGO_TAG_PIXEL(t);
                             if (!pixel || (rawPixel & 0xFFFFFFu))
                             {
