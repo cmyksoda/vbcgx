@@ -66,11 +66,12 @@ public:
     // The 4 colors as shown at full brightness (background, 3 shades).
     std::array<ShadeRgb, 4> Palette() const { return m_palette; }
 
-    // Row y of an eye from column x on, pixelCount pixels (bits, clut: the eye
-    // as vbgo_vip_eye_bits keeps it - bytes B,G,R,tag per pixel, tag bits 0-1
-    // shade index, 2-7 fade level). dst: B,G,R,A bytes ready for the B8G8R8A8
-    // screen texture, A forced opaque.
-    void Colorize(const uint8_t *bits, const uint32_t *clut, unsigned x, unsigned y, size_t pixelCount, uint8_t *dst) const;
+    // The eye's colors, once a frame before Colorize (after Observe): each column's 4 pixel values (clut, as
+    // vbgo_vip_eye_clut keeps them - bytes B,G,R,tag per pixel, tag bits 0-1 shade index, 2-7 fade level) colored.
+    void PrepareColumns(const uint32_t *clut);
+    // Row y of the eye from column x on, pixelCount pixels (bits: as vbgo_vip_eye_bits keeps it). dst: B,G,R,A
+    // bytes ready for the B8G8R8A8 screen texture, A forced opaque.
+    void Colorize(const uint8_t *bits, unsigned x, unsigned y, size_t pixelCount, uint8_t *dst) const;
     // Changes whenever Colorize would color some pixel differently.
     uint32_t Version() const { return m_version; }
 
@@ -80,6 +81,9 @@ private:
     // Indexed by the whole tag byte ([fade level][shade]) -> B,G,R,A bytes.
     std::array<std::array<uint8_t, 4>, 256> m_lut{};
     std::array<uint8_t, 4> m_background{};
+    uint32_t ColorOf(uint32_t pixel) const;
+    static constexpr size_t kColumns = 384; // (VBGO_TT_WIDTH)
+    std::array<uint32_t, kColumns * 4> m_columnColors{};
     std::array<ShadeRgb, 4> m_palette{};
     // Gradient mode
     bool m_gradient = false;

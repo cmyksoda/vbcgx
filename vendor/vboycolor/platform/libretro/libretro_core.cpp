@@ -692,13 +692,14 @@ namespace
         {
             if (g_colorizer.IsGradient())
                 g_colorizer.Observe(bits, clut, w, h, w - VBGO_TT_WIDTH);
+            g_colorizer.PrepareColumns(clut[0]);
             auto shadeRows = [&](unsigned first, unsigned count) {
                 for (unsigned y = first; y < first + count && y < h; ++y)
-                    g_colorizer.Colorize(bits[0], clut[0], 0, y, VBGO_TT_WIDTH, &colored[y * rowBytes]);
+                    g_colorizer.Colorize(bits[0], 0, y, VBGO_TT_WIDTH, &colored[y * rowBytes]);
             };
             auto shadeCells = [&](unsigned band, unsigned first, unsigned count) {
                 for (unsigned y = band * 8; y < band * 8 + 8 && y < h; ++y)
-                    g_colorizer.Colorize(bits[0], clut[0], first * 8, y, count * 8, &colored[y * rowBytes + first * 32]);
+                    g_colorizer.Colorize(bits[0], first * 8, y, count * 8, &colored[y * rowBytes + first * 32]);
             };
             if (painting)
             {
@@ -706,7 +707,7 @@ namespace
                 g_renderer.SetPackShown(true);
                 auto shadeColumn = [&](unsigned x, unsigned first, unsigned count) {
                     for (unsigned y = first; y < first + count && y < h; ++y)
-                        g_colorizer.Colorize(bits[0], clut[0], x, y, 1, &colored[y * rowBytes + x * 4]);
+                        g_colorizer.Colorize(bits[0], x, y, 1, &colored[y * rowBytes + x * 4]);
                 };
                 g_renderer.Paint(colored.data(), static_cast<uint32_t>(rowBytes / 4), eyeOffset, g_background,
                                  {shadeCells, shadeColumn, g_colorizer.Version()});

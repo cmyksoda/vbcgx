@@ -156,26 +156,36 @@ void ShadeColorizer::Observe(const uint8_t *const bits[2], const uint32_t *const
         BuildGradient();
 }
 
-void ShadeColorizer::Colorize(const uint8_t *bits, const uint32_t *clut, unsigned x, unsigned y, size_t pixelCount,
-                              uint8_t *dst) const
+// A pixel value (as vbgo_eye_word gives it) colored: native words of BGRA bytes; the RGB mask follows the host
+// byte order.
+uint32_t ShadeColorizer::ColorOf(uint32_t pixel) const
 {
-    // Pixels as native words of BGRA bytes; the RGB mask follows the host byte order.
-    uint32_t background;
+    uint8_t in[4];
+    std::memcpy(in, &pixel, 4);
+    uint32_t color, background;
+    std::memcpy(&color, m_lut[in[3]].data(), 4);
     std::memcpy(&background, m_background.data(), 4);
-    auto one = [&](unsigned column, uint8_t *out) {
-        const uint32_t pixel = vbgo_eye_word(bits, clut, column, y);
-        uint8_t in[4];
-        std::memcpy(in, &pixel, 4);
-        uint32_t color;
-        std::memcpy(&color, m_lut[in[3]].data(), 4);
-        // A shade switched fully off by the game (output 0) shows as
-        // background, whatever the fade level says.
+    // A shade switched fully off by the game (output 0) shows as
+    // background, whatever the fade level says.
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-        color = (pixel & 0xFFFFFF00u) ? color : background;
+    return (pixel & 0xFFFFFF00u) ? color : background;
 #else
-        color = (pixel & 0x00FFFFFFu) ? color : background;
+    return (pixel & 0x00FFFFFFu) ? color : background;
 #endif
-        std::memcpy(out, &color, 4);
+}
+
+void ShadeColorizer::PrepareColumns(const uint32_t *clut)
+{
+    static_assert(kColumns == VBGO_TT_WIDTH, "PrepareColumns");
+    for (size_t i = 0; i < m_columnColors.size(); ++i)
+        m_columnColors[i] = ColorOf(clut[i]);
+}
+
+void ShadeColorizer::Colorize(const uint8_t *bits, unsigned x, unsigned y, size_t pixelCount, uint8_t *dst) const
+{
+    auto one = [&](unsigned column, uint8_t *out) {
+        const unsigned value = bits[column * 56 + (y >> 2)] >> ((y & 3) * 2) & 3; // (as vbgo_eye_word picks it)
+        std::memcpy(out, &m_columnColors[column * 4 + value], 4);
     };
     size_t i = 0;
 #if defined(__PPC__) || defined(__powerpc__)
