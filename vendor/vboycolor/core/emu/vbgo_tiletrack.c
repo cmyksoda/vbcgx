@@ -405,7 +405,7 @@ bool vbgo_tiletrack_keep_cells(uint64_t cells)
 
 void vbgo_tiletrack_block_drawing(bool compare)
 {
-   unsigned e, x;
+   unsigned e, x, c;
    uint64_t tagged;
    s_old_valid = 0;
    if (!vbgo_tt_on || s_block_slot < 0 || s_block_no >= VBGO_TT_BLOCKS)
@@ -413,22 +413,26 @@ void vbgo_tiletrack_block_drawing(bool compare)
    s_old_valid = compare && s_block_was && s_prev_valid;
    tagged = s_tagged[s_block_slot][s_block_no];
    for (e = 0; s_old_valid && e < 2; e++)
-      for (x = 0; x < VBGO_TT_WIDTH; x++)
+      for (c = 0; c < VBGO_TT_CELLS; c++)
       {
-         const uint32_t *from = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
-         uint32_t *to = &s_old_tags[e][x * 8];
-         if (tagged >> (x >> 3) & 1)
+         uint32_t *to = &s_old_tags[e][c * 64];
+         if (!(tagged >> c & 1))
+         {
+            /* (all 0 there, the cell's 8 columns at once; the cells needn't be copied: SameCell reads them only
+             * under a drawn tag) */
+            memset(to, 0, 64 * sizeof(*to));
+            continue;
+         }
+         for (x = c * 8; x < c * 8 + 8; x++, to += 8)
          {
             /* (spelled out: on the Wii a memcpy call per column costs more than the copy itself) */
-            const uint16_t *cfrom = vbgo_tt_cdst[e] + x * VBGO_TT_CELL_COLUMN;
-            uint16_t *cto = &s_old_cells[e][x * 8];
+            const uint32_t *from = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
+            uint32_t cells[4];
             to[0] = from[0], to[1] = from[1], to[2] = from[2], to[3] = from[3];
             to[4] = from[4], to[5] = from[5], to[6] = from[6], to[7] = from[7];
-            cto[0] = cfrom[0], cto[1] = cfrom[1], cto[2] = cfrom[2], cto[3] = cfrom[3];
-            cto[4] = cfrom[4], cto[5] = cfrom[5], cto[6] = cfrom[6], cto[7] = cfrom[7];
+            memcpy(cells, vbgo_tt_cdst[e] + x * VBGO_TT_CELL_COLUMN, sizeof(cells));
+            memcpy(&s_old_cells[e][x * 8], cells, sizeof(cells));
          }
-         else /* (all 0 there; the cells needn't be copied: SameCell reads them only under a drawn tag) */
-            to[0] = to[1] = to[2] = to[3] = to[4] = to[5] = to[6] = to[7] = 0;
       }
    ClearCells(tagged);
    s_tagged[s_block_slot][s_block_no] = 0;
