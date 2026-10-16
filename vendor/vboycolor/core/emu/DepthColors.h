@@ -1,10 +1,10 @@
 #pragma once
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
-#include <new>
 #include <vector>
+
+#include "emu/LineAligned.h"
 
 // Auto colors for what no tile drew: pixels the game's CPU wrote straight
 // into the frame buffer (Red Alarm's wireframe world and its whole screen,
@@ -45,23 +45,6 @@
 //
 // Nothing is worked out while both pictures stay the same (most 3D games
 // draw a new picture every other frame or less).
-// (an allocator for whole cache lines: the gather's buffers are cleared a line at a time)
-template <typename T>
-struct LineAligned
-{
-    using value_type = T;
-    LineAligned() = default;
-    template <typename U>
-    LineAligned(const LineAligned<U> &) {}
-    T *allocate(size_t n) { return static_cast<T *>(::operator new(n * sizeof(T), std::align_val_t(32))); }
-    void deallocate(T *p, size_t) { ::operator delete(p, std::align_val_t(32)); }
-    template <typename U>
-    bool operator==(const LineAligned<U> &) const { return true; }
-    template <typename U>
-    bool operator!=(const LineAligned<U> &) const { return false; }
-};
-using PictureBuffer = std::vector<uint8_t, LineAligned<uint8_t>>;
-
 class DepthColors
 {
 public:

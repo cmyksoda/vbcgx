@@ -181,6 +181,20 @@ void ShadeColorizer::PrepareColumns(const uint32_t *clut)
         m_columnColors[i] = ColorOf(clut[i]);
 }
 
+void ShadeColorizer::ColorizeCell(const uint8_t *bits, unsigned x, unsigned y, uint8_t *dst, size_t rowBytes) const
+{
+    for (unsigned row = 0; row < 8; ++row, dst += rowBytes)
+    {
+        const unsigned at = (y + row) >> 2, shift = ((y + row) & 3) * 2;
+#if defined(__PPC__) || defined(__powerpc__)
+        if (!(reinterpret_cast<uintptr_t>(dst) & 31)) // (a whole line about to be written: not read first)
+            __asm__ volatile("dcbz 0,%0" : : "r"(dst) : "memory");
+#endif
+        for (unsigned k = 0; k < 8; ++k)
+            std::memcpy(dst + k * 4, &m_columnColors[(x + k) * 4 + (bits[(x + k) * 56 + at] >> shift & 3)], 4);
+    }
+}
+
 void ShadeColorizer::Colorize(const uint8_t *bits, unsigned x, unsigned y, size_t pixelCount, uint8_t *dst) const
 {
     auto one = [&](unsigned column, uint8_t *out) {

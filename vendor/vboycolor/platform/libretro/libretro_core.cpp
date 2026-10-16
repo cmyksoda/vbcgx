@@ -17,6 +17,7 @@
 #include "emu/AutoColors.h"
 #include "emu/ColorPackRenderer.h"
 #include "emu/ColorSchemes.h"
+#include "emu/LineAligned.h"
 #include "emu/ShadeColorizer.h"
 #include "emu/TileColorPack.h"
 #include "vbgo_tiletrack.h"
@@ -411,7 +412,7 @@ namespace
     const uint8_t *g_frame = nullptr;
     unsigned g_frameW = 0, g_frameH = 0;
     size_t g_framePitch = 0;
-    std::vector<uint8_t> g_colored[2]; // per frame buffer (see ColorPackRenderer::Paint)
+    PictureBuffer g_colored[2]; // per frame buffer (see ColorPackRenderer::Paint); each 8x8 cell's row a whole cache line
     // Per colored picture: the cells (bit per 8 columns, per band) its last present changed, and the present
     // count when it was shown before that (0: never) and last. The count only grows, so a picture allocated
     // where an old one was can't pass for it.
@@ -676,7 +677,7 @@ namespace
         const size_t pixels = rowBytes / 4 * h;
         const bool painting = g_shadeColors && g_renderer.Active() && vbgo_tiletrack_is_enabled();
         const int shown = painting ? ColorPackRenderer::ShownBuffer() : 0;
-        std::vector<uint8_t> &colored = g_colored[shown];
+        PictureBuffer &colored = g_colored[shown];
         bool whole = !painting;
         if (colored.size() != pixels * 4)
         {
@@ -698,6 +699,11 @@ namespace
                     g_colorizer.Colorize(bits[0], 0, y, VBGO_TT_WIDTH, &colored[y * rowBytes]);
             };
             auto shadeCells = [&](unsigned band, unsigned first, unsigned count) {
+                if (count == 1 && band * 8 + 8 <= h)
+                {
+                    g_colorizer.ColorizeCell(bits[0], first * 8, band * 8, &colored[band * 8 * rowBytes + first * 32], rowBytes);
+                    return;
+                }
                 for (unsigned y = band * 8; y < band * 8 + 8 && y < h; ++y)
                     g_colorizer.Colorize(bits[0], first * 8, y, count * 8, &colored[y * rowBytes + first * 32]);
             };
@@ -907,7 +913,7 @@ extern "C"
         g_pack.~TileColorPack();
         new (&g_pack) TileColorPack();
         for (auto &colored : g_colored)
-            std::vector<uint8_t>().swap(colored);
+            PictureBuffer().swap(colored);
         g_loaded = false;
     }
 

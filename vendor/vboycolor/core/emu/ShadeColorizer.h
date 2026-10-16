@@ -72,6 +72,8 @@ public:
     // Row y of the eye from column x on, pixelCount pixels (bits: as vbgo_vip_eye_bits keeps it). dst: B,G,R,A
     // bytes ready for the B8G8R8A8 screen texture, A forced opaque.
     void Colorize(const uint8_t *bits, unsigned x, unsigned y, size_t pixelCount, uint8_t *dst) const;
+    // Colorize for one 8x8 cell from (x, y), its rows rowBytes apart, in one call.
+    void ColorizeCell(const uint8_t *bits, unsigned x, unsigned y, uint8_t *dst, size_t rowBytes) const;
     // Changes whenever Colorize would color some pixel differently.
     uint32_t Version() const { return m_version; }
 

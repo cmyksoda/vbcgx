@@ -1044,7 +1044,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     RunSetUp setUp{pack, haveCells, markers != nullptr, haveContexts, pairs, leftPairSlot.data(), 0};
     bool reestimated = false;
 
-    for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+    // (with the left eye to paint, its loop shades each cell just before painting it, while its lines are cached)
+    for (unsigned b = 0; !have[0] && b < static_cast<unsigned>(kBands); ++b)
         for (unsigned c = 0; c < static_cast<unsigned>(kGridW);)
         {
             unsigned end = c;
@@ -1345,6 +1346,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         Cell unkept; // (a kept cell's columns painted again: their bookkeeping goes nowhere)
         for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
         {
+            if (!(x & 7))
+                for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+                    if (!keptCell[b][x >> 3])
+                        shade.cells(b, x >> 3, 1);
             const uint32_t *column = v.columns[x];
             const uint16_t *columnCells = v.cells[x];
             if (!column)
