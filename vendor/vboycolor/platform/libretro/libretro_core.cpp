@@ -412,7 +412,50 @@ namespace
     const uint8_t *g_frame = nullptr;
     unsigned g_frameW = 0, g_frameH = 0;
     size_t g_framePitch = 0;
-    PictureBuffer g_colored[2]; // per frame buffer (see ColorPackRenderer::Paint); each 8x8 cell's row a whole cache line
+    // The two colored pictures: the left eye only, each row padded by a cache line (a column's rows spread over the cache
+    // sets), kept in the program's own memory - on the Wii MEM1, not wherever earlier games left the heap.
+    constexpr size_t kPictureRowBytes = (VBGO_TT_WIDTH + 8) * 4, kPictureBytes = kPictureRowBytes * VBGO_TT_HEIGHT;
+    alignas(32) uint8_t g_pictureStore[2][kPictureBytes];
+    bool g_pictureStoreUsed[2];
+    template <typename T>
+    struct PictureStore : LineAligned<T>
+    {
+        using value_type = T;
+        PictureStore() = default;
+        template <typename U>
+        PictureStore(const PictureStore<U> &) {}
+        template <typename U>
+        struct rebind
+        {
+            using other = PictureStore<U>;
+        };
+        T *allocate(size_t n)
+        {
+            for (int k = 0; k < 2 && n * sizeof(T) <= kPictureBytes; ++k)
+                if (!g_pictureStoreUsed[k])
+                {
+                    g_pictureStoreUsed[k] = true;
+                    return reinterpret_cast<T *>(g_pictureStore[k]);
+                }
+            return LineAligned<T>::allocate(n);
+        }
+        void deallocate(T *p, size_t n)
+        {
+            for (int k = 0; k < 2; ++k)
+                if (reinterpret_cast<uint8_t *>(p) == g_pictureStore[k])
+                {
+                    g_pictureStoreUsed[k] = false;
+                    return;
+                }
+            LineAligned<T>::deallocate(p, n);
+        }
+        template <typename U>
+        bool operator==(const PictureStore<U> &) const { return true; }
+        template <typename U>
+        bool operator!=(const PictureStore<U> &) const { return false; }
+    };
+    using Picture = std::vector<uint8_t, PictureStore<uint8_t>>;
+    Picture g_colored[2]; // per frame buffer (see ColorPackRenderer::Paint); each 8x8 cell's row a whole cache line
     // Per colored picture: the cells (bit per 8 columns, per band) its last present changed, and the present
     // count when it was shown before that (0: never) and last. The count only grows, so a picture allocated
     // where an old one was can't pass for it.
@@ -672,12 +715,11 @@ namespace
             g_renderer.ForgetBands();
         g_repaint = false;
         const unsigned w = g_frameW, h = std::min<unsigned>(g_frameH, VBGO_TT_HEIGHT);
-        // (rows keep the core's pitch, padding and all - see FB_PITCH)
-        const size_t rowBytes = g_framePitch >= static_cast<size_t>(w) * 4 && !(g_framePitch & 3) ? g_framePitch : static_cast<size_t>(w) * 4;
+        const size_t rowBytes = kPictureRowBytes;
         const size_t pixels = rowBytes / 4 * h;
         const bool painting = g_shadeColors && g_renderer.Active() && vbgo_tiletrack_is_enabled();
         const int shown = painting ? ColorPackRenderer::ShownBuffer() : 0;
-        PictureBuffer &colored = g_colored[shown];
+        Picture &colored = g_colored[shown];
         bool whole = !painting;
         if (colored.size() != pixels * 4)
         {
@@ -913,7 +955,7 @@ extern "C"
         g_pack.~TileColorPack();
         new (&g_pack) TileColorPack();
         for (auto &colored : g_colored)
-            PictureBuffer().swap(colored);
+            Picture().swap(colored);
         g_loaded = false;
     }
 
