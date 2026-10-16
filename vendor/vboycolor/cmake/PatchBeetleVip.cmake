@@ -315,7 +315,9 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
  uint32_t *const vbgo_row = vbgo_tt_row(target); /* VirtualBoyGo: this row's tags (NULL = not tracking) */
  uint16_t *const vbgo_crow = vbgo_tt_cell_row(target); /* VirtualBoyGo: ... and their cells */
  const uint32_t vbgo_bits = vbgo_tt_call_bits(); /* VirtualBoyGo */
- const uint32_t vbgo_wbit = 1u << VBGO_TAG_WORLD(vbgo_bits); /* VirtualBoyGo: cells this world tags (vbgo_tt_wcells) */]=]
+ const uint32_t vbgo_wbit = 1u << VBGO_TAG_WORLD(vbgo_bits); /* VirtualBoyGo: cells this world tags (vbgo_tt_wcells) */
+ uint32_t vbgo_cbits = 0; /* VirtualBoyGo: the current cell's part of its pixels' tags */
+ int vbgo_wgroup = -1; /* VirtualBoyGo: the last 8 columns marked in vbgo_tt_wcells */]=]
         "vip_draw.inc (DrawAffine locals)")
     _vbgo_replace_once(DRAW
         [=[   bgsc = bgsc_overplane;
@@ -334,19 +336,33 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
    vbgo_fills = vbgo_row && vbgo_tt_fills_from(bgsc & 0x7FF, vbgo_cell); /* VirtualBoyGo */]=]
         "vip_draw.inc (DrawAffine no-rotation map read)")
     _vbgo_replace_once(DRAW
+        [=[   char_row = CHR16[((bgsc & 0x7FF) * 8) | char_sub_y];]=]
+        [=[   char_row = CHR16[((bgsc & 0x7FF) * 8) | char_sub_y];
+   vbgo_cbits = vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, 0, char_sub_y, bgsc >> 14, 0); /* VirtualBoyGo */]=]
+        "vip_draw.inc (DrawAffine no-rotation cell tag)")
+    _vbgo_replace_once(DRAW
         [=[  if(pixel)
-   target[x] = GPLT_Cache[bgsc >> 14][pixel];]=]
+   target[x] = plt[pixel];
+
+  SourceX += dx;
+ }]=]
         [=[  if(pixel)
   {
-   target[x] = GPLT_Cache[bgsc >> 14][pixel];
-   if(vbgo_row) /* VirtualBoyGo */
-    vbgo_row[x * VBGO_TT_COLUMN] = vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, char_sub_x >> 1, char_sub_y, bgsc >> 14, pixel),
-    vbgo_crow[x * VBGO_TT_CELL_COLUMN] = (uint16_t)vbgo_cell, vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
+   target[x] = plt[pixel];
+   if(vbgo_row) /* VirtualBoyGo: char_sub_x is even, so << 10 puts its half in VBGO_TT_BG_BITS's column field */
+   {
+    vbgo_row[x * VBGO_TT_COLUMN] = vbgo_cbits | char_sub_x << 10 | pixel << 20;
+    vbgo_crow[x * VBGO_TT_CELL_COLUMN] = (uint16_t)vbgo_cell;
+    if((x >> 3) != vbgo_wgroup)
+     vbgo_tt_wcells[vbgo_wgroup = x >> 3] |= vbgo_wbit;
+   }
   }
   else if(vbgo_fills) /* VirtualBoyGo */
-   vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], &vbgo_crow[x * VBGO_TT_CELL_COLUMN],
-                   vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, char_sub_x >> 1, char_sub_y, bgsc >> 14, 0), vbgo_cell),
-   vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_fillc[x >> 3] = 1;]=]
+   vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], &vbgo_crow[x * VBGO_TT_CELL_COLUMN], vbgo_cbits | char_sub_x << 10, vbgo_cell),
+   vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_fillc[x >> 3] = 1;
+
+  SourceX += dx;
+ }]=]
         "vip_draw.inc (DrawAffine no-rotation store)")
     _vbgo_replace_once(DRAW
         [=[    bgsc = BGMap[(BGMap_Base | m_index | sub_index) & 0xFFFF];

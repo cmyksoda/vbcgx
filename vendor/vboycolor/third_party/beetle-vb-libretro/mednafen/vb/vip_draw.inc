@@ -226,6 +226,7 @@ if(dy == 0)	/* Optimization for no rotation. */
  /* Everything but char_sub_x is the same across one 8x8 map cell (SourceX >> 12; the map's edge is on a cell's),
     and a scaled line often stays in a cell for several pixels. */
  uint32 cell_at = ~0u, bgsc = 0, hflip_xor = 0, char_row = 0;
+ const uint8 *plt = GPLT_Cache[0];
  unsigned int char_sub_y = 0;
  for(x = start_x; x <= final_x; x++)
  {
@@ -245,6 +246,7 @@ if(dy == 0)	/* Optimization for no rotation. */
    hflip_xor = ((int32)(bgsc << 18) >> 30) & 0xE;
    char_sub_y = (((int32)(bgsc << 19) >> 31) & 0x7) ^ ((SourceY >> 9) & 0x7);
    char_row = CHR16[((bgsc & 0x7FF) * 8) | char_sub_y];
+   plt = GPLT_Cache[bgsc >> 14];
    if((bgsc & 0x7FF) != used_chr)
    {
     USE_BG_CHR(bgsc & 0x7FF);
@@ -256,7 +258,7 @@ if(dy == 0)	/* Optimization for no rotation. */
   pixel = (char_row >> char_sub_x) & 0x3;
 
   if(pixel)
-   target[x] = GPLT_Cache[bgsc >> 14][pixel];
+   target[x] = plt[pixel];
 
   SourceX += dx;
  }
