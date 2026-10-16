@@ -465,18 +465,27 @@ void ColorPackRenderer::Near(int x, int y, unsigned world, ContextGroupBits &nea
             const unsigned g = (m_gridCurrent + k) % 3;
             const ContextGroupBits *grid = m_markerGrid[g].data();
             const uint8_t *layers = m_layerBound.Any() ? m_markerLayer[g].data() : nullptr;
-            for (int gy = std::max(0, cy - kContextReach); gy <= std::min(kGridH - 1, cy + kContextReach); ++gy)
-                for (int gx = std::max(0, cx - kContextReach); gx <= std::min(kGridW - 1, cx + kContextReach); ++gx)
+            const auto add = [&](int i, int gx, int gy) {
+                const ContextGroupBits &here = grid[i];
+                if (!here.Any())
+                    return;
+                const ContextGroupBits found = !layers ? here : layers[i] == world ? here : here & free;
+                bits |= found;
+                if (std::abs(gy - cy) <= 1 && std::abs(gx - cx) <= 1)
+                    closeBits |= found;
+            };
+            // (every other cell of the grid is clear: when few have markers, those are all there is to look at)
+            if (m_markerCells[g].size() < static_cast<size_t>((2 * kContextReach + 1) * (2 * kContextReach + 1)))
+                for (const uint16_t i : m_markerCells[g])
                 {
-                    const int i = gy * kGridW + gx;
-                    const ContextGroupBits &here = grid[i];
-                    if (!here.Any())
-                        continue;
-                    const ContextGroupBits found = !layers ? here : layers[i] == world ? here : here & free;
-                    bits |= found;
-                    if (std::abs(gy - cy) <= 1 && std::abs(gx - cx) <= 1)
-                        closeBits |= found;
+                    const int gx = i % kGridW, gy = i / kGridW;
+                    if (std::abs(gx - cx) <= kContextReach && std::abs(gy - cy) <= kContextReach)
+                        add(i, gx, gy);
                 }
+            else
+                for (int gy = std::max(0, cy - kContextReach); gy <= std::min(kGridH - 1, cy + kContextReach); ++gy)
+                    for (int gx = std::max(0, cx - kContextReach); gx <= std::min(kGridW - 1, cx + kContextReach); ++gx)
+                        add(gy * kGridW + gx, gx, gy);
         }
         known.frame = m_frame, known.bits = bits, known.close = closeBits;
     }
