@@ -107,6 +107,8 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
     m_contextRange.clear();
     for (Slot &slot : m_slots)
         slot = Slot{};
+    m_slotMarkers.fill(ContextGroupBits{});
+    m_slotHasMarkers.fill(false);
     std::fill(std::begin(m_slotsResolved), std::end(m_slotsResolved), 0);
     m_slotLayer.fill(SlotLayer{});
     for (auto &grid : m_markerGrid)
@@ -248,13 +250,13 @@ void ColorPackRenderer::ResolveSlots(const uint32_t *hashes)
         m_slotLayer[c].world = 0xFF;
         slot.ambiguous = m_pack->IsAmbiguous(slot.hash);
         slot.cellColored = !m_cellHashes.empty() && m_cellHashes.count(slot.hash) != 0;
-        slot.markerBits = ContextGroupBits{};
+        ContextGroupBits markerBits;
         slot.contextCount = 0;
         if (!m_markerBits.empty())
         {
             const auto marker = m_markerBits.find(slot.hash);
             if (marker != m_markerBits.end())
-                slot.markerBits = marker->second;
+                markerBits = marker->second;
             const auto range = m_contextRange.find(slot.hash);
             if (range != m_contextRange.end())
                 slot.contextFirst = range->second.first, slot.contextCount = range->second.second;
@@ -263,8 +265,8 @@ void ColorPackRenderer::ResolveSlots(const uint32_t *hashes)
         m_slotHashes[c] = slot.hash;
         m_slotsResolved[c >> 5] |= bit;
         m_ambiguousSlots[c >> 5] = slot.ambiguous ? m_ambiguousSlots[c >> 5] | bit : m_ambiguousSlots[c >> 5] & ~bit;
-        m_slotMarkers[c] = slot.markerBits;
-        m_slotHasMarkers[c] = slot.markerBits.Any();
+        m_slotMarkers[c] = markerBits;
+        m_slotHasMarkers[c] = markerBits.Any();
         m_markerSlots[c >> 5] = m_slotHasMarkers[c] ? m_markerSlots[c >> 5] | bit : m_markerSlots[c >> 5] & ~bit;
     }
 }
@@ -565,7 +567,7 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, int
         // player - which painted colors alone would hide: they're washed
         // toward that shade (see Paint), so the flash still shows.
         run.flash = sprite && (c.flatObjPalettes >> palette & 1);
-        run.slow = slot.ambiguous || (c.markers && slot.markerBits.Any()) || (slot.contextCount && c.haveContexts);
+        run.slow = slot.ambiguous || (c.markers && m_slotHasMarkers[chr]) || (slot.contextCount && c.haveContexts);
         if (c.haveCells && VBGO_TAG_HAS_CELL(t))
             run.cell = FindCell(VBGO_TAG_CELL(t), palette, slot.hash);
         if (!run.slow)
@@ -1325,10 +1327,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             continue;
                         run.band = static_cast<int>(y >> 3);
                         const unsigned chr = VBGO_TAG_CHAR(t);
-                        if (!markers || !m_slots[chr].markerBits.Any())
+                        if (!markers || !m_slotHasMarkers[chr])
                             continue;
                         const bool sprite = VBGO_TAG_IS_OBJ(t) != 0;
-                        const ContextGroupBits bits = m_slots[chr].markerBits & (sprite ? ~m_layerBound : m_layerBound);
+                        const ContextGroupBits bits = m_slotMarkers[chr] & (sprite ? ~m_layerBound : m_layerBound);
                         const int lx = LeftX(t, static_cast<int>(x), eye, y);
                         if (bits.Any() && lx >= 0 && lx < VBGO_TT_WIDTH)
                         {
@@ -1526,13 +1528,13 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         run.band = static_cast<int>(y >> 3);
                         run.tile = contextTile(t, eye, static_cast<int>(x), static_cast<int>(y), nearCell, nearBits);
                     }
-                    if (newBand && markers && m_slots[chr].markerBits.Any())
+                    if (newBand && markers && m_slotHasMarkers[chr])
                     {
                         // Sprites' groups count sprite markers, background
                         // figures' groups background ones (and remember the
                         // layer).
                         const bool sprite = VBGO_TAG_IS_OBJ(t) != 0;
-                        const ContextGroupBits bits = m_slots[chr].markerBits & (sprite ? ~m_layerBound : m_layerBound);
+                        const ContextGroupBits bits = m_slotMarkers[chr] & (sprite ? ~m_layerBound : m_layerBound);
                         if (bits.Any())
                         {
                             const unsigned cell = (y >> 3) * kGridW + (x >> 3);

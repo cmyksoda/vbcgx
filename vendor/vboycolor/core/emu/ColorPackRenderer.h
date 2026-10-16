@@ -186,7 +186,6 @@ private:
         bool layered = false;                        // the tile has per-layer colors - look them up
         const TileColorPack::Tile *base = nullptr;   // the tile's own colors
         const TileColorPack::Tile *palette[4] = {};  // per palette: its own colors, else base
-        ContextGroupBits markerBits;                 // context groups this tile is a marker of
         uint32_t contextFirst = 0, contextCount = 0; // its context variants in the pack's ContextTiles()
         bool ambiguous = false;                      // painted two ways in a frame: takes its surroundings' colors
         bool cellColored = false;                    // some map cell has colors of its own for it
@@ -342,7 +341,7 @@ private:
             in = 1, m_markerCells[m_gridCurrent].push_back(static_cast<uint16_t>(cell));
     }
     void ClearMarkerCells();
-    std::array<ContextGroupBits, 2048> m_slotMarkers{}; // per slot: its markerBits (compact, for gathering this frame's markers)
+    std::array<ContextGroupBits, 2048> m_slotMarkers{}; // per slot: the context groups its tile is a marker of
     std::array<bool, 2048> m_slotHasMarkers{};
     // (ResolveSlots' compact copies of the slots' hashes and flags, bit per slot: a frame's checks stay in cache)
     std::array<uint32_t, 2048> m_slotHashes{};
