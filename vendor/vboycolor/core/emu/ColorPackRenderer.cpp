@@ -733,12 +733,21 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             }
         }
     }
-    // (the right eye: its slow runs' columns are always worked out again, so ambiguous tiles don't matter)
+    // (the right eye: its slow runs' columns are always worked out again, so ambiguous tiles don't matter; with a pack
+    // its brightness counts for nothing, so a fade that leaves the same shades black keeps its cells too)
+    unsigned rightOnShades = 0;
+    if (have[1] && view[1].clut)
+    {
+        const uint32_t *clut = vbgo_vip_eye_clut(1);
+        for (unsigned s = 0; s < 4; ++s)
+            rightOnShades |= static_cast<unsigned>((EyeTaggedWord(clut[s]) & 0xFFFFFFu) != 0) << s;
+    }
     if (have[1] && !depth && view[1].clut && view[1].cell_version)
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
         {
             const Band &band = rightBands[b];
-            if (band.clut != view[1].clut || band.state != m_paintState)
+            const bool sameShades = m_pack && band.clut && band.onShades == rightOnShades;
+            if ((band.clut != view[1].clut && !sameShades) || band.state != m_paintState)
                 continue;
             for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
             {
@@ -1198,7 +1207,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             // extents and brightness where its runs start, and slow runs' markers.
             static const uint32_t kNoVersions[kGridW] = {};
             for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+            {
                 startCells(rightBands[b], keepRight[b], v.cell_version ? &v.cell_version[b * kGridW] : kNoVersions, v.clut);
+                rightBands[b].onShades = static_cast<uint8_t>(rightOnShades);
+            }
             Cell unkept;
             for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
             {

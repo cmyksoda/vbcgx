@@ -142,6 +142,7 @@ private:
     struct Band
     {
         uint32_t clut = 0, state = 0;
+        uint8_t onShades = 0; // (right eye: a bit per shade not black, as walked)
         std::array<Cell, VBGO_TT_WIDTH / 8> cells{};
         std::array<CellMarks, VBGO_TT_WIDTH / 8> marks{};
         std::vector<uint64_t> pairSlots; // cell << 32 | left eye: chr | pairs << 11; right eye: chr | (pair + 1) << 11
