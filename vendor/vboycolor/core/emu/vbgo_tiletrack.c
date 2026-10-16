@@ -68,6 +68,11 @@ static uint64_t s_cell_black[VBGO_TT_SLOTS][VBGO_TT_BLOCKS]; /* (cells the color
 /* Per slot and block: the cells (bit per 8 columns, both eyes) that may hold a tag - elsewhere every tag is 0,
  * so clearing skips them. */
 static uint64_t s_tagged[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
+/* Per slot: the blocks whose tags and cells are still slot s_lazy_from's (a pass unsharing its buffer copies a
+ * block only if it keeps it), and for those the cells where the slot's own stale tags may be nonzero. */
+static uint32_t s_lazy[VBGO_TT_SLOTS];
+static int s_lazy_from[VBGO_TT_SLOTS];
+static uint64_t s_stale[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 /* Per cell, the worlds its tags showed as last drawn (bit per world; all: unknown). */
 static uint32_t s_cell_worlds[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
 /* The slot and block cpu_fb_write last reset (slot * VBGO_TT_BLOCKS + block), -1 once anything else may have
@@ -186,8 +191,73 @@ static void CopySlotInfo(int to, int from)
    s_stamp[to] = s_stamp[from];
 }
 
-/* Before fb's tags change: a slot of its own (with the same tags). */
-static void Unshare(unsigned fb)
+/* Lazy block b of slot k as its source holds it (lines with no tags in either only cleared, if at all). */
+static void CopyBlock(int k, unsigned b)
+{
+   const int from = s_lazy_from[k];
+   const uint64_t tagged = s_tagged[from][b], stale = s_stale[k][b];
+   unsigned c, e, x;
+   for (c = 0; c < VBGO_TT_CELLS; c++)
+   {
+      const int copy = (int)(tagged >> c & 1);
+      if (!copy && !(stale >> c & 1))
+         continue;
+      for (x = c * 8; x < c * 8 + 8; x++)
+      {
+         uint16_t *to_cells = &s_cells[k][x * VBGO_TT_CELL_COLUMN + b * 16];
+         const uint16_t *src_cells = &s_cells[from][x * VBGO_TT_CELL_COLUMN + b * 16];
+         ClearLine(to_cells);
+         for (e = 0; e < 2; e++)
+         {
+            uint32_t *to = &s_tags[k][e][x * VBGO_TT_COLUMN + b * 8];
+            const uint32_t *src = &s_tags[from][e][x * VBGO_TT_COLUMN + b * 8];
+            ClearLine(to);
+            if (copy)
+            {
+               uint32_t cells[4];
+               to[0] = src[0], to[1] = src[1], to[2] = src[2], to[3] = src[3];
+               to[4] = src[4], to[5] = src[5], to[6] = src[6], to[7] = src[7];
+               memcpy(cells, src_cells + e * 8, sizeof(cells));
+               memcpy(to_cells + e * 8, cells, sizeof(cells));
+            }
+         }
+      }
+   }
+   s_lazy[k] &= ~(1u << b);
+}
+
+static void Settle(int k)
+{
+   while (s_lazy[k])
+      CopyBlock(k, (unsigned)__builtin_ctz(s_lazy[k]));
+}
+
+/* A free slot about to be reused: its lazy blocks are its own stale tags again. */
+static void Drop(int k)
+{
+   unsigned b;
+   for (b = 0; b < VBGO_TT_BLOCKS; b++)
+      if (s_lazy[k] >> b & 1)
+         s_tagged[k][b] = s_stale[k][b];
+   s_lazy[k] = 0;
+}
+
+/* Before slot k's tags change: the slots still lazy from it copy what they need (free ones needn't). */
+static void SettleFrom(int k)
+{
+   int j;
+   for (j = 0; j < VBGO_TT_SLOTS; j++)
+      if (s_lazy[j] && s_lazy_from[j] == k)
+      {
+         if (j == s_slot[0] || j == s_slot[1])
+            Settle(j);
+         else
+            Drop(j);
+      }
+}
+
+/* Before fb's tags change: a slot of its own (with the same tags; lazily: see s_lazy). */
+static void Unshare(unsigned fb, int lazily)
 {
    int from, to;
    if (s_slot[fb] != s_slot[fb ^ 1])
@@ -195,8 +265,21 @@ static void Unshare(unsigned fb)
    s_cpu_reset = -1;
    from = s_slot[fb];
    to = FreeSlot();
-   memcpy(s_tags[to], s_tags[from], sizeof(s_tags[to]));
-   memcpy(s_cells[to], s_cells[from], sizeof(s_cells[to]));
+   Settle(from); /* (no chains) */
+   SettleFrom(to);
+   Drop(to);
+   if (lazily)
+   {
+      memcpy(s_stale[to], s_tagged[to], sizeof(s_stale[to]));
+      s_lazy[to] = (1u << VBGO_TT_BLOCKS) - 1;
+      s_lazy_from[to] = from;
+   }
+   else
+   {
+      memcpy(s_tags[to], s_tags[from], sizeof(s_tags[to]));
+      memcpy(s_cells[to], s_cells[from], sizeof(s_cells[to]));
+      s_lazy[to] = 0;
+   }
    memcpy(s_tagged[to], s_tagged[from], sizeof(s_tagged[to]));
    memcpy(s_block_stamp[to], s_block_stamp[from], sizeof(s_block_stamp[to]));
    memcpy(s_band_pass[to], s_band_pass[from], sizeof(s_band_pass[to]));
@@ -229,8 +312,9 @@ static void StartPass(unsigned fb, const uint16_t *chr_ram, const uint16_t *dram
 {
    int c, slot;
    s_prev_stamp[fb] = s_have[fb] ? s_stamp[s_slot[fb]] : 0;
-   Unshare(fb); /* (a slot of its own, holding the tags its last pass repeated) */
+   Unshare(fb, 1); /* (a slot of its own, holding the tags its last pass repeated) */
    slot = s_slot[fb];
+   SettleFrom(slot);
    s_prev_valid = s_prev_stamp[fb] && s_stamp[slot] == s_prev_stamp[fb] && s_have_attrs[slot];
    if (s_prev_valid)
    {
@@ -296,6 +380,7 @@ void vbgo_tiletrack_reset(void)
 {
    s_cpu_reset = -1;
    memset(s_tags, 0, sizeof(s_tags));
+   memset(s_lazy, 0, sizeof(s_lazy));
    memset(s_block_stamp, 0, sizeof(s_block_stamp));
    memset(s_band_pass, 0, sizeof(s_band_pass));
    memset(s_cell_version, 0, sizeof(s_cell_version));
@@ -313,7 +398,9 @@ void vbgo_tiletrack_reset(void)
 void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr)
 {
    s_cpu_reset = -1;
-   Unshare(fb & 1);
+   Unshare(fb & 1, 0);
+   Settle(s_slot[fb & 1]);
+   SettleFrom(s_slot[fb & 1]);
    memset(s_tags[s_slot[fb & 1]][lr & 1], 0, sizeof(s_tags[0][0]));
    memset(s_block_stamp[s_slot[fb & 1]], 0, sizeof(s_block_stamp[0]));
    memset(s_cell_version[s_slot[fb & 1]], 0, sizeof(s_cell_version[0]));
@@ -396,9 +483,20 @@ static void ClearCells(uint64_t cells)
    }
 }
 
+/* The block begun last as its pass holds it (kept). */
+static void Materialize(void)
+{
+   if (s_block_no < VBGO_TT_BLOCKS && (s_lazy[s_block_slot] >> s_block_no & 1))
+      CopyBlock(s_block_slot, s_block_no);
+}
+
 bool vbgo_tiletrack_keep_block(void)
 {
-   return !vbgo_tt_on || s_block_was;
+   if (!vbgo_tt_on)
+      return true;
+   if (s_block_was)
+      Materialize();
+   return s_block_was != 0;
 }
 
 bool vbgo_tiletrack_keep_cells(uint64_t cells)
@@ -407,6 +505,7 @@ bool vbgo_tiletrack_keep_cells(uint64_t cells)
       return true;
    if (!s_block_was)
       return false;
+   Materialize();
    /* (the cells drawn again start clear, the kept ones stay as they are) */
    ClearCells(s_tagged[s_block_slot][s_block_no] & ~cells);
    s_tagged[s_block_slot][s_block_no] &= cells;
@@ -417,11 +516,19 @@ void vbgo_tiletrack_block_drawing(bool compare)
 {
    unsigned e, x, c;
    uint64_t tagged;
+   const uint32_t *old_tags[2];
+   const uint16_t *old_cells;
+   int lazy;
    s_old_valid = 0;
    if (!vbgo_tt_on || s_block_slot < 0 || s_block_no >= VBGO_TT_BLOCKS)
       return;
    s_old_valid = compare && s_block_was && s_prev_valid;
    tagged = s_tagged[s_block_slot][s_block_no];
+   /* (a lazy block's old tags are still in its source; its own stale ones are what's cleared) */
+   lazy = (int)(s_lazy[s_block_slot] >> s_block_no & 1);
+   old_tags[0] = lazy ? &s_tags[s_lazy_from[s_block_slot]][0][s_block_no * 8] : vbgo_tt_dst[0];
+   old_tags[1] = lazy ? &s_tags[s_lazy_from[s_block_slot]][1][s_block_no * 8] : vbgo_tt_dst[1];
+   old_cells = lazy ? &s_cells[s_lazy_from[s_block_slot]][s_block_no * 16] : vbgo_tt_cdst[0];
    for (e = 0; s_old_valid && e < 2; e++)
       for (c = 0; c < VBGO_TT_CELLS; c++)
       {
@@ -436,15 +543,16 @@ void vbgo_tiletrack_block_drawing(bool compare)
          for (x = c * 8; x < c * 8 + 8; x++, to += 8)
          {
             /* (spelled out: on the Wii a memcpy call per column costs more than the copy itself) */
-            const uint32_t *from = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
+            const uint32_t *from = old_tags[e] + x * VBGO_TT_COLUMN;
             uint32_t cells[4];
             to[0] = from[0], to[1] = from[1], to[2] = from[2], to[3] = from[3];
             to[4] = from[4], to[5] = from[5], to[6] = from[6], to[7] = from[7];
-            memcpy(cells, vbgo_tt_cdst[e] + x * VBGO_TT_CELL_COLUMN, sizeof(cells));
+            memcpy(cells, old_cells + e * 8 + x * VBGO_TT_CELL_COLUMN, sizeof(cells));
             memcpy(&s_old_cells[e][x * 8], cells, sizeof(cells));
          }
       }
-   ClearCells(tagged);
+   ClearCells(lazy ? s_stale[s_block_slot][s_block_no] : tagged);
+   s_lazy[s_block_slot] &= ~(1u << s_block_no);
    s_tagged[s_block_slot][s_block_no] = 0;
 }
 
@@ -579,6 +687,10 @@ void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
       return;
    from = s_slot[fb];
    to = s_slot[fb ^ 1] == from ? FreeSlot() : from;
+   Settle(from);
+   SettleFrom(to);
+   if (to != from)
+      Drop(to);
    NextStamp(from);
    old_stamp = s_stamp[from];
    if (to != from)
@@ -632,8 +744,13 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
    if (!vbgo_tt_on)
       return;
    s_cpu[fb & 1] = 1;
-   Unshare(fb & 1);
+   Unshare(fb & 1, 0);
    slot = s_slot[fb & 1];
+   if (s_lazy[0] | s_lazy[1] | s_lazy[2])
+   {
+      Settle(slot);
+      SettleFrom(slot);
+   }
    for (b = 0; b < bytes; b++)
    {
       const unsigned o = offset + b;
@@ -672,6 +789,7 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view)
    if (fb < 0 || !s_have[fb])
       return false;
    slot = s_slot[fb];
+   Settle(slot);
    for (x = 0; x < VBGO_TT_BLOCKS; x++)
       view->band_key[x] = s_band_pass[slot][x] == s_stamp[slot] ? VBGO_TT_BAND_REACHED : 0;
    view->hashes = s_hash[slot];
