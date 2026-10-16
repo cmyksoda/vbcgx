@@ -663,6 +663,19 @@ uint64_t vbgo_tiletrack_world_cells(uint32_t changed, uint64_t cells)
    return maybe;
 }
 
+uint64_t vbgo_tiletrack_world_cells_were(uint32_t worlds)
+{
+   uint64_t cells = 0;
+   const uint32_t *was;
+   unsigned c;
+   if (!vbgo_tt_on || s_block_slot < 0 || s_block_no >= VBGO_TT_BLOCKS || !s_block_was)
+      return ~0ull;
+   was = s_cell_worlds[s_block_slot][s_block_no];
+   for (c = 0; c < VBGO_TT_CELLS; c++)
+      cells |= (uint64_t)((was[c] & worlds) != 0) << c;
+   return cells;
+}
+
 bool vbgo_tiletrack_pass_reusable(unsigned src_fb)
 {
    src_fb &= 1;

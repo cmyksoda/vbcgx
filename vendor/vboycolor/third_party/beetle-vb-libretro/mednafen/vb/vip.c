@@ -1411,6 +1411,108 @@ static uint64 ObjListsHash(uint32 block_no)
    return GatherBlockSprites(block_no, &scratch);
 }
 
+/* Whether a character can tag a pixel: it has pixels now, or the pass's blank table (fills) doesn't call it blank. */
+static INLINE bool MayTag(uint32 chr)
+{
+   const uint16 *rows = &CHR_RAM[chr * 8];
+   return !vbgo_tt_blank[chr] || (rows[0] | rows[1] | rows[2] | rows[3] | rows[4] | rows[5] | rows[6] | rows[7]);
+}
+
+/* Cells plus the ones background world w could tag in the block being drawn, as DrawBG would walk its map (a
+ * source character at a time), until they're all of them; ~0 for an affine world. */
+static uint64 WorldCellsNow(unsigned w, uint64 cells)
+{
+   const uint16 *world_ptr = &DRAM[(0x1D800 + w * 0x20) >> 1];
+   const uint32 bgm = (world_ptr[0] >> 12) & 3, scy = (world_ptr[0] >> 8) & 3, scx = (world_ptr[0] >> 10) & 3;
+   const bool over = world_ptr[0] & 0x80;
+   const uint16 gx = sign_11_to_s16(world_ptr[1]), gp = ParallaxDisabled ? 0 : sign_9_to_s16(world_ptr[2]);
+   const uint16 gy = sign_11_to_s16(world_ptr[3]), mx = world_ptr[4];
+   const uint16 mp = ParallaxDisabled ? 0 : sign_9_to_s16(world_ptr[5]), my = world_ptr[6];
+   const uint16 window_width = sign_11_to_s16(world_ptr[7]), window_height = world_ptr[8] & 0x3FF;
+   const uint32 param_base = world_ptr[9] & 0xFFF0, bgsc_overplane = DRAM[world_ptr[10]];
+   const uint32 SourceX_Size = 512 << scx, SourceY_Size = 512 << scy;
+   const uint32 SourceX_Mask = over ? 0x1FFF : SourceX_Size - 1, SourceY_Mask = over ? 0x1FFF : SourceY_Size - 1;
+   uint32 walked[16][3]; /* (a line walks the same map entries as one already walked: skipped) */
+   int lr, y, nwalked = 0;
+   if(bgm == BGM_AFFINE)
+      return ~0ull;
+   if(bgm == BGM_OBJ)
+      return cells;
+   for(lr = 0; lr < 2; lr++)
+   {
+      if(!(world_ptr[0] & (0x8000 >> lr)))
+         continue;
+      for(y = 0; y < 8 && cells != (1ull << 48) - 1; y++)
+      {
+         const uint16 RealY = DrawingBlock * 8 + y;
+         uint16 srcX = mx + (lr ? mp : -mp), DestX = gx + (lr ? gp : -gp);
+         const uint16 srcY = my + (RealY - gy);
+         uint32 SourceX, SourceY, BGMap_Base;
+         int32 start_x, final_x, x;
+         if(bgm == 1)
+            srcX += (int16)DRAM[(param_base + (((RealY - gy) * 2) | lr)) & 0xFFFF];
+         if((uint16)(RealY - gy) > window_height)
+            continue;
+         SourceX = (int32)(int16)srcX;
+         SourceY = (int32)(int16)srcY;
+         DestX = sign_10_to_s16(DestX);
+         if(DestX & 0x8000)
+            SourceX -= DestX;
+         start_x = (int16)DestX;
+         final_x = (int16)DestX + window_width;
+         if(start_x < 0)
+            start_x = 0;
+         if(final_x > 383)
+            final_x = 383;
+         SourceY &= SourceY_Mask;
+         BGMap_Base = ((world_ptr[0] & 0xF) << 12) | (((SourceY >> 3) & 0x3F) * 0x40) | (((SourceY << 3) & ~0xFFF) << scx);
+         {
+            const uint32 key[3] = { BGMap_Base | (uint32)(SourceY < SourceY_Size) << 31, SourceX & SourceX_Mask,
+                                    (uint32)start_x | (uint32)(final_x + 1) << 16 };
+            int k;
+            for(k = 0; k < nwalked && memcmp(walked[k], key, sizeof(key)); k++)
+               ;
+            if(k < nwalked)
+               continue;
+            memcpy(walked[nwalked++], key, sizeof(key));
+         }
+         for(x = start_x; x <= final_x;)
+         {
+            uint32 bgsc = bgsc_overplane;
+            int32 step;
+            SourceX &= SourceX_Mask;
+            if(SourceX < SourceX_Size && SourceY < SourceY_Size)
+               bgsc = DRAM[(BGMap_Base | ((SourceX << 3) & ~0xFFF) | ((SourceX >> 3) & 0x3F)) & 0xFFFF];
+            step = 8 - (int32)(SourceX & 7);
+            if(MayTag(bgsc & 0x7FF))
+            {
+               const int32 end = x + step - 1 < final_x ? x + step - 1 : final_x;
+               cells |= (~0ull >> (63 - (end >> 3))) & ~((1ull << (x >> 3)) - 1);
+            }
+            x += step;
+            SourceX += step;
+         }
+      }
+   }
+   return cells;
+}
+
+/* A block whose screen-wide worlds changed: cells plus the ones they tagged before or could tag now, if every one
+ * of them is a background world (~0 if not, or if what they tagged isn't known). */
+static uint64 ChangedWorldCells(uint32 changed, uint64 cells)
+{
+   int w;
+   cells |= vbgo_tiletrack_world_cells_were(changed);
+   for(w = 31; w >= 0 && cells != ~0ull && cells != (1ull << 48) - 1; w--)
+   {
+      if(DRAM[(0x1D800 + w * 0x20) >> 1] & 0x40)
+         break;
+      if(changed >> w & 1)
+         cells = WorldCellsNow(w, cells);
+   }
+   return cells;
+}
+
 static INLINE void CopyFBColumnToTarget_Anaglyph_BASE(const bool DisplayActive_arg, const int lr)
 {
    int y, y_sub;
@@ -1930,7 +2032,24 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   PassAlreadyCopied = false;
                }
                vbgo_tiletrack_begin_block(DrawingBuffers[0], CHR_RAM, DRAM, DrawingBlock, DrawingFB, &JPLT_Cache[0][0]);
-               const int change = BlockChange(block);
+               int change = BlockChange(block);
+               if(change == 3 && block->valid)
+               {
+                  /* (screen-wide worlds redrawn only where they were or can be, as narrow worlds are, when that's under
+                   * a third of the block - each drawing walks every world; after it wasn't, not tried for a while) */
+                  static uint8 Unpredictable[2][28];
+                  uint8 *const skip = &Unpredictable[DrawingFB][DrawingBlock];
+                  if(*skip)
+                     --*skip;
+                  else
+                  {
+                     const uint64 cells = ChangedWorldCells(ChangedWorlds, WorldDirty);
+                     if(cells != ~0ull && __builtin_popcountll(cells & ((1ull << 48) - 1)) <= 15)
+                        WorldDirty = cells, change = 1;
+                     else
+                        *skip = 4;
+                  }
+               }
                if(!change && vbgo_tiletrack_keep_block())
                   block->drawnAt = DrawSerial, block->passAt = PassStartedAt;
                else

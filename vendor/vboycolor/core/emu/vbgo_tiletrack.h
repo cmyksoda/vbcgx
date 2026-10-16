@@ -354,6 +354,8 @@ void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same
  * when only the changed worlds' attributes changed (a changed world shows
  * there, as last drawn or now - elsewhere every tag comes out the same). */
 uint64_t vbgo_tiletrack_world_cells(uint32_t changed, uint64_t cells);
+/* The cells these worlds tagged in the block begun last, as it was drawn (~0: not known). */
+uint64_t vbgo_tiletrack_world_cells_were(uint32_t worlds);
 /* Per cell of the block being drawn, the background worlds that tagged a pixel
  * there (cleared before drawing: more than shows, never less). */
 extern uint32_t vbgo_tt_wcells[48];
