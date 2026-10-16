@@ -179,10 +179,37 @@ void ShadeColorizer::PrepareColumns(const uint32_t *clut)
     static_assert(kColumns == VBGO_TT_WIDTH, "PrepareColumns");
     for (size_t i = 0; i < m_columnColors.size(); ++i)
         m_columnColors[i] = ColorOf(clut[i]);
+    m_uniform = true;
+    for (size_t i = 4; i < m_columnColors.size() && m_uniform; ++i)
+        m_uniform = m_columnColors[i] == m_columnColors[i & 3];
+    if (m_uniform && !std::equal(m_quadOf.begin(), m_quadOf.end(), m_columnColors.begin()))
+    {
+        std::copy(m_columnColors.begin(), m_columnColors.begin() + 4, m_quadOf.begin());
+        for (unsigned b = 0; b < 256; ++b)
+            for (unsigned r = 0; r < 4; ++r)
+                m_quad[b][r] = m_quadOf[b >> (r * 2) & 3];
+    }
 }
 
 void ShadeColorizer::ColorizeCell(const uint8_t *bits, unsigned x, unsigned y, uint8_t *dst, size_t rowBytes) const
 {
+    if (m_uniform && !(y & 3))
+    {
+#if defined(__PPC__) || defined(__powerpc__)
+        for (unsigned row = 0; row < 8; ++row)
+            if (!(reinterpret_cast<uintptr_t>(dst + row * rowBytes) & 31)) // (whole lines about to be written: not read first)
+                __asm__ volatile("dcbz 0,%0" : : "r"(dst + row * rowBytes) : "memory");
+#endif
+        for (unsigned k = 0; k < 8; ++k)
+            for (unsigned half = 0; half < 2; ++half)
+            {
+                const std::array<uint32_t, 4> &four = m_quad[bits[(x + k) * 56 + (y >> 2) + half]];
+                uint8_t *at = dst + half * 4 * rowBytes + k * 4;
+                for (unsigned r = 0; r < 4; ++r)
+                    std::memcpy(at + r * rowBytes, &four[r], 4);
+            }
+        return;
+    }
     for (unsigned row = 0; row < 8; ++row, dst += rowBytes)
     {
         const unsigned at = (y + row) >> 2, shift = ((y + row) & 3) * 2;

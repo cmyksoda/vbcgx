@@ -86,6 +86,10 @@ private:
     uint32_t ColorOf(uint32_t pixel) const;
     static constexpr size_t kColumns = 384; // (VBGO_TT_WIDTH)
     std::array<uint32_t, kColumns * 4> m_columnColors{};
+    // Every column showing the same 4 colors: a byte of bits (4 rows of a column) colored at once.
+    bool m_uniform = false;
+    std::array<uint32_t, 4> m_quadOf{};
+    std::array<std::array<uint32_t, 4>, 256> m_quad{};
     std::array<ShadeRgb, 4> m_palette{};
     // Gradient mode
     bool m_gradient = false;
