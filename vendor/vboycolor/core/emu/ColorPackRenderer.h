@@ -126,13 +126,13 @@ private:
         uint64_t first = kNoKey;
         uint64_t last = kNoKey; // the last one's run key
     };
-    struct Cell // (what an 8x8 cell's runs added, as last painted)
+    struct CellSums // (what a band's 8x8 cells' runs added, as last painted: by field, so a band is read in a few lines)
     {
-        uint32_t worlds = 0; // (as worldsDrawn, with these extents: left << 9 | right << 6 | top << 3 | bottom, in the cell)
-        uint8_t brightest = 0;
-        std::array<uint16_t, 32> extent{};
+        std::array<uint32_t, VBGO_TT_WIDTH / 8> worlds{}; // (as worldsDrawn, with these extents)
+        std::array<uint8_t, VBGO_TT_WIDTH / 8> brightest{};
+        std::array<std::array<uint16_t, VBGO_TT_WIDTH / 8>, 32> extent{}; // [colors][cell]: left << 9 | right << 6 | top << 3 | bottom
     };
-    struct CellMarks // (a Cell's markers, kept apart: the painting loops never read them, so the cells stay small)
+    struct CellMarks // (a cell's markers, kept apart: the painting loops never read them)
     {
         ContextGroupBits markers; // (left eye: the marker pre-pass's grid cell)
         ContextGroupBits nearSprites, closeSprites; // (left eye: sprites' markers around it as its slow runs were painted)
@@ -151,7 +151,7 @@ private:
         bool summed = false;  // (sums is its cells' as they are)
         std::array<uint32_t, VBGO_TT_WIDTH / 8> version{}; // (each cell's, as last painted: kept apart, read every frame)
         BandSums sums;
-        std::array<Cell, VBGO_TT_WIDTH / 8> cells{};
+        CellSums cells;
         std::array<CellMarks, VBGO_TT_WIDTH / 8> marks{};
         std::vector<uint64_t> pairSlots; // cell << 32 | left eye: chr | pairs << 11; right eye: chr | (pair + 1) << 11
     };
