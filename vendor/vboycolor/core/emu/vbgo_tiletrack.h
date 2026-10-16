@@ -10,8 +10,8 @@
  *
  * How it works: while the VIP draws a frame buffer, every drawn pixel gets a
  * 32-bit tag (character slot, pixel inside the tile, palette, layer - see
- * VBGO_TAG_*) and a 16-bit map cell beside it, written straight into buffers laid
- * out like the VB's own column-major frame buffer, double-buffered the same way. A
+ * VBGO_TAG_*) and a 16-bit map cell beside it: tags laid out like the VB's own
+ * column-major frame buffer, cells row by row, double-buffered the same way. A
  * block's tags are cleared before it's drawn, so in a band the pass reached a
  * nonzero tag is one it drew. At the start of each pass the character
  * memory is snapshotted and every tile hashed once, so a tag's tile is known
@@ -44,11 +44,12 @@ extern "C" {
 /* Tags per column in the tag buffer (rows 0-223 used): a band's 8 tags are one aligned 32-byte line, and
  * unlike 256 (a 1 KB stride) the columns spread over the Wii's 128 L1 sets. */
 #define VBGO_TT_COLUMN 264
-/* Cells per column in the cell buffer: per band, eye 0's 8 then eye 1's (one aligned 32-byte line, cleared with
- * the band's tags), 28 bands, padded to 29 lines (odd, so the columns spread over the L1 sets). */
-#define VBGO_TT_CELL_COLUMN 464
-/* Row y of a column's cells, from its eye's first (cells[x] in the view, vbgo_tt_cell_row's row). */
-static inline unsigned vbgo_tt_cell_at(unsigned y) { return y + (y & ~7u); }
+/* Each eye's cells row by row, as the VIP draws them (a 32-byte line is 16 columns of one row, so a row of drawing
+ * touches few lines); rows padded to 25 lines (odd, so the rows spread over the L1 sets). */
+#define VBGO_TT_CELL_COLUMN 1
+#define VBGO_TT_CELL_ROW 400
+/* Row y of a column's cells, from its first (cells[x] in the view, vbgo_tt_cell_row's row). */
+static inline unsigned vbgo_tt_cell_at(unsigned y) { return y * VBGO_TT_CELL_ROW; }
 
 /* ---- Tags (the tracker's own per-pixel format) -------------------------- */
 
@@ -244,7 +245,7 @@ static inline uint16_t *vbgo_tt_cell_row(const void *row_target)
    if (!vbgo_tt_on)
       return (uint16_t *)0;
    i = (const uint8_t *)row_target - vbgo_tt_block_base;
-   return &vbgo_tt_cdst[(i >> 12) & 1][(i >> 9) & 7];
+   return &vbgo_tt_cdst[(i >> 12) & 1][((i >> 9) & 7) * VBGO_TT_CELL_ROW];
 }
 
 /* What's the same for every tag of one drawing call: the world drawing. */

@@ -20,11 +20,12 @@ uint32_t vbgo_tt_clut_serial = 1;
  * always free for a pass of its own. */
 #define VBGO_TT_SLOTS 3
 static uint32_t s_tags[VBGO_TT_SLOTS][2][VBGO_TT_WIDTH * VBGO_TT_COLUMN] __attribute__((aligned(32)));
-/* ... and each tag's cell, both eyes per column (see VBGO_TT_CELL_COLUMN; only read where the tag is drawn). */
-static uint16_t s_cells[VBGO_TT_SLOTS][VBGO_TT_WIDTH * VBGO_TT_CELL_COLUMN] __attribute__((aligned(32)));
+/* ... and each tag's cell, [slot][eye][row * VBGO_TT_CELL_ROW + column]. Only read where the tag is drawn, so they're
+ * cleared only as whole lines (16 columns), to claim the lines the drawing will write. */
+static uint16_t s_cells[VBGO_TT_SLOTS][2][VBGO_TT_HEIGHT * VBGO_TT_CELL_ROW] __attribute__((aligned(32)));
 
-/* One column of a band's tags (8) or cells (8 per eye): one whole cache line. dcbz skips reading what's about
- * to be cleared. */
+/* One column of a band's tags (8), or a row of 16 columns' cells: one whole cache line. dcbz skips reading what's
+ * about to be cleared. */
 static inline void ClearLine(void *line)
 {
 #ifdef GEKKO
@@ -202,25 +203,22 @@ static void CopyBlock(int k, unsigned b)
       const int copy = (int)(tagged >> c & 1);
       if (!copy && !(stale >> c & 1))
          continue;
-      for (x = c * 8; x < c * 8 + 8; x++)
+      for (e = 0; e < 2; e++)
       {
-         uint16_t *to_cells = &s_cells[k][x * VBGO_TT_CELL_COLUMN + b * 16];
-         const uint16_t *src_cells = &s_cells[from][x * VBGO_TT_CELL_COLUMN + b * 16];
-         ClearLine(to_cells);
-         for (e = 0; e < 2; e++)
+         for (x = c * 8; x < c * 8 + 8; x++)
          {
             uint32_t *to = &s_tags[k][e][x * VBGO_TT_COLUMN + b * 8];
             const uint32_t *src = &s_tags[from][e][x * VBGO_TT_COLUMN + b * 8];
             ClearLine(to);
             if (copy)
             {
-               uint32_t cells[4];
                to[0] = src[0], to[1] = src[1], to[2] = src[2], to[3] = src[3];
                to[4] = src[4], to[5] = src[5], to[6] = src[6], to[7] = src[7];
-               memcpy(cells, src_cells + e * 8, sizeof(cells));
-               memcpy(to_cells + e * 8, cells, sizeof(cells));
             }
          }
+         for (x = 0; copy && x < 8; x++)
+            memcpy(&s_cells[k][e][(b * 8 + x) * VBGO_TT_CELL_ROW + c * 8],
+                   &s_cells[from][e][(b * 8 + x) * VBGO_TT_CELL_ROW + c * 8], 8 * sizeof(uint16_t));
       }
    }
    s_lazy[k] &= ~(1u << b);
@@ -451,8 +449,8 @@ void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *
    vbgo_tt_blank = s_blank[s_slot[fb]];
    vbgo_tt_dst[0] = &s_tags[s_slot[fb]][0][block_no * 8];
    vbgo_tt_dst[1] = &s_tags[s_slot[fb]][1][block_no * 8];
-   vbgo_tt_cdst[0] = &s_cells[s_slot[fb]][block_no * 16];
-   vbgo_tt_cdst[1] = &s_cells[s_slot[fb]][block_no * 16 + 8];
+   vbgo_tt_cdst[0] = &s_cells[s_slot[fb]][0][block_no * 8 * VBGO_TT_CELL_ROW];
+   vbgo_tt_cdst[1] = &s_cells[s_slot[fb]][1][block_no * 8 * VBGO_TT_CELL_ROW];
    vbgo_tt_world = 0;
    s_block_slot = s_slot[fb];
    s_block_no = block_no;
@@ -470,16 +468,22 @@ void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *
 static void ClearCells(uint64_t cells)
 {
    unsigned e, x;
+   /* (cell lines span two 8x8 cells: claimed where both are cleared) */
+   uint64_t pairs = cells & (cells >> 1) & 0x5555555555555555ull;
    memset(vbgo_tt_ocells, 0, sizeof(vbgo_tt_ocells));
    for (; cells; cells &= cells - 1)
    {
       const unsigned c = (unsigned)__builtin_ctzll(cells);
       for (x = c * 8; x < c * 8 + 8; x++)
-      {
          for (e = 0; e < 2; e++)
             ClearLine(vbgo_tt_dst[e] + x * VBGO_TT_COLUMN);
-         ClearLine(vbgo_tt_cdst[0] + x * VBGO_TT_CELL_COLUMN);
-      }
+   }
+   for (; pairs; pairs &= pairs - 1)
+   {
+      const unsigned c = (unsigned)__builtin_ctzll(pairs);
+      for (e = 0; e < 2; e++)
+         for (x = 0; x < 8; x++)
+            ClearLine(vbgo_tt_cdst[e] + x * VBGO_TT_CELL_ROW + c * 8);
    }
 }
 
@@ -517,7 +521,7 @@ void vbgo_tiletrack_block_drawing(bool compare)
    unsigned e, x, c;
    uint64_t tagged;
    const uint32_t *old_tags[2];
-   const uint16_t *old_cells;
+   const uint16_t *old_cells[2];
    int lazy;
    s_old_valid = 0;
    if (!vbgo_tt_on || s_block_slot < 0 || s_block_no >= VBGO_TT_BLOCKS)
@@ -528,7 +532,8 @@ void vbgo_tiletrack_block_drawing(bool compare)
    lazy = (int)(s_lazy[s_block_slot] >> s_block_no & 1);
    old_tags[0] = lazy ? &s_tags[s_lazy_from[s_block_slot]][0][s_block_no * 8] : vbgo_tt_dst[0];
    old_tags[1] = lazy ? &s_tags[s_lazy_from[s_block_slot]][1][s_block_no * 8] : vbgo_tt_dst[1];
-   old_cells = lazy ? &s_cells[s_lazy_from[s_block_slot]][s_block_no * 16] : vbgo_tt_cdst[0];
+   old_cells[0] = lazy ? &s_cells[s_lazy_from[s_block_slot]][0][s_block_no * 8 * VBGO_TT_CELL_ROW] : vbgo_tt_cdst[0];
+   old_cells[1] = lazy ? &s_cells[s_lazy_from[s_block_slot]][1][s_block_no * 8 * VBGO_TT_CELL_ROW] : vbgo_tt_cdst[1];
    for (e = 0; s_old_valid && e < 2; e++)
       for (c = 0; c < VBGO_TT_CELLS; c++)
       {
@@ -544,11 +549,11 @@ void vbgo_tiletrack_block_drawing(bool compare)
          {
             /* (spelled out: on the Wii a memcpy call per column costs more than the copy itself) */
             const uint32_t *from = old_tags[e] + x * VBGO_TT_COLUMN;
-            uint32_t cells[4];
+            unsigned y;
             to[0] = from[0], to[1] = from[1], to[2] = from[2], to[3] = from[3];
             to[4] = from[4], to[5] = from[5], to[6] = from[6], to[7] = from[7];
-            memcpy(cells, old_cells + e * 8 + x * VBGO_TT_CELL_COLUMN, sizeof(cells));
-            memcpy(&s_old_cells[e][x * 8], cells, sizeof(cells));
+            for (y = 0; y < 8; y++)
+               s_old_cells[e][x * 8 + y] = old_cells[e][y * VBGO_TT_CELL_ROW + x];
          }
       }
    ClearCells(lazy ? s_stale[s_block_slot][s_block_no] : tagged);
@@ -565,7 +570,7 @@ static int SameCell(unsigned c)
       for (x = c * 8; x < c * 8 + 8; x++)
       {
          const uint32_t *was = &s_old_tags[e][x * 8], *is = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
-         const uint16_t *was_cell = &s_old_cells[e][x * 8], *is_cell = vbgo_tt_cdst[e] + x * VBGO_TT_CELL_COLUMN;
+         const uint16_t *was_cell = &s_old_cells[e][x * 8], *is_cell = vbgo_tt_cdst[e] + x;
          /* (the column's 8 tags at once: most cells that differ differ there) */
          if ((was[0] ^ is[0]) | (was[1] ^ is[1]) | (was[2] ^ is[2]) | (was[3] ^ is[3]) | (was[4] ^ is[4]) |
              (was[5] ^ is[5]) | (was[6] ^ is[6]) | (was[7] ^ is[7]))
@@ -575,9 +580,9 @@ static int SameCell(unsigned c)
             uint64_t t;
             if (!is[y])
                continue;
-            if (was_cell[y] != is_cell[y])
+            if (was_cell[y] != is_cell[y * VBGO_TT_CELL_ROW])
                return 0;
-            t = vbgo_tag_compose(is[y], is_cell[y]);
+            t = vbgo_tag_compose(is[y], is_cell[y * VBGO_TT_CELL_ROW]);
             if (s_block_chr_changed && (s_chr_changed[VBGO_TAG_CHAR(t) >> 5] >> (VBGO_TAG_CHAR(t) & 31) & 1))
                return 0;
             if (VBGO_TAG_IS_OBJ(t) && (s_obj_changed[VBGO_TAG_OBJ_NO(t) >> 5] >> (VBGO_TAG_OBJ_NO(t) & 31) & 1))
@@ -718,8 +723,10 @@ void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
       const unsigned rows = (block_no < VBGO_TT_BLOCKS ? block_no : VBGO_TT_BLOCKS) * 8;
       for (e = 0; e < 2; e++)
          memcpy(&s_tags[to][e][x * VBGO_TT_COLUMN], &s_tags[from][e][x * VBGO_TT_COLUMN], rows * sizeof(uint32_t));
-      memcpy(&s_cells[to][x * VBGO_TT_CELL_COLUMN], &s_cells[from][x * VBGO_TT_CELL_COLUMN], 2 * rows * sizeof(uint16_t));
    }
+   for (e = 0; to != from && e < 2; e++)
+      memcpy(s_cells[to][e], s_cells[from][e],
+             (block_no < VBGO_TT_BLOCKS ? block_no : VBGO_TT_BLOCKS) * 8 * VBGO_TT_CELL_ROW * sizeof(uint16_t));
    s_have[fb] = 1;
    s_cpu[fb] = 0;
    s_pass_open = 1;
@@ -810,7 +817,7 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view)
       const uint8_t d = s_disp[eye & 1][x];
       const int shown = (d & 4) && (d & 1) == (unsigned)fb;
       view->columns[x] = shown ? &s_tags[slot][(d >> 1) & 1][x * VBGO_TT_COLUMN] : NULL;
-      view->cells[x] = shown ? &s_cells[slot][x * VBGO_TT_CELL_COLUMN + ((d >> 1) & 1) * 8] : NULL;
+      view->cells[x] = shown ? &s_cells[slot][(d >> 1) & 1][x] : NULL;
       if (!view->columns[x] || ((d >> 1) & 1) != (eye & 1) || s_disp_clut[eye & 1][x] != view->clut)
          view->clut = 0;
    }
