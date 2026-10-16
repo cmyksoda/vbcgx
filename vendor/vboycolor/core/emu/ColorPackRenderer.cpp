@@ -677,11 +677,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     // The bands kept from each eye's buffer as it was last painted (see m_bands).
     const int buffer = have[0] ? (view[0].fb & 1) : 0, rightBuffer = have[1] ? (view[1].fb & 1) : 0;
     std::array<Band, kBands> &bands = m_bands[0][buffer];
-    std::vector<BandColumn> &bandColumns = m_bandColumns[0][buffer];
-    bandColumns.resize(static_cast<size_t>(kBands) * VBGO_TT_WIDTH);
+    auto &bandColumns = m_bandColumns[0][buffer];
     std::array<Band, kBands> &rightBands = m_bands[1][rightBuffer];
-    std::vector<BandColumn> &rightColumns = m_bandColumns[1][rightBuffer];
-    rightColumns.resize(static_cast<size_t>(kBands) * VBGO_TT_WIDTH);
+    auto &rightColumns = m_bandColumns[1][rightBuffer];
     {
         PaintState state;
         state.pack = pack;
