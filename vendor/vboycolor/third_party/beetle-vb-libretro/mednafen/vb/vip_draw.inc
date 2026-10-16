@@ -380,7 +380,7 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, in
    pixels = pixels_save;
    x = sign_x_to_s32(10, (jx + (lr ? jp : -jp))); /* It may actually be 9, TODO? */
 
-   if(x >= -7 && x < 384)	/* Make sure we always keep the pitch of our 384x8 buffer large enough(with padding before and after the visible space) */
+   if(x >= -7 && x < 384 && x + 7 >= ClipX0 && x <= ClipX1)	/* Make sure we always keep the pitch of our 384x8 buffer large enough(with padding before and after the visible space) */
    {
     uint8 *target = &fb[lr][x];
 
