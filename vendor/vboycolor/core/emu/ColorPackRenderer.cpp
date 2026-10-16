@@ -1124,11 +1124,16 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                                             [kept](uint64_t slot) { return !(kept >> (slot >> 32) & 1); }),
                              band.pairSlots.end());
     };
+    // (without Auto colors, contexts or pairs, nothing the right eye's runs add reaches a picture: only the layers'
+    // extents, which then go by the left eye alone)
+    const bool rightNeeded = m_auto || haveContexts || pairs || !m_pack;
     for (unsigned eye = 0; eye < 2; ++eye)
     {
         if (!have[eye])
             continue;
         const vbgo_tt_eye_view &v = view[eye];
+        if (eye && !rightNeeded)
+            continue;
         const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
         const uint32_t *const eyeClut = vbgo_vip_eye_clut(static_cast<int>(eye));
         setUp.flatObjPalettes = v.flat_obj_palettes;
