@@ -447,8 +447,8 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
   {
    uint16 *obj_list = obj_lists[obj_lists_used++];
    const int obj_count = GatherOBJ(obj_list, block_no * 8);
-   *UsedObjs = HashObjList(*UsedObjs, world, obj_list, obj_count);
-   NoteSprites(world, obj_list, obj_count);
+   *UsedObjs = HashObjList(*UsedObjs, world | (world_ptr[0] >> 9 & 0x60), obj_list, obj_count);
+   NoteSprites(world | (world_ptr[0] >> 9 & 0x60), obj_list, obj_count); /* (with its eyes) */
    counts[drawn_count] = obj_count;
    if(obj_search_which)
     obj_search_which--;

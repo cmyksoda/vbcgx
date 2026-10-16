@@ -416,7 +416,7 @@ static bool SpritesChanged; /* (BlockChange: and its sprites, or their character
 typedef struct
 {
    uint16 oam, chr;
-   uint8 world;
+   uint8 world;    /* (and its eyes, in bits 5 and 6) */
    int16 x[2]; /* each eye's */
 } SpriteDrawn;
 
@@ -465,7 +465,7 @@ static uint64 UnusedObjs, *UsedObjs = &UnusedObjs;
 static uint64 HashObjList(uint64 h, int world, const uint16 *list, int count)
 {
    int i;
-   h = (h ^ (uint64)(world | count << 5)) * 1099511628211ull;
+   h = (h ^ (uint64)(world | count << 7)) * 1099511628211ull;
    for(i = 0; i < count; i++)
       h = (h ^ list[i]) * 1099511628211ull;
    return h;
@@ -633,19 +633,27 @@ static void DramChanging(uint32 a, uint16 v)
    if(h >= (0x1D800 >> 1) && h < (0x1DC00 >> 1))
    {
       /* (a world's: its window's blocks, old and new - unless it changes which
-       * worlds draw, or what a sprite world shows) */
+       * worlds draw) */
       uint16 *attr = &DRAM[h & ~15u];
       const uint16 control = attr[0];
       const bool objWorld = ((control >> 12) & 3) == 3;
-      if(objWorld || ((h & 15) == 0 && ((control ^ v) & 0x3040)))
+      const bool toObj = (h & 15) == 0 && ((v >> 12) & 3) == 3;
+      const unsigned world = (h - (0x1D800 >> 1)) >> 4;
+      if((h & 15) == 0 && ((control ^ v) & 0x40))
+         GlobalChangedAt = at;
+      else if(objWorld || toObj)
       {
-         if((h & 15) == 0 && ((control ^ v) & 0xF040))
-            GlobalChangedAt = at;
+         /* (sprites in or out, or their eyes: every block's sprite lists, and its window as a background) */
+         if((h & 15) == 0 && ((control ^ v) & 0xF000))
+         {
+            SptChangedAt = at;
+            if(!objWorld || !toObj)
+               WorldRowsChanged(attr, at, world);
+         }
       }
       else
       {
          const uint16 was = attr[h & 15];
-         const unsigned world = (h - (0x1D800 >> 1)) >> 4;
          WorldRowsChanged(attr, at, world);
          attr[h & 15] = v;
          WorldRowsChanged(attr, at, world);
@@ -1387,8 +1395,8 @@ static uint64 GatherBlockSprites(uint32 block_no, BlockInputs *into)
       if(((control >> 12) & 3) == BGM_OBJ)
       {
          const int count = GatherOBJ(list, block_no * 8);
-         h = HashObjList(h, world, list, count);
-         NoteSprites(world, list, count);
+         h = HashObjList(h, world | (control >> 9 & 0x60), list, count);
+         NoteSprites(world | (control >> 9 & 0x60), list, count);
          if(obj_search_which)
             obj_search_which--;
       }
