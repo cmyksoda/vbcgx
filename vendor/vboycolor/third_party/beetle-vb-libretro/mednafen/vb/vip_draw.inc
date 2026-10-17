@@ -9,6 +9,35 @@
 #define USE_ROW(h) (UsedRows[((h) & 0xFFFF) >> 11] |= 1u << ((((h) & 0xFFFF) >> 6) & 31))
 
 
+
+/* A map cell with nothing to draw (every pixel transparent, no fills) is stepped over to where the line leaves it: most
+ * of a rotated map's pixels are in such cells. Steps under 1024 only (a cell crossed in a pixel or two isn't worth it). */
+#define BLANK_RUN_LEN(k) \
+ { \
+  const uint32 blank_px = SourceX & 0xFFF, blank_py = SourceY & 0xFFF; \
+  uint32 blank_kk = (uint32)(final_x - x), q; \
+  if(dx > 0) { q = (uint32)(((uint64)(4095 - blank_px) * blank_rdx) >> 32); if(q < blank_kk) blank_kk = q; } \
+  else if(dx < 0) { q = (uint32)(((uint64)blank_px * blank_rdx) >> 32); if(q < blank_kk) blank_kk = q; } \
+  if(dy > 0) { q = (uint32)(((uint64)(4095 - blank_py) * blank_rdy) >> 32); if(q < blank_kk) blank_kk = q; } \
+  else if(dy < 0) { q = (uint32)(((uint64)blank_py * blank_rdy) >> 32); if(q < blank_kk) blank_kk = q; } \
+  (k) = (int32)blank_kk; \
+ }
+#define SKIP_BLANK_ROTATED \
+   if(!vbgo_fills && (dx > -1024 && dx < 1024 && dy > -1024 && dy < 1024)) \
+   { \
+    uint32 blank_w[4]; \
+    memcpy(blank_w, &CHR16[char_no * 8], 16); \
+    if(!(blank_w[0] | blank_w[1] | blank_w[2] | blank_w[3])) \
+    { \
+     int32 blank_k; \
+     BLANK_RUN_LEN(blank_k) \
+     x += blank_k; \
+     SourceX += (uint32)(dx * (blank_k + 1)); \
+     SourceY += (uint32)(dy * (blank_k + 1)); \
+     continue; \
+    } \
+   }
+
 static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, bool overplane, uint16 overplane_char, uint32 SourceX, uint32 SourceY, uint32 scx, uint32 scy, uint16 DestX, uint16 DestY, uint16 DestWidth, uint16 DestHeight)
 {
  int x;
@@ -214,6 +243,8 @@ static void DrawAffine(uint8 *target, uint16 RealY, bool lr, uint32 ParamBase, u
 
  USE_ROW(OverplaneChar);
 
+ /* (steps to a cell's edge: 4095 / |step|, as a 32-bit fraction - never over, so at most one pixel short) */
+ const uint32 blank_rdx = dx ? 0xFFFFFFFFu / (uint32)(dx < 0 ? -dx : dx) : 0, blank_rdy = dy ? 0xFFFFFFFFu / (uint32)(dy < 0 ? -dy : dy) : 0;
 if(dy == 0)	/* Optimization for no rotation. */
 {
  int x;
@@ -299,6 +330,7 @@ else
     USE_BG_CHR(char_no);
     used_chr = char_no;
    }
+   SKIP_BLANK_ROTATED
   }
 
   char_sub_y = vflip_xor ^ ((SourceY >> 9) & 0x7);
