@@ -18,7 +18,7 @@
 #include <gccore.h>
 
 #define APPNAME			"VBoy Color GX"
-#define APPVERSION		"0.2.86-dev"
+#define APPVERSION		"0.2.87-dev"
 #define APPFOLDER 		"vbcgx"
 #define PREF_FILE_NAME	"settings.xml"
 
