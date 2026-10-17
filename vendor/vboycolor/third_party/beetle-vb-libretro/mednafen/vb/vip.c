@@ -427,6 +427,7 @@ typedef struct
    uint32 passAt;  /* ... and as that pass started (the tile tracker's blank tiles are the pass's) */
    uint32 chr[2048 / 32], rows[1024 / 32];
    uint32 bgChr[2048 / 32]; /* (the characters background drawing used) */
+   uint16 worlds[32 * 16]; /* (the world attributes as it was drawn) */
    uint64 objs;    /* its sprite lists, hashed (see ObjListsHash) */
    int sprites;    /* the sprites its lists hold (more than MAX_BLOCK_SPRITES: -1) */
    SpriteDrawn sprite[MAX_BLOCK_SPRITES];
@@ -678,10 +679,27 @@ static void DramChanging(uint32 a, uint16 v)
 static int BlockChange(const BlockInputs *block)
 {
    int i, change = 0, wholeWorld;
+   bool worldsSame = false;
    WorldDirty = 0;
    if(!block->valid || GlobalChangedAt > block->drawnAt)
       return 2;
    wholeWorld = WorldChangedAt[DrawingBlock] > block->drawnAt;
+   /* (world attributes written since but back as they were - a game switching worlds off and on between passes: nothing
+    * to redraw, whatever the writes marked; only the worlds whose writes marked this block are compared) */
+   {
+      bool marked = wholeWorld;
+      for(i = 0; i < 48 && !marked; i++)
+         marked = WorldCellChangedAt[DrawingBlock][i] > block->drawnAt;
+      if(marked)
+      {
+         worldsSame = true;
+         for(i = 0; i < 32 && worldsSame; i++)
+            if(WorldBlockChangedAt[i][DrawingBlock] > block->drawnAt)
+               worldsSame = !memcmp(&block->worlds[i * 16], &DRAM[(0x1D800 >> 1) + i * 16], 16 * sizeof(uint16));
+         if(worldsSame)
+            wholeWorld = 0;
+      }
+   }
    for(i = 0; i < 1024 / 32; i++)
    {
       uint32 m;
@@ -707,7 +725,7 @@ static int BlockChange(const BlockInputs *block)
       change = 1;
    if(!change && SptChangedAt > block->drawnAt && ObjListsHash(DrawingBlock) != block->objs)
       change = 1;
-   for(i = 0; i < 48; i++)
+   for(i = 0; i < 48 && !worldsSame; i++)
       WorldDirty |= (uint64)(WorldCellChangedAt[DrawingBlock][i] > block->drawnAt) << i;
    ChangedWorlds = 0;
    if(wholeWorld || WorldDirty)
@@ -2151,6 +2169,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   block->valid = true;
                   block->drawnAt = DrawSerial;
                   block->passAt = PassStartedAt;
+                  memcpy(block->worlds, &DRAM[0x1D800 >> 1], sizeof(block->worlds));
                   UsedChr = UsedRows = UsedBgChr = UnusedInputs;
                   UsedObjs = &UnusedObjs;
                   Drawing = NULL;
