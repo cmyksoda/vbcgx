@@ -802,16 +802,18 @@ uint32 V810::GetSR(const unsigned int which)
    return GetSREG(which);
 }
 
-#define BSTR_OP_MOV dst_cache &= ~(1 << dstoff); dst_cache |= ((src_cache >> srcoff) & 1) << dstoff;
-#define BSTR_OP_NOT dst_cache &= ~(1 << dstoff); dst_cache |= (((src_cache >> srcoff) & 1) ^ 1) << dstoff;
+/* A run of n bits (n <= 32 - srcoff, 32 - dstoff) at once: src_cache's bits from srcoff, as dst_cache's from dstoff. v is
+ * the source bits in place and m their mask; every bit is independent, so this is n of the one-bit steps in a row. */
+#define BSTR_OP_MOV dst_cache = (dst_cache & ~m) | v;
+#define BSTR_OP_NOT dst_cache = (dst_cache & ~m) | (~v & m);
 
-#define BSTR_OP_XOR dst_cache ^=    ((src_cache >> srcoff) & 1)      << dstoff;
-#define BSTR_OP_OR  dst_cache |=    ((src_cache >> srcoff) & 1)      << dstoff;
-#define BSTR_OP_AND dst_cache &= ~((((src_cache >> srcoff) & 1) ^ 1) << dstoff);
+#define BSTR_OP_XOR dst_cache ^= v;
+#define BSTR_OP_OR  dst_cache |= v;
+#define BSTR_OP_AND dst_cache &= ~m | v;
 
-#define BSTR_OP_XORN dst_cache  ^= (((src_cache >> srcoff) & 1) ^ 1) << dstoff;
-#define BSTR_OP_ORN  dst_cache |=  (((src_cache >> srcoff) & 1) ^ 1) << dstoff;
-#define BSTR_OP_ANDN dst_cache &= ~(((src_cache >> srcoff) & 1)      << dstoff);
+#define BSTR_OP_XORN dst_cache ^= ~v & m;
+#define BSTR_OP_ORN  dst_cache |= ~v & m;
+#define BSTR_OP_ANDN dst_cache &= ~v;
 
 INLINE uint32 V810::BSTR_RWORD(v810_timestamp_t &timestamp, uint32 A)
 {
@@ -863,10 +865,20 @@ INLINE void V810::BSTR_WWORD(v810_timestamp_t &timestamp, uint32 A, uint32 V)
                   dst_cache = BSTR_RWORD(timestamp, dst);       \
                  }                                              \
 								\
-		 op;						\
-                 srcoff = (srcoff + 1) & 0x1F;			\
-                 dstoff = (dstoff + 1) & 0x1F;			\
-		 len--;						\
+		 {						\
+		  /* (up to the end of the source's or the destination's word, or the string) */ \
+		  uint32 n = 32 - srcoff;			\
+		  if(32 - dstoff < n)				\
+		   n = 32 - dstoff;				\
+		  if(len < n)					\
+		   n = len;					\
+		  const uint32 m = (n == 32 ? 0xFFFFFFFFu : ((1u << n) - 1)) << dstoff; \
+		  const uint32 v = ((src_cache >> srcoff) << dstoff) & m; \
+		  op;						\
+		  srcoff = (srcoff + n) & 0x1F;			\
+		  dstoff = (dstoff + n) & 0x1F;			\
+		  len -= n;					\
+		 }						\
 								\
 		 if(!srcoff)					\
 		 {                                              \
