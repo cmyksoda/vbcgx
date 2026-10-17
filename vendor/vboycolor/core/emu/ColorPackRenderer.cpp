@@ -128,6 +128,7 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
     m_figureWorlds = 0;
     m_figuresUsed = ~0u;
     m_worldExtent.fill(0);
+    m_lastDrawn = 0;
     SetFadeReference(m_pack ? m_pack->ReferenceLevel() : 63);
     if (!m_pack)
         return;
@@ -1633,10 +1634,13 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     // Figures: layers that stay small (Mario's Tennis draws its players on
     // layers of their own, Teleroboxer its opponent's parts) - the size of
     // the largest the layer was lately (shrinking a pixel a frame).
+    m_lastDrawn = 0;
     for (unsigned w = 0; w < 32; ++w)
         if (right[w] >= 0)
         {
             const int size = std::max(right[w] - left[w], bottom[w] - top[w] + 7) + 1; // (runs: their first rows)
+            m_lastSize[w] = static_cast<int16_t>(size);
+            m_lastDrawn |= 1u << w;
             m_worldExtent[w] = static_cast<int16_t>(std::max(size, m_worldExtent[w] - 1));
             if (m_worldExtent[w] <= kFigureSize)
                 m_figureWorlds |= 1u << w;
@@ -1649,8 +1653,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         SetFadeReference(brightest);
     }
     // (depth colors keep estimates that age, so they never count as settled; pairs' ages are kept by Coast)
+    // (the layers' extents shrinking toward their sizes don't unsettle it: Coast lets them, as another Paint would)
     m_settled = !depth && !reestimated && m_autoWorlds == autoWorldsBefore && m_figureWorlds == figuresBefore &&
-                m_autoMaxLevel == maxLevelBefore && m_worldExtent == extentBefore && MarkersSettled();
+                m_autoMaxLevel == maxLevelBefore && MarkersSettled();
     m_pairsChecked = pairs && have[1];
     m_pairsWanted = 0;
     for (int p = 0; p < m_pairCount; ++p)
@@ -1663,6 +1668,18 @@ bool ColorPackRenderer::Coast()
     // The same frame again after a settled Paint would change nothing but the
     // frame count and the pairs it wants - unless a pair's estimate comes due.
     if (!m_settled)
+        return false;
+    // Another Paint of this picture would only shrink each layer's extent a pixel toward its size (see Paint) - and
+    // stop here if a layer would turn into a figure or back, which recolors it.
+    std::array<int16_t, 32> extent = m_worldExtent;
+    uint32_t figures = m_figureWorlds;
+    for (uint32_t drawn = m_lastDrawn; drawn; drawn &= drawn - 1)
+    {
+        const unsigned w = static_cast<unsigned>(__builtin_ctz(drawn));
+        extent[w] = static_cast<int16_t>(std::max<int>(m_lastSize[w], extent[w] - 1));
+        figures = extent[w] <= kFigureSize ? figures | 1u << w : figures & ~(1u << w);
+    }
+    if (figures != m_figureWorlds)
         return false;
     ++m_frame;
     if (m_pairsChecked)
@@ -1685,6 +1702,7 @@ bool ColorPackRenderer::Coast()
     for (int p = 0; p < m_pairCount; ++p)
         if (m_pairsWanted >> p & 1)
             m_pairs[p].wantedAt = m_frame;
+    m_worldExtent = extent;
     return true;
 }
 

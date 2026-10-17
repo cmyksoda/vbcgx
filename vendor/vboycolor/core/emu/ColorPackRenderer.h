@@ -215,6 +215,8 @@ private:
     static constexpr int kFigureSize = 128;
     uint32_t m_figureWorlds = 0, m_figuresUsed = ~0u;
     std::array<int16_t, 32> m_worldExtent{};
+    std::array<int16_t, 32> m_lastSize{}; // (the last Paint's size of each layer it drew - bit per layer in m_lastDrawn)
+    uint32_t m_lastDrawn = 0;
     void UpdateAutoColors();
 
     // The worlds this frame (see World), and per world: for a layer both
