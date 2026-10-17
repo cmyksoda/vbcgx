@@ -717,6 +717,14 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             m_paintStateWas = state;
             ++m_paintState;
         }
+        // (the right eye's scan paints nothing: the shade colors, the picture's size and the fade don't reach it)
+        state.shade = state.fbWidth = state.eyeOffset = state.fadeReference = 0;
+        std::fill(state.bg, state.bg + 3, 0);
+        if (!(state == m_paintStateRightWas))
+        {
+            m_paintStateRightWas = state;
+            ++m_paintStateRight;
+        }
     }
     std::array<uint64_t, kBands> keep{}, keepRight{}; // (bit per cell)
     uint8_t keptCell[kBands][kGridW] = {}, keptRightCell[kBands][kGridW] = {}; // (the same, a byte each - 64-bit shifts cost PowerPC)
@@ -756,7 +764,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         {
             const Band &band = rightBands[b];
             const bool sameShades = m_pack && band.clut && band.onShades == rightOnShades;
-            if ((band.clut != view[1].clut && !sameShades) || band.state != m_paintState)
+            if ((band.clut != view[1].clut && !sameShades) || band.state != m_paintStateRight)
                 continue;
             for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
             {
@@ -1148,9 +1156,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         }
     };
     // Cells painted again start over (and lose their pair slots).
-    auto startCells = [&](Band &band, uint64_t kept, const uint32_t *versions, uint32_t clut) {
+    auto startCells = [&](Band &band, uint64_t kept, const uint32_t *versions, uint32_t clut, uint32_t paintState) {
         band.clut = clut;
-        band.state = m_paintState;
+        band.state = paintState;
         if (kept != (1ull << kGridW) - 1)
             band.summed = false;
         for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
@@ -1239,7 +1247,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             static const uint32_t kNoVersions[kGridW] = {};
             for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
             {
-                startCells(rightBands[b], keepRight[b], v.cell_version ? &v.cell_version[b * kGridW] : kNoVersions, v.clut);
+                startCells(rightBands[b], keepRight[b], v.cell_version ? &v.cell_version[b * kGridW] : kNoVersions, v.clut, m_paintStateRight);
                 rightBands[b].onShades = static_cast<uint8_t>(rightOnShades);
             }
             CellSums unkept;
@@ -1377,7 +1385,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         // (the bands kept: only what their runs add to the bookkeeping).
         static const uint32_t kNoVersions[kGridW] = {};
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-            startCells(bands[b], keep[b], v.cell_version ? &v.cell_version[b * kGridW] : kNoVersions, v.clut);
+            startCells(bands[b], keep[b], v.cell_version ? &v.cell_version[b * kGridW] : kNoVersions, v.clut, m_paintState);
         // A kept cell's slow columns are painted again only if the markers their context goes by
         // moved (without layer-bound groups, only sprites' count; their marker writes are the pre-pass's).
         uint8_t contextSame[kBands][kGridW] = {};

@@ -171,8 +171,8 @@ private:
         std::array<int8_t, 32> pairOfLeft{}, pairOfRight{}, spritePairOf{};
         bool operator==(const PaintState &o) const;
     };
-    PaintState m_paintStateWas;
-    uint32_t m_paintState = 1;
+    PaintState m_paintStateWas, m_paintStateRightWas;
+    uint32_t m_paintState = 1, m_paintStateRight = 1; // (the right eye's: only what its scan reads)
     unsigned m_fadeReference = 0;
 
     uint8_t m_fadeLut[64][3][256];
