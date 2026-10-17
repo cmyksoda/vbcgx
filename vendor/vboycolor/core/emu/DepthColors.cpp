@@ -620,6 +620,8 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
             blockPixels[b] = sums[1][b] + (by > 0 ? sums[1][b - kBlocksX] : 0) + (by + 1 < kBlocksY ? sums[1][b + kBlocksX] : 0);
         }
     const int32_t *const perMille = kPerMille.data();
+    int16_t cheapest[kBlocks]; // (each block's cheapest so far, for step 4: found as the costs are written)
+    uint8_t cheapestAt[kBlocks];
     for (int di = 0; di < kDisparities; ++di)
     {
         rowSums(di);
@@ -658,6 +660,9 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                 if (last)
                     c = (c * kKeepNow + last[b] * kKeepLast) >> 8;
                 out[b] = static_cast<int16_t>(c);
+                const bool lower = di == 0 || out[b] < cheapest[b];
+                cheapest[b] = lower ? out[b] : cheapest[b];
+                cheapestAt[b] = lower ? static_cast<uint8_t>(di) : cheapestAt[b];
             }
     }
     state.estimated = true;
@@ -668,24 +673,10 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     // more - each pulls the blocks near it a little.
     bool pulled[kDisparities] = {};
     {
-        int16_t low[kBlocks];
-        uint8_t at[kBlocks];
-        for (int b = 0; b < kBlocks; ++b)
-            low[b] = state.cost[b], at[b] = 0;
-        for (int di = 1; di < kDisparities; ++di)
-        {
-            const int16_t *c = &state.cost[static_cast<size_t>(di) * kBlocks];
-            for (int b = 0; b < kBlocks; ++b)
-            {
-                const bool lower = c[b] < low[b];
-                low[b] = lower ? c[b] : low[b];
-                at[b] = lower ? static_cast<uint8_t>(di) : at[b];
-            }
-        }
         int32_t histogram[kDisparities] = {};
         for (int b = 0; b < kBlocks; ++b)
             if (blockPixels[b])
-                histogram[at[b]] += std::min(blockPixels[b], 64);
+                histogram[cheapestAt[b]] += std::min(blockPixels[b], 64);
         for (int p = 0; p < 4; ++p)
         {
             const int i = static_cast<int>(std::max_element(histogram, histogram + kDisparities) - histogram);
@@ -776,15 +767,22 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
             }
         }
     };
-    pass(0, 1, kBlocksX, kBlocksY, kBlocksX, false);                         // left to right
-    pass(kBlocksX - 1, -1, kBlocksX, kBlocksY, kBlocksX, true);              // right to left
-    pass(0, kBlocksX, kBlocksY, kBlocksX, 1, true);                          // top to bottom
-    pass((kBlocksY - 1) * kBlocksX, -kBlocksX, kBlocksY, kBlocksX, 1, true); // bottom to top
-    state.best.resize(kBlocks);
-    for (int b = 0; b < kBlocks; ++b)
+    // (both ways along a row or column while it's still in the cache; each sum gets its four parts in the same order)
+    for (int by = 0; by < kBlocksY; ++by)
     {
-        const int16_t *sum = &m_sum[static_cast<size_t>(b) * kStride];
-        state.best[b] = static_cast<int16_t>(std::min_element(sum, sum + kDisparities) - sum);
+        pass(by * kBlocksX, 1, kBlocksX, 1, kBlocksX, false);                // left to right
+        pass(by * kBlocksX + kBlocksX - 1, -1, kBlocksX, 1, kBlocksX, true); // right to left
+    }
+    state.best.resize(kBlocks);
+    for (int bx = 0; bx < kBlocksX; ++bx)
+    {
+        pass(bx, kBlocksX, kBlocksY, 1, 1, true);                              // top to bottom
+        pass((kBlocksY - 1) * kBlocksX + bx, -kBlocksX, kBlocksY, 1, 1, true); // bottom to top
+        for (int b = bx; b < kBlocks; b += kBlocksX)
+        {
+            const int16_t *sum = &m_sum[static_cast<size_t>(b) * kStride];
+            state.best[b] = static_cast<int16_t>(std::min_element(sum, sum + kDisparities) - sum);
+        }
     }
 
     // 6. Per wanted left pixel: its block's disparity, unless a neighbour
