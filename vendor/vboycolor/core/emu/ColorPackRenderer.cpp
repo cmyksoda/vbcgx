@@ -1719,9 +1719,16 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
         const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
         const uint32_t *const eyeClut = vbgo_vip_eye_clut(static_cast<int>(eye));
         std::vector<uint32_t> &pixels = m_depth.NextLit(eye);
+        uint32_t taggedBands = 0; // (bit per band whose 8x8 cell here may hold tags: elsewhere every tag is 0, never drawn)
         for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
         {
             const uint32_t *column = have[eye] ? view[eye].columns[x] : nullptr;
+            if (have[eye] && !(x & 7))
+            {
+                taggedBands = 0;
+                for (unsigned band = 0; band < VBGO_TT_HEIGHT / 8; ++band)
+                    taggedBands |= static_cast<uint32_t>(view[eye].tagged[band] >> (x >> 3) & 1) << band;
+            }
             const EyeColumn eyeColumn(eyeBits, eyeClut, x);
             unsigned lit = 0; // (the pixel values this column shows in a shade that's on)
             for (unsigned v = 0; v < 4; ++v)
@@ -1738,7 +1745,8 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
                 const unsigned shade = (rawPixel >> 24) & 3;
                 if (!shade || !(rawPixel & 0xFFFFFFu))
                     continue;
-                if (column && vbgo_tag_drawn(column[y], view[eye].band_key[y >> 3]) && VBGO_TAG_PIXEL(column[y]))
+                if (column && (taggedBands >> (y >> 3) & 1) && vbgo_tag_drawn(column[y], view[eye].band_key[y >> 3]) &&
+                    VBGO_TAG_PIXEL(column[y]))
                 {
                     pixels.push_back(DepthColors::Lit(x, y, shade, false)); // a tile drew it
                     continue;
