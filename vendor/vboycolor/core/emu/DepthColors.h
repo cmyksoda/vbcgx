@@ -83,7 +83,7 @@ private:
 
     struct State
     {
-        std::vector<int16_t> cost;   // per disparity and block, as last smoothed from - for the next frame
+        std::vector<int16_t> cost;   // per block and disparity (kStride apart), as last smoothed from - for the next frame
         std::vector<int16_t> best;   // per block: its disparity (an index into the disparities)
         std::array<int, 4> planes{}; // the frame's main disparities (indices; -1 none)
         bool estimated = false;
@@ -104,8 +104,8 @@ private:
     bool m_haveLast = false;
 
     // Scratch (kept to avoid reallocating every frame).
-    std::vector<uint8_t> m_matches, m_inside;             // per disparity, block: matching / countable pixels
-    std::vector<int16_t> m_cost, m_sum; // the costs per block and disparity (state.cost turned around); smoothed
+    std::vector<uint8_t> m_matches, m_inside;             // the last 3 rows of blocks, per disparity: matching / countable pixels
+    std::vector<int16_t> m_sum;          // the smoothed costs per block and disparity
     static constexpr int kCandidates = 13;  // (a block's own disparity, its 8 neighbours', 4 main depths)
     std::vector<uint8_t> m_candidates, m_candidateCount; // per block: Estimate's candidate disparities
     std::vector<int32_t> m_blockPixels;                   // per block: pixels in the 3x3 blocks around it

@@ -508,12 +508,13 @@ void DepthColors::SmoothPass(const int16_t *cost, int16_t *sumAll, int first, in
 void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const want[2])
 {
     State &state = m_state;
+    auto counts = [](std::vector<uint8_t> &v, int by, int di) {
+        return &v[(static_cast<size_t>(by % 3) * kDisparities + di) * kBlocksX];
+    };
 
     // 1. Per disparity and block: how many of the left picture's pixels
     // the right one shows in the same shade (matches), and how many have
     // their spot on screen at all (inside).
-    m_matches.assign(static_cast<size_t>(kDisparities) * kBlocks, 0);
-    m_inside.assign(static_cast<size_t>(kDisparities) * kBlocks, 0);
     // (inside: all but the left edge's word for d < 0, the right edge's for d > 0; by 32-bit halves throughout, as
     // the Wii's CPU works 64-bit words in pairs of instructions)
     uint32_t edgeMask[kDisparities][2];
@@ -523,6 +524,104 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
         const uint64_t mask = d < 0 ? ~0ull << -d : d > 0 ? ~0ull >> d : ~0ull;
         edgeMask[di][0] = static_cast<uint32_t>(mask), edgeMask[di][1] = static_cast<uint32_t>(mask >> 32);
     }
+    // 2. Costs per block and disparity: how badly the two pictures line up
+    // in the 3x3 blocks around it and in the 11-block strip through it (as
+    // far as their pixels have their spot on screen - the rest counts
+    // kNeutral). Worked out a row of blocks at a time, as soon as the row
+    // below it is matched, straight into the smoothing's block-major order.
+    static const std::vector<int32_t> kPerMille = [] { // 1000 * 65536 / n: n-ths without dividing
+        std::vector<int32_t> t(1024, 0);
+        for (int i = 1; i < 1024; ++i)
+            t[i] = 1000 * 65536 / i;
+        return t;
+    }();
+    constexpr size_t kVolume = static_cast<size_t>(kBlocks) * kStride;
+    static_assert(kStride == kDisparities + 1 && kStride % 2 == 0, "(the smoothing's pairs)");
+    const bool hadLast = state.estimated && state.cost.size() == kVolume;
+    if (!hadLast)
+        state.cost.assign(kVolume, 0); // (each block's last entry stays 0: the smoothing reads disparities in pairs)
+    m_blockPixels.assign(kBlocks, 0);
+    int32_t *blockPixels = m_blockPixels.data();
+    const int32_t *const perMille = kPerMille.data();
+    int16_t cheapest[kBlocks]; // (each block's cheapest so far, for step 4: found as the costs are written)
+    uint8_t cheapestAt[kBlocks];
+    // (the 3-wide sums along a row of the three rows' counts added up - the 3x3 blocks - and the 11-wide ones of its own)
+    auto rowSums = [&](int by, int di, int16_t sums[4][kBlocksX]) {
+        constexpr int kPadded = kBlocksX + 2 * kWideBlocks;
+        const uint8_t *M = counts(m_matches, by, di), *N = counts(m_inside, by, di);
+        const uint8_t *Mu = by > 0 ? counts(m_matches, by - 1, di) : nullptr, *Nu = by > 0 ? counts(m_inside, by - 1, di) : nullptr;
+        const uint8_t *Md = by + 1 < kBlocksY ? counts(m_matches, by + 1, di) : nullptr;
+        const uint8_t *Nd = by + 1 < kBlocksY ? counts(m_inside, by + 1, di) : nullptr;
+        int16_t pm[kPadded + 1], pn[kPadded + 1], qm[kBlocksX + 3], qn[kBlocksX + 3];
+        for (int i = 0; i <= kWideBlocks; ++i)
+            pm[i] = pn[i] = 0;
+        qm[0] = qm[1] = qn[0] = qn[1] = 0;
+        for (int bx = 0; bx < kBlocksX; ++bx)
+        {
+            pm[kWideBlocks + bx + 1] = static_cast<int16_t>(pm[kWideBlocks + bx] + M[bx]);
+            pn[kWideBlocks + bx + 1] = static_cast<int16_t>(pn[kWideBlocks + bx] + N[bx]);
+            const int m3 = M[bx] + (Mu ? Mu[bx] : 0) + (Md ? Md[bx] : 0), n3 = N[bx] + (Nu ? Nu[bx] : 0) + (Nd ? Nd[bx] : 0);
+            qm[bx + 2] = static_cast<int16_t>(qm[bx + 1] + m3);
+            qn[bx + 2] = static_cast<int16_t>(qn[bx + 1] + n3);
+        }
+        for (int i = kWideBlocks + kBlocksX + 1; i <= kPadded; ++i)
+            pm[i] = pm[i - 1], pn[i] = pn[i - 1];
+        qm[kBlocksX + 2] = qm[kBlocksX + 1], qn[kBlocksX + 2] = qn[kBlocksX + 1];
+        for (int bx = 0; bx < kBlocksX; ++bx)
+        {
+            sums[0][bx] = static_cast<int16_t>(qm[bx + 3] - qm[bx]);
+            sums[1][bx] = static_cast<int16_t>(qn[bx + 3] - qn[bx]);
+            sums[2][bx] = static_cast<int16_t>(pm[bx + 2 * kWideBlocks + 1] - pm[bx]);
+            sums[3][bx] = static_cast<int16_t>(pn[bx + 2 * kWideBlocks + 1] - pn[bx]);
+        }
+    };
+    auto costRow = [&](int by) {
+        int16_t sums[4][kBlocksX];
+        // (what each block's 3x3 window holds at all: everything has its spot on screen at disparity 0)
+        rowSums(by, kMaxDisparity, sums);
+        for (int bx = 0; bx < kBlocksX; ++bx)
+            blockPixels[by * kBlocksX + bx] = sums[1][bx];
+        for (int di = 0; di < kDisparities; ++di)
+        {
+            rowSums(by, di, sums);
+            for (int bx = 0; bx < kBlocksX; ++bx)
+            {
+                const int b = by * kBlocksX + bx;
+                int c = 0;
+                if (blockPixels[b])
+                {
+                    const int32_t m = sums[0][bx], in = sums[1][bx];
+                    // (a window full enough counts fully: w * x >> 5 is x itself then)
+                    const int w = std::min<int>(in, kSmallFull);
+                    const int small = in >= kSmallFull ? 1000 - ((m * perMille[in]) >> 16)
+                                      : in            ? (w * (1000 - ((m * perMille[in]) >> 16)) + (kSmallFull - w) * kNeutral) >> 5
+                                                      : kNeutral;
+                    const int32_t wm = sums[2][bx], wn = sums[3][bx];
+                    const int ww = std::min<int>(wn, kWideFull);
+                    const int wide = wn >= kWideFull ? 1000 - ((wm * perMille[wn]) >> 16)
+                                     : wn            ? (ww * (1000 - ((wm * perMille[wn]) >> 16)) + (kWideFull - ww) * kNeutral) >> 6
+                                                     : kNeutral;
+                    c = (small + wide) >> 1;
+                }
+                // (and a little for every pixel away from the screen's plane: where several
+                // shifts line up as well - a dithered field, a repeating pattern - the
+                // smallest wins, not the first tried)
+                c += kPrior * std::abs(di - kMaxDisparity);
+                // 3. ... and partly the last frame's (things move a little at a time).
+                int16_t &out = state.cost[static_cast<size_t>(b) * kStride + di];
+                if (hadLast)
+                    c = (c * kKeepNow + out * kKeepLast) >> 8;
+                out = static_cast<int16_t>(c);
+                const bool lower = di == 0 || out < cheapest[b];
+                cheapest[b] = lower ? out : cheapest[b];
+                cheapestAt[b] = lower ? static_cast<uint8_t>(di) : cheapestAt[b];
+            }
+        }
+    };
+
+    // (the counts of the last three rows of blocks: a row's costs need the rows above and below it)
+    m_matches.resize(static_cast<size_t>(3) * kDisparities * kBlocksX);
+    m_inside.resize(static_cast<size_t>(3) * kDisparities * kBlocksX);
     for (int by = 0; by < kBlocksY; ++by)
     {
         uint32_t acc[kDisparities][2 * kRowWords] = {};
@@ -565,8 +664,7 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
         for (int di = 0; di < kDisparities; ++di)
         {
             const int d = di - kMaxDisparity;
-            uint8_t *m = &m_matches[static_cast<size_t>(di) * kBlocks + by * kBlocksX];
-            uint8_t *in = &m_inside[static_cast<size_t>(di) * kBlocks + by * kBlocksX];
+            uint8_t *m = counts(m_matches, by, di), *in = counts(m_inside, by, di);
             for (int k = 0; k < kRowWords; ++k)
                 for (int h = 0; h < 2; ++h)
                 {
@@ -578,106 +676,11 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                     }
                 }
         }
+        if (by > 0)
+            costRow(by - 1);
     }
+    costRow(kBlocksY - 1);
 
-    // 2. Costs per block and disparity: how badly the two pictures line up
-    // in the 3x3 blocks around it and in the 11-block strip through it (as
-    // far as their pixels have their spot on screen - the rest counts
-    // kNeutral). Worked out a disparity at a time (disparity-major), then
-    // turned block-major for the smoothing.
-    static const std::vector<int32_t> kPerMille = [] { // 1000 * 65536 / n: n-ths without dividing
-        std::vector<int32_t> t(1024, 0);
-        for (int i = 1; i < 1024; ++i)
-            t[i] = 1000 * 65536 / i;
-        return t;
-    }();
-    constexpr size_t kVolume = static_cast<size_t>(kBlocks) * kDisparities;
-    static_assert(kStride == kDisparities + 1 && kStride % 2 == 0, "(the smoothing's pairs)");
-    const bool hadLast = state.estimated && state.cost.size() == kVolume;
-    state.cost.resize(kVolume); // (worked out in place: each block's cost blends with its own last one)
-    m_blockPixels.assign(kBlocks, 0);
-    int32_t *blockPixels = m_blockPixels.data();
-    int16_t sums[4][kBlocks]; // the 3-wide and 11-wide sums of matches and countable pixels, along the rows of blocks
-    auto rowSums = [&](int di) {
-        // (running sums over the row padded with kWideBlocks empty blocks either side)
-        constexpr int kPadded = kBlocksX + 2 * kWideBlocks;
-        const uint8_t *M = &m_matches[static_cast<size_t>(di) * kBlocks], *N = &m_inside[static_cast<size_t>(di) * kBlocks];
-        for (int by = 0; by < kBlocksY; ++by)
-        {
-            int16_t pm[kPadded + 1], pn[kPadded + 1];
-            for (int i = 0; i <= kWideBlocks; ++i)
-                pm[i] = pn[i] = 0;
-            for (int bx = 0; bx < kBlocksX; ++bx)
-            {
-                pm[kWideBlocks + bx + 1] = static_cast<int16_t>(pm[kWideBlocks + bx] + M[by * kBlocksX + bx]);
-                pn[kWideBlocks + bx + 1] = static_cast<int16_t>(pn[kWideBlocks + bx] + N[by * kBlocksX + bx]);
-            }
-            for (int i = kWideBlocks + kBlocksX + 1; i <= kPadded; ++i)
-                pm[i] = pm[i - 1], pn[i] = pn[i - 1];
-            int16_t *s0 = &sums[0][by * kBlocksX], *s1 = &sums[1][by * kBlocksX], *s2 = &sums[2][by * kBlocksX], *s3 = &sums[3][by * kBlocksX];
-            for (int bx = 0; bx < kBlocksX; ++bx)
-            {
-                s0[bx] = static_cast<int16_t>(pm[bx + kWideBlocks + 2] - pm[bx + kWideBlocks - 1]);
-                s1[bx] = static_cast<int16_t>(pn[bx + kWideBlocks + 2] - pn[bx + kWideBlocks - 1]);
-                s2[bx] = static_cast<int16_t>(pm[bx + 2 * kWideBlocks + 1] - pm[bx]);
-                s3[bx] = static_cast<int16_t>(pn[bx + 2 * kWideBlocks + 1] - pn[bx]);
-            }
-        }
-    };
-    // (what each block's 3x3 window holds at all: everything has its spot on screen at disparity 0)
-    rowSums(kMaxDisparity);
-    for (int by = 0; by < kBlocksY; ++by)
-        for (int bx = 0; bx < kBlocksX; ++bx)
-        {
-            const int b = by * kBlocksX + bx;
-            blockPixels[b] = sums[1][b] + (by > 0 ? sums[1][b - kBlocksX] : 0) + (by + 1 < kBlocksY ? sums[1][b + kBlocksX] : 0);
-        }
-    const int32_t *const perMille = kPerMille.data();
-    int16_t cheapest[kBlocks]; // (each block's cheapest so far, for step 4: found as the costs are written)
-    uint8_t cheapestAt[kBlocks];
-    for (int di = 0; di < kDisparities; ++di)
-    {
-        rowSums(di);
-        const size_t row = static_cast<size_t>(di) * kBlocks;
-        int16_t *out = &state.cost[row];
-        const int16_t *last = hadLast ? out : nullptr;
-        for (int by = 0; by < kBlocksY; ++by)
-            for (int bx = 0; bx < kBlocksX; ++bx)
-            {
-                const int b = by * kBlocksX + bx;
-                int c = 0;
-                if (blockPixels[b])
-                {
-                    int32_t m = sums[0][b], in = sums[1][b];
-                    if (by > 0)
-                        m += sums[0][b - kBlocksX], in += sums[1][b - kBlocksX];
-                    if (by + 1 < kBlocksY)
-                        m += sums[0][b + kBlocksX], in += sums[1][b + kBlocksX];
-                    // (a window full enough counts fully: w * x >> 5 is x itself then)
-                    const int w = std::min<int>(in, kSmallFull);
-                    const int small = in >= kSmallFull ? 1000 - ((m * perMille[in]) >> 16)
-                                      : in            ? (w * (1000 - ((m * perMille[in]) >> 16)) + (kSmallFull - w) * kNeutral) >> 5
-                                                      : kNeutral;
-                    const int32_t wm = sums[2][b], wn = sums[3][b];
-                    const int ww = std::min<int>(wn, kWideFull);
-                    const int wide = wn >= kWideFull ? 1000 - ((wm * perMille[wn]) >> 16)
-                                     : wn            ? (ww * (1000 - ((wm * perMille[wn]) >> 16)) + (kWideFull - ww) * kNeutral) >> 6
-                                                     : kNeutral;
-                    c = (small + wide) >> 1;
-                }
-                // (and a little for every pixel away from the screen's plane: where several
-                // shifts line up as well - a dithered field, a repeating pattern - the
-                // smallest wins, not the first tried)
-                c += kPrior * std::abs(di - kMaxDisparity);
-                // 3. ... and partly the last frame's (things move a little at a time).
-                if (last)
-                    c = (c * kKeepNow + last[b] * kKeepLast) >> 8;
-                out[b] = static_cast<int16_t>(c);
-                const bool lower = di == 0 || out[b] < cheapest[b];
-                cheapest[b] = lower ? out[b] : cheapest[b];
-                cheapestAt[b] = lower ? static_cast<uint8_t>(di) : cheapestAt[b];
-            }
-    }
     state.estimated = true;
     static_assert(kSmallFull == 32 && kWideFull == 64, "(the shifts above)");
 
@@ -705,34 +708,27 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                 pulled[k] = true;
         }
     }
-    // (block-major for the smoothing - transposed in tiles, the main depths' pull taken off on the way; kStride: each
-    // block's disparities start on a 4-byte boundary, its last entry unused)
-    m_cost.resize(static_cast<size_t>(kBlocks) * kStride);
-    for (int b0 = 0; b0 < kBlocks; b0 += 16)
-    {
-        for (int di = 0; di < kDisparities; ++di)
-        {
-            const int16_t *src = &state.cost[static_cast<size_t>(di) * kBlocks];
-            if (pulled[di])
-                for (int b = b0; b < std::min(b0 + 16, kBlocks); ++b)
-                    m_cost[static_cast<size_t>(b) * kStride + di] = static_cast<int16_t>(src[b] - (blockPixels[b] ? kPlaneBonus : 0));
-            else
-                for (int b = b0; b < std::min(b0 + 16, kBlocks); ++b)
-                    m_cost[static_cast<size_t>(b) * kStride + di] = src[b];
-        }
-        for (int b = b0; b < std::min(b0 + 16, kBlocks); ++b)
-            m_cost[static_cast<size_t>(b) * kStride + kDisparities] = 0;
-    }
-
     // 5. Smoothed over the block grid: along each row and column of blocks,
     // both ways, a block's cost at a disparity plus the cheapest way to get
     // there from its neighbour's (the same disparity free, one step kStep,
     // any jump kJump) - summed over the four ways, the cheapest wins.
-    m_sum.resize(m_cost.size());
+    m_sum.resize(state.cost.size());
+    int16_t *const cost = state.cost.data();
+    int pulledAt[kDisparities], pulledCount = 0;
+    for (int di = 0; di < kDisparities; ++di)
+        if (pulled[di])
+            pulledAt[pulledCount++] = di;
+    // (the main depths' pull, on the blocks with something in them: taken off a row as it's smoothed along, put back on
+    // a column once smoothed down it - the costs kept for the next frame are without it)
+    auto pull = [&](int b, int by) {
+        if (blockPixels[b])
+            for (int k = 0; k < pulledCount; ++k)
+                cost[static_cast<size_t>(b) * kStride + pulledAt[k]] = static_cast<int16_t>(cost[static_cast<size_t>(b) * kStride + pulledAt[k]] - by);
+    };
     // (the first pass sets the sums, the rest add; each block's lowest is found while it's written, for the next)
     auto pass = [&](int first, int step, int count, int lines, int lineStep, bool add) {
 #ifdef GEKKO
-        SmoothPass(m_cost.data(), m_sum.data(), first, step, count, lines, lineStep, add);
+        SmoothPass(cost, m_sum.data(), first, step, count, lines, lineStep, add);
         return;
 #endif
         int16_t rows[2][kDisparities + 2];
@@ -745,7 +741,7 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
             for (int k = 0; k < count; ++k)
             {
                 const int b = first + line * lineStep + k * step;
-                const int16_t *c = &m_cost[static_cast<size_t>(b) * kStride];
+                const int16_t *c = &cost[static_cast<size_t>(b) * kStride];
                 int16_t *sum = &m_sum[static_cast<size_t>(b) * kStride];
                 int16_t *out = rows[k & 1] + 1;
                 int nextLow = kWall;
@@ -783,6 +779,8 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     // (both ways along a row or column while it's still in the cache; each sum gets its four parts in the same order)
     for (int by = 0; by < kBlocksY; ++by)
     {
+        for (int bx = 0; bx < kBlocksX; ++bx)
+            pull(by * kBlocksX + bx, kPlaneBonus);
         pass(by * kBlocksX, 1, kBlocksX, 1, kBlocksX, false);                // left to right
         pass(by * kBlocksX + kBlocksX - 1, -1, kBlocksX, 1, kBlocksX, true); // right to left
     }
@@ -795,6 +793,7 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
         {
             const int16_t *sum = &m_sum[static_cast<size_t>(b) * kStride];
             state.best[b] = static_cast<int16_t>(std::min_element(sum, sum + kDisparities) - sum);
+            pull(b, -kPlaneBonus);
         }
     }
 
