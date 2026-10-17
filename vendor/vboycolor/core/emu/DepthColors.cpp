@@ -103,6 +103,10 @@ void DepthColors::Reset()
     {
         m_lastShades[e].clear();
         m_lastWant[e].clear();
+        m_nextShades[e].clear();
+        m_nextWant[e].clear();
+        m_lastLit[e].clear();
+        m_staleLit[e].clear();
     }
     m_disparity.clear();
     m_lastDisparity.clear();
@@ -135,37 +139,39 @@ void DepthColors::LeftWindow(unsigned s, int x, int y, unsigned left[7]) const
     }
 }
 
-// A buffer of a picture's size, all 0 (dcbz on the Wii: a line is zeroed without being read first).
-static uint8_t *Cleared(PictureBuffer &buffer)
+std::vector<uint32_t> &DepthColors::NextLit(unsigned eye)
 {
-    constexpr size_t n = static_cast<size_t>(DepthColors::kWidth) * DepthColors::kHeight;
-    static_assert(n % 32 == 0, "whole cache lines");
-#ifdef GEKKO
-    buffer.resize(n);
-    for (size_t i = 0; i < n; i += 32)
-        __asm__ volatile("dcbz 0,%0" : : "r"(buffer.data() + i) : "memory");
-#else
-    buffer.assign(n, 0);
-#endif
-    return buffer.data();
+    m_nextLit[eye].clear();
+    return m_nextLit[eye];
 }
 
-uint8_t *DepthColors::NextShades(unsigned eye)
-{
-    return Cleared(m_nextShades[eye]);
-}
-
-uint8_t *DepthColors::NextWant(unsigned eye)
-{
-    return Cleared(m_nextWant[eye]);
-}
-
-void DepthColors::Update(const uint8_t *const shades[2], const uint8_t *const want[2], uint64_t signature)
+void DepthColors::Update()
 {
     const size_t n = static_cast<size_t>(kWidth) * kHeight;
-    if (m_haveLast && signature == m_lastSignature && std::memcmp(shades[0], m_lastShades[0].data(), n) == 0 && std::memcmp(shades[1], m_lastShades[1].data(), n) == 0 &&
-        std::memcmp(want[0], m_lastWant[0].data(), n) == 0 && std::memcmp(want[1], m_lastWant[1].data(), n) == 0)
+    if (m_haveLast && m_nextLit[0] == m_lastLit[0] && m_nextLit[1] == m_lastLit[1])
         return; // both pictures as last time
+    // Each eye's shade and want per pixel (only the pixels lit in either picture rewritten).
+    const uint8_t *shades[2], *want[2];
+    for (int e = 0; e < 2; ++e)
+    {
+        PictureBuffer &shade = m_nextShades[e], &wants = m_nextWant[e];
+        shade.resize(n);
+        wants.resize(n);
+        for (const uint32_t p : m_staleLit[e])
+        {
+            const size_t i = static_cast<size_t>(LitY(p)) * kWidth + LitX(p);
+            shade[i] = 0;
+            wants[i] = 0;
+        }
+        for (const uint32_t p : m_nextLit[e])
+        {
+            const size_t i = static_cast<size_t>(LitY(p)) * kWidth + LitX(p);
+            shade[i] = static_cast<uint8_t>(LitShade(p));
+            wants[i] = LitWanted(p);
+        }
+        shades[e] = shade.data();
+        want[e] = wants.data();
+    }
     m_disparity.assign(n, kUnknown);
     for (int e = 0; e < 2; ++e)
     {
@@ -179,15 +185,11 @@ void DepthColors::Update(const uint8_t *const shades[2], const uint8_t *const wa
     // Each eye's shades as bit rows, and the shades anything needs a color in.
     bool wanted[3] = {false, false, false};
     for (int e = 0; e < 2; ++e)
-        for (int y = 0; y < kHeight; ++y)
+        for (const uint32_t p : m_nextLit[e])
         {
-            const uint8_t *row = &shades[e][y * kWidth], *w = &want[e][y * kWidth];
-            for (int x = 0; x < kWidth; ++x)
-                if (const unsigned s = row[x] & 3)
-                {
-                    m_bits[e][s - 1][y][1 + (x >> 6)] |= 1ull << (x & 63);
-                    wanted[s - 1] |= w[x] != 0;
-                }
+            const unsigned s = LitShade(p), x = LitX(p);
+            m_bits[e][s - 1][LitY(p)][1 + (x >> 6)] |= 1ull << (x & 63);
+            wanted[s - 1] |= LitWanted(p);
         }
     if (wanted[0] || wanted[1] || wanted[2])
         Estimate(shades, want);
@@ -333,18 +335,13 @@ void DepthColors::Update(const uint8_t *const shades[2], const uint8_t *const wa
 
     for (int e = 0; e < 2; ++e)
     {
-        if (shades[e] == m_nextShades[e].data())
-            m_lastShades[e].swap(m_nextShades[e]);
-        else
-            m_lastShades[e].assign(shades[e], shades[e] + n);
-        if (want[e] == m_nextWant[e].data())
-            m_lastWant[e].swap(m_nextWant[e]);
-        else
-            m_lastWant[e].assign(want[e], want[e] + n);
+        m_lastShades[e].swap(m_nextShades[e]);
+        m_lastWant[e].swap(m_nextWant[e]);
+        m_staleLit[e].swap(m_lastLit[e]); // (the pixels m_next* now hold)
+        m_lastLit[e].swap(m_nextLit[e]);
     }
     std::swap(m_lastDisparity, m_disparity);
     m_haveLast = true;
-    m_lastSignature = signature;
 }
 
 #ifdef GEKKO

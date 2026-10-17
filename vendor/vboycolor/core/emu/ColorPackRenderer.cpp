@@ -1713,14 +1713,12 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
     // Each eye's shades, and the lit pixels no tile drew this frame (a
     // shade the game switched off counts as nothing).
     bool any = false;
-    uint8_t *eyeShades[2], *eyeWant[2];
-    uint64_t signature = 14695981039346656037ull; // (of every lit pixel: where, its shade, wanted or not)
     unsigned brightest = 0;
     for (unsigned eye = 0; eye < 2; ++eye)
     {
         const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
         const uint32_t *const eyeClut = vbgo_vip_eye_clut(static_cast<int>(eye));
-        uint8_t *shades = eyeShades[eye] = m_depth.NextShades(eye), *want = eyeWant[eye] = m_depth.NextWant(eye);
+        std::vector<uint32_t> &pixels = m_depth.NextLit(eye);
         for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
         {
             const uint32_t *column = have[eye] ? view[eye].columns[x] : nullptr;
@@ -1740,12 +1738,12 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
                 const unsigned shade = (rawPixel >> 24) & 3;
                 if (!shade || !(rawPixel & 0xFFFFFFu))
                     continue;
-                shades[y * VBGO_TT_WIDTH + x] = static_cast<uint8_t>(shade);
-                signature = (signature ^ (eye << 20 | y << 11 | x << 2 | shade)) * 1099511628211ull;
                 if (column && vbgo_tag_drawn(column[y], view[eye].band_key[y >> 3]) && VBGO_TAG_PIXEL(column[y]))
-                    continue; // a tile drew it
-                want[y * VBGO_TT_WIDTH + x] = 1;
-                signature = (signature ^ 0xFFFFFFu) * 1099511628211ull;
+                {
+                    pixels.push_back(DepthColors::Lit(x, y, shade, false)); // a tile drew it
+                    continue;
+                }
+                pixels.push_back(DepthColors::Lit(x, y, shade, true));
                 any = true;
                 brightest = std::max<unsigned>(brightest, rawPixel >> 26);
             }
@@ -1758,9 +1756,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
         m_autoMaxLevel = brightest; // (before painting: the very first frame fades right too)
         SetFadeReference(brightest);
     }
-    const uint8_t *const shades[2] = {eyeShades[0], eyeShades[1]};
-    const uint8_t *const want[2] = {eyeWant[0], eyeWant[1]};
-    m_depth.Update(shades, want, signature);
+    m_depth.Update();
     const uint8_t *const leftBits = vbgo_vip_eye_bits(0);
     const uint32_t *const leftClut = vbgo_vip_eye_clut(0);
     // (DepthColors::Color for every disparity a pixel can have and shades 0-3, worked out once)
@@ -1772,31 +1768,27 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
                 DepthColors::Color(d, shade, table[(d + kSpan) * 4 + shade].data());
         return table;
     }();
-    for (unsigned eye = 0; eye < 1; ++eye) // (only the left eye is shown)
-        for (uint32_t y = 0; y < VBGO_TT_HEIGHT; ++y)
-        {
-            const uint8_t *w = &want[eye][y * VBGO_TT_WIDTH];
-            for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
-            {
-                if (!w[x])
-                    continue;
-                const size_t i = (static_cast<size_t>(y) * fbWidth + eyeOffset[eye] + x) * 4;
-                int d = m_depth.Disparity(x, y);
-                const unsigned shade = shades[eye][y * VBGO_TT_WIDTH + x];
-                uint8_t own[3];
-                const uint8_t *rgb = own;
-                if (d == DepthColors::kUnknown)
-                    d = 0;
-                if (d >= -kSpan && d <= kSpan && shade < 4)
-                    rgb = kDepthRgb[(d + kSpan) * 4 + shade].data();
-                else
-                    DepthColors::Color(d, shade, own);
-                const int fade = m_fade[EyeTaggedPixel(leftBits, leftClut, x, y) >> 26]; // 0-256 (the tag byte's brightness)
-                frame[i + 0] = static_cast<uint8_t>(bg[0] + (((rgb[2] - bg[0]) * fade + 128) >> 8));
-                frame[i + 1] = static_cast<uint8_t>(bg[1] + (((rgb[1] - bg[1]) * fade + 128) >> 8));
-                frame[i + 2] = static_cast<uint8_t>(bg[2] + (((rgb[0] - bg[2]) * fade + 128) >> 8));
-            }
-        }
+    for (const uint32_t p : m_depth.LastLit(0)) // (only the left eye is shown)
+    {
+        if (!DepthColors::LitWanted(p))
+            continue;
+        const uint32_t x = DepthColors::LitX(p), y = DepthColors::LitY(p);
+        const size_t i = (static_cast<size_t>(y) * fbWidth + eyeOffset[0] + x) * 4;
+        int d = m_depth.Disparity(x, y);
+        const unsigned shade = DepthColors::LitShade(p);
+        uint8_t own[3];
+        const uint8_t *rgb = own;
+        if (d == DepthColors::kUnknown)
+            d = 0;
+        if (d >= -kSpan && d <= kSpan && shade < 4)
+            rgb = kDepthRgb[(d + kSpan) * 4 + shade].data();
+        else
+            DepthColors::Color(d, shade, own);
+        const int fade = m_fade[EyeTaggedPixel(leftBits, leftClut, x, y) >> 26]; // 0-256 (the tag byte's brightness)
+        frame[i + 0] = static_cast<uint8_t>(bg[0] + (((rgb[2] - bg[0]) * fade + 128) >> 8));
+        frame[i + 1] = static_cast<uint8_t>(bg[1] + (((rgb[1] - bg[1]) * fade + 128) >> 8));
+        frame[i + 2] = static_cast<uint8_t>(bg[2] + (((rgb[0] - bg[2]) * fade + 128) >> 8));
+    }
     return brightest;
 }
 

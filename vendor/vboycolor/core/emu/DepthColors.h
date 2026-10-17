@@ -52,15 +52,19 @@ public:
     static constexpr int kMaxDisparity = 40;
     static constexpr int kUnknown = 0x7FFF;
 
-    // shades[eye]: the eye's picture, a shade 0-3 per pixel (0: nothing
-    // there), row-major kWidth x kHeight. want[eye]: 1 where a pixel needs a
-    // depth color. Works out the left eye's pixels' disparities (only the left eye is shown).
-    // signature: the same for the same pictures (any hash of what they hold): a frame whose signature differs from
-    // the last one's isn't compared with it.
-    void Update(const uint8_t *const shades[2], const uint8_t *const want[2], uint64_t signature);
-    // Cleared buffers for the next Update's shades and want (kept: Update takes them over instead of copying them).
-    uint8_t *NextShades(unsigned eye);
-    uint8_t *NextWant(unsigned eye);
+    // An eye's lit pixel: where it is, its shade 1-3, and whether it needs a depth color.
+    static uint32_t Lit(uint32_t x, uint32_t y, unsigned shade, bool want) { return y << 12 | x << 3 | (want ? 4u : 0u) | shade; }
+    static uint32_t LitX(uint32_t lit) { return lit >> 3 & 511; }
+    static uint32_t LitY(uint32_t lit) { return lit >> 12; }
+    static unsigned LitShade(uint32_t lit) { return lit & 3; }
+    static bool LitWanted(uint32_t lit) { return (lit & 4) != 0; }
+    // The next Update's lit pixels of an eye, emptied: every one, always in the same order (so the same
+    // pixels in the same order are the same picture, and comparing pictures takes no full-frame buffers).
+    std::vector<uint32_t> &NextLit(unsigned eye);
+    // Works out the left eye's pixels' disparities from both eyes' lit pixels (only the left eye is shown).
+    void Update();
+    // The lit pixels of the picture last worked out (the last Update's, whether or not it changed).
+    const std::vector<uint32_t> &LastLit(unsigned eye) const { return m_lastLit[eye]; }
     // A wanted left-eye pixel's disparity as last worked out (kUnknown: none).
     int Disparity(unsigned x, unsigned y) const { return m_lastDisparity[y * kWidth + x]; }
     // The color (R, G, B) for a disparity and shade 1-3.
@@ -93,11 +97,11 @@ private:
     std::vector<Row> m_bits[2][3]; // per eye and shade 1-3: kHeight rows
     State m_state;
     PictureBuffer m_lastShades[2], m_lastWant[2];
-    PictureBuffer m_nextShades[2], m_nextWant[2];
+    PictureBuffer m_nextShades[2], m_nextWant[2]; // zero but for m_staleLit's pixels
+    std::vector<uint32_t> m_nextLit[2], m_lastLit[2], m_staleLit[2];
     std::vector<int16_t> m_disparity;        // the left eye's, per pixel, while Update works them out (kUnknown: none)
     std::vector<int16_t> m_lastDisparity;    // ... as last worked out (Disparity's; a pixel that hasn't changed keeps it)
     bool m_haveLast = false;
-    uint64_t m_lastSignature = 0;
 
     // Scratch (kept to avoid reallocating every frame).
     std::vector<uint8_t> m_matches, m_inside;             // per disparity, block: matching / countable pixels
