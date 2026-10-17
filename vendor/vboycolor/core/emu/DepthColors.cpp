@@ -172,7 +172,12 @@ void DepthColors::Update()
         shades[e] = shade.data();
         want[e] = wants.data();
     }
-    m_disparity.assign(n, kUnknown);
+    if (m_disparity.size() != n)
+        m_disparity.assign(n, kUnknown);
+    else
+        for (const uint32_t p : m_staleLit[0]) // (the only pixels it was given: those wanted then)
+            if (LitWanted(p))
+                m_disparity[static_cast<size_t>(LitY(p)) * kWidth + LitX(p)] = kUnknown;
     for (int e = 0; e < 2; ++e)
     {
         for (int s = 0; s < 3; ++s)
@@ -215,23 +220,31 @@ void DepthColors::Update()
             return true;
         };
         std::vector<int16_t> &left = m_disparity;
-        m_flatLabel.assign(n, -1);
+        // (the last fills left their areas' pixels 0, all else -1)
+        if (m_flatLabel.size() != n)
+            m_flatLabel.assign(n, -1);
+        for (const int32_t i : m_flatSeeds)
+            m_flatLabel[i] = -1;
+        m_flatSeeds.clear();
         for (int y = 3; y < kHeight - 3; ++y)
             for (int x = 3; x < kWidth - 3; ++x)
             {
                 const size_t i = static_cast<size_t>(y) * kWidth + x;
                 if (want[0][i] && flat(x, y))
+                {
                     m_flatLabel[i] = -2; // flat, not yet in an area
+                    m_flatSeeds.push_back(static_cast<int32_t>(i));
+                }
             }
         auto inner = [&](int x, int y) { return x >= 3 && x < kWidth - 3 && y >= 3 && y < kHeight - 3; };
-        for (size_t seed = 0; seed < n; ++seed)
+        for (const int32_t seed : m_flatSeeds)
         {
             if (m_flatLabel[seed] != -2)
                 continue;
             // The area (4-connected), and the samples around it.
             m_area.clear();
             m_samples.clear();
-            m_area.push_back(static_cast<int32_t>(seed));
+            m_area.push_back(seed);
             m_flatLabel[seed] = 0;
             const uint8_t shade = shades[0][seed];
             for (size_t k = 0; k < m_area.size(); ++k)

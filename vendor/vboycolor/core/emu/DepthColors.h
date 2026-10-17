@@ -114,6 +114,7 @@ private:
         int16_t x, y, d;
     };
     std::vector<int32_t> m_flatLabel, m_area;             // flat fills: per pixel (-1 not flat), an area's pixels
+    std::vector<int32_t> m_flatSeeds;                     // ... the flat pixels, in order (the only ones not -1 after)
     std::vector<Sample> m_samples;                        // ... the disparities around it
     std::vector<int> m_scratch;
 };
