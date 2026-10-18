@@ -71,6 +71,17 @@ struct EyeColumn
 };
 
 const TileColorPack::Tile kNoTile{}; // (no tile colors: nothing painted)
+
+// Bits 0-31 of x: 16 pixels' 2-bit values from bytes stored lowest pixel first, whichever the byte order.
+inline uint32_t LowFirst32(const uint8_t *p)
+{
+    uint32_t v;
+    std::memcpy(&v, p, 4);
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    v = __builtin_bswap32(v);
+#endif
+    return v;
+}
 } // namespace
 
 bool ColorPackRenderer::PaintState::operator==(const PaintState &o) const
@@ -1760,26 +1771,29 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
             for (unsigned v = 0; v < 4; ++v)
                 if (((eyeColumn.words[v] >> 24) & 3) && (eyeColumn.words[v] & 0xFFFFFFu))
                     lit |= 1u << v;
-            for (uint32_t y = 0; y < VBGO_TT_HEIGHT && lit; ++y)
+            // (16 pixels at a time: a bit per pixel whose value is one of the lit ones, then each of those, top down)
+            for (uint32_t y0 = 0; y0 < VBGO_TT_HEIGHT && lit; y0 += 16)
             {
-                if (!(y & 3) && !eyeColumn.bits[y >> 2] && !(lit & 1))
+                const uint32_t w = LowFirst32(eyeColumn.bits + y0 / 4), hi = w >> 1 & 0x55555555u, lo = w & 0x55555555u;
+                if (!w && !(lit & 1))
+                    continue; // (16 pixels of value 0, which is off here)
+                uint32_t on = ((lit & 1) ? ~(hi | lo) & 0x55555555u : 0) | ((lit & 2) ? ~hi & lo : 0) | ((lit & 4) ? hi & ~lo : 0) |
+                              ((lit & 8) ? hi & lo : 0);
+                for (; on; on &= on - 1)
                 {
-                    y += 3; // (4 pixels of value 0, which is off here)
-                    continue;
+                    const uint32_t y = y0 + static_cast<uint32_t>(__builtin_ctz(on)) / 2;
+                    const uint32_t rawPixel = eyeColumn[y];
+                    const unsigned shade = (rawPixel >> 24) & 3;
+                    if (column && (taggedBands >> (y >> 3) & 1) && vbgo_tag_drawn(column[y], view[eye].band_key[y >> 3]) &&
+                        VBGO_TAG_PIXEL(column[y]))
+                    {
+                        pixels.push_back(DepthColors::Lit(x, y, shade, false)); // a tile drew it
+                        continue;
+                    }
+                    pixels.push_back(DepthColors::Lit(x, y, shade, true));
+                    any = true;
+                    brightest = std::max<unsigned>(brightest, rawPixel >> 26);
                 }
-                const uint32_t rawPixel = eyeColumn[y];
-                const unsigned shade = (rawPixel >> 24) & 3;
-                if (!shade || !(rawPixel & 0xFFFFFFu))
-                    continue;
-                if (column && (taggedBands >> (y >> 3) & 1) && vbgo_tag_drawn(column[y], view[eye].band_key[y >> 3]) &&
-                    VBGO_TAG_PIXEL(column[y]))
-                {
-                    pixels.push_back(DepthColors::Lit(x, y, shade, false)); // a tile drew it
-                    continue;
-                }
-                pixels.push_back(DepthColors::Lit(x, y, shade, true));
-                any = true;
-                brightest = std::max<unsigned>(brightest, rawPixel >> 26);
             }
         }
     }
