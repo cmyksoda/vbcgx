@@ -19,13 +19,6 @@ inline uint32_t Half(const uint64_t *row, int i)
     return v;
 }
 
-// Word k of a guarded row, half h, shifted so that bit j holds the row's pixel 64 k + 32 h + j + d.
-inline uint32_t Shifted32(const uint64_t *row, int k, int h, int d)
-{
-    const int bit = 64 * (k + 1) + 32 * h + d, w = bit >> 5, s = bit & 31;
-    return s ? (Half(row, w) >> s) | (Half(row, w + 1) << (32 - s)) : Half(row, w);
-}
-
 // Per byte of x, how many of its bits are set (0-8) - summed over a block's 8 rows, each byte still fits.
 inline uint32_t ByteCounts32(uint32_t x)
 {
@@ -638,11 +631,27 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                     if (!lw)
                         continue;
                     total[2 * k + h] += ByteCounts32(lw);
+                    // (the right rows' 5 words these 81 shifts read, loaded once; a shade the left half lacks counts nothing)
+                    const int base = 64 * (k + 1) + 32 * h - kMaxDisparity, first = base >> 5;
+                    const uint64_t *const right[3] = {r1, r2, r3};
+                    const uint32_t left[3] = {w1, w2, w3};
+                    uint32_t words[3][5], shades[3];
+                    int n = 0;
+                    for (int s = 0; s < 3; ++s)
+                        if (left[s])
+                        {
+                            for (int j = 0; j < 5; ++j)
+                                words[n][j] = Half(right[s], first + j);
+                            shades[n++] = left[s];
+                        }
+                    uint32_t *a = &acc[0][2 * k + h];
                     for (int di = 0; di < kDisparities; ++di)
                     {
-                        const int d = di - kMaxDisparity;
-                        acc[di][2 * k + h] +=
-                            ByteCounts32((w1 & Shifted32(r1, k, h, d)) | (w2 & Shifted32(r2, k, h, d)) | (w3 & Shifted32(r3, k, h, d)));
+                        const int j = ((base + di) >> 5) - first, sh = (base + di) & 31;
+                        uint32_t m = 0;
+                        for (int s = 0; s < n; ++s)
+                            m |= shades[s] & (sh ? (words[s][j] >> sh) | (words[s][j + 1] << (32 - sh)) : words[s][j]);
+                        a[di * 2 * kRowWords] += ByteCounts32(m);
                     }
                 }
             uint32_t first[2], last[2];
