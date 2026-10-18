@@ -535,44 +535,85 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     int16_t cheapest[kBlocks]; // (each block's cheapest so far, for step 4: found as the costs are written)
     uint8_t cheapestAt[kBlocks];
     // (the 3-wide sums along a row of the three rows' counts added up - the 3x3 blocks - and the 11-wide ones of its own)
-    auto rowSums = [&](int by, int di, int16_t sums[4][kBlocksX]) {
+    static const uint8_t kNoCounts[kBlocksX] = {}; // (above the top row of blocks, below the bottom one)
+    // (inside: the sums at disparity 0, from which a disparity's differ only by its edge word's blocks - see step 1)
+    auto rowSums = [&](int by, int di, int16_t sums[4][kBlocksX], const int16_t (*inside)[kBlocksX]) {
         constexpr int kPadded = kBlocksX + 2 * kWideBlocks;
-        const uint8_t *M = counts(m_matches, by, di), *N = counts(m_inside, by, di);
-        const uint8_t *Mu = by > 0 ? counts(m_matches, by - 1, di) : nullptr, *Nu = by > 0 ? counts(m_inside, by - 1, di) : nullptr;
-        const uint8_t *Md = by + 1 < kBlocksY ? counts(m_matches, by + 1, di) : nullptr;
-        const uint8_t *Nd = by + 1 < kBlocksY ? counts(m_inside, by + 1, di) : nullptr;
-        int16_t pm[kPadded + 1], pn[kPadded + 1], qm[kBlocksX + 3], qn[kBlocksX + 3];
+        auto at = [&](std::vector<uint8_t> &v, int row, int d) { return row >= 0 && row < kBlocksY ? counts(v, row, d) : kNoCounts; };
+        const uint8_t *M = at(m_matches, by, di), *Mu = at(m_matches, by - 1, di), *Md = at(m_matches, by + 1, di);
+        int16_t pm[kPadded + 1], qm[kBlocksX + 3];
         for (int i = 0; i <= kWideBlocks; ++i)
-            pm[i] = pn[i] = 0;
-        qm[0] = qm[1] = qn[0] = qn[1] = 0;
+            pm[i] = 0;
+        qm[0] = qm[1] = 0;
         for (int bx = 0; bx < kBlocksX; ++bx)
         {
             pm[kWideBlocks + bx + 1] = static_cast<int16_t>(pm[kWideBlocks + bx] + M[bx]);
-            pn[kWideBlocks + bx + 1] = static_cast<int16_t>(pn[kWideBlocks + bx] + N[bx]);
-            const int m3 = M[bx] + (Mu ? Mu[bx] : 0) + (Md ? Md[bx] : 0), n3 = N[bx] + (Nu ? Nu[bx] : 0) + (Nd ? Nd[bx] : 0);
-            qm[bx + 2] = static_cast<int16_t>(qm[bx + 1] + m3);
-            qn[bx + 2] = static_cast<int16_t>(qn[bx + 1] + n3);
+            qm[bx + 2] = static_cast<int16_t>(qm[bx + 1] + M[bx] + Mu[bx] + Md[bx]);
         }
         for (int i = kWideBlocks + kBlocksX + 1; i <= kPadded; ++i)
-            pm[i] = pm[i - 1], pn[i] = pn[i - 1];
-        qm[kBlocksX + 2] = qm[kBlocksX + 1], qn[kBlocksX + 2] = qn[kBlocksX + 1];
+            pm[i] = pm[i - 1];
+        qm[kBlocksX + 2] = qm[kBlocksX + 1];
         for (int bx = 0; bx < kBlocksX; ++bx)
         {
             sums[0][bx] = static_cast<int16_t>(qm[bx + 3] - qm[bx]);
-            sums[1][bx] = static_cast<int16_t>(qn[bx + 3] - qn[bx]);
             sums[2][bx] = static_cast<int16_t>(pm[bx + 2 * kWideBlocks + 1] - pm[bx]);
-            sums[3][bx] = static_cast<int16_t>(pn[bx + 2 * kWideBlocks + 1] - pn[bx]);
+        }
+        const uint8_t *N = at(m_inside, by, di), *Nu = at(m_inside, by - 1, di), *Nd = at(m_inside, by + 1, di);
+        if (!inside)
+        {
+            int16_t pn[kPadded + 1], qn[kBlocksX + 3];
+            for (int i = 0; i <= kWideBlocks; ++i)
+                pn[i] = 0;
+            qn[0] = qn[1] = 0;
+            for (int bx = 0; bx < kBlocksX; ++bx)
+            {
+                pn[kWideBlocks + bx + 1] = static_cast<int16_t>(pn[kWideBlocks + bx] + N[bx]);
+                qn[bx + 2] = static_cast<int16_t>(qn[bx + 1] + N[bx] + Nu[bx] + Nd[bx]);
+            }
+            for (int i = kWideBlocks + kBlocksX + 1; i <= kPadded; ++i)
+                pn[i] = pn[i - 1];
+            qn[kBlocksX + 2] = qn[kBlocksX + 1];
+            for (int bx = 0; bx < kBlocksX; ++bx)
+            {
+                sums[1][bx] = static_cast<int16_t>(qn[bx + 3] - qn[bx]);
+                sums[3][bx] = static_cast<int16_t>(pn[bx + 2 * kWideBlocks + 1] - pn[bx]);
+            }
+            return;
+        }
+        std::copy(inside[0], inside[0] + kBlocksX, sums[1]);
+        std::copy(inside[1], inside[1] + kBlocksX, sums[3]);
+        if (di == kMaxDisparity)
+            return;
+        constexpr int kEdge = 8; // (a 64-pixel word's blocks)
+        const int lo = di < kMaxDisparity ? 0 : kBlocksX - kEdge;
+        const uint8_t *N0 = at(m_inside, by, kMaxDisparity), *Nu0 = at(m_inside, by - 1, kMaxDisparity);
+        const uint8_t *Nd0 = at(m_inside, by + 1, kMaxDisparity);
+        int dn[kEdge], d3[kEdge];
+        for (int j = 0; j < kEdge; ++j)
+        {
+            const int bx = lo + j;
+            dn[j] = N[bx] - N0[bx];
+            d3[j] = dn[j] + Nu[bx] - Nu0[bx] + Nd[bx] - Nd0[bx];
+        }
+        for (int j = 0; j < kEdge; ++j)
+        {
+            for (int bx = std::max(0, lo + j - 1); bx <= std::min(kBlocksX - 1, lo + j + 1); ++bx)
+                sums[1][bx] = static_cast<int16_t>(sums[1][bx] + d3[j]);
+            for (int bx = std::max(0, lo + j - kWideBlocks); bx <= std::min(kBlocksX - 1, lo + j + kWideBlocks); ++bx)
+                sums[3][bx] = static_cast<int16_t>(sums[3][bx] + dn[j]);
         }
     };
     auto costRow = [&](int by) {
-        int16_t sums[4][kBlocksX];
+        int16_t sums[4][kBlocksX], inside[2][kBlocksX];
         // (what each block's 3x3 window holds at all: everything has its spot on screen at disparity 0)
-        rowSums(by, kMaxDisparity, sums);
+        rowSums(by, kMaxDisparity, sums, nullptr);
+        std::copy(sums[1], sums[1] + kBlocksX, inside[0]);
+        std::copy(sums[3], sums[3] + kBlocksX, inside[1]);
         for (int bx = 0; bx < kBlocksX; ++bx)
             blockPixels[by * kBlocksX + bx] = sums[1][bx];
         for (int di = 0; di < kDisparities; ++di)
         {
-            rowSums(by, di, sums);
+            rowSums(by, di, sums, inside);
             for (int bx = 0; bx < kBlocksX; ++bx)
             {
                 const int b = by * kBlocksX + bx;
