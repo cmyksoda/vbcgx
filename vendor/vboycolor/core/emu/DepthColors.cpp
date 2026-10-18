@@ -27,6 +27,12 @@ inline uint32_t ByteCounts32(uint32_t x)
     return (x + (x >> 4)) & 0x0F0F0F0Fu;
 }
 
+// Bits set in x.
+inline uint32_t Ones32(uint32_t x)
+{
+    return ByteCounts32(x) * 0x01010101u >> 24;
+}
+
 // Pixels x - 3 to x + 3 of a guarded row, as bits 0-6 (by 32-bit halves where they fit: the Wii's CPU has no
 // 64-bit shifts).
 inline unsigned Window7(const uint64_t *row, int x)
@@ -682,6 +688,37 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                             shades[n++] = left[s];
                         }
                     uint32_t *a = &acc[0][2 * k + h];
+                    // (a sparse half: each lit left pixel's same-shade right pixels within reach, added where they meet -
+                    // the same counts, as a left pixel has one shade; worth it while that's cheaper than all 81 shifts)
+                    const int o = base & 31;
+                    uint32_t work = 0;
+                    for (int s = 0; s < n; ++s)
+                    {
+                        uint32_t right = 0;
+                        for (int j = 0; j < 5; ++j)
+                            right += Ones32(words[s][j]);
+                        work += Ones32(shades[s]) * (25 + 3 * right);
+                    }
+                    if (work <= static_cast<uint32_t>(kDisparities * (6 * n + 14)))
+                    {
+                        for (int s = 0; s < n; ++s)
+                            for (uint32_t l = shades[s]; l; l &= l - 1)
+                            {
+                                const int b = __builtin_ctz(l), from = o + b, to = from + 2 * kMaxDisparity;
+                                const uint32_t one = 1u << (8 * (b >> 3));
+                                for (int j = from >> 5; j <= to >> 5; ++j)
+                                {
+                                    uint32_t r = words[s][j];
+                                    if (j == from >> 5)
+                                        r &= ~0u << (from & 31);
+                                    if (j == to >> 5 && (to & 31) != 31)
+                                        r &= (2u << (to & 31)) - 1;
+                                    for (; r; r &= r - 1)
+                                        a[(32 * j + __builtin_ctz(r) - from) * 2 * kRowWords] += one;
+                                }
+                            }
+                        continue;
+                    }
                     for (int di = 0; di < kDisparities; ++di)
                     {
                         const int j = ((base + di) >> 5) - first, sh = (base + di) & 31;
