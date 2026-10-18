@@ -219,16 +219,12 @@ void DepthColors::Update()
         for (const int32_t i : m_flatSeeds)
             m_flatLabel[i] = -1;
         m_flatSeeds.clear();
-        for (int y = 3; y < kHeight - 3; ++y)
-            for (int x = 3; x < kWidth - 3; ++x)
-            {
-                const size_t i = static_cast<size_t>(y) * kWidth + x;
-                if (want[0][i] && flat(x, y))
-                {
-                    m_flatLabel[i] = -2; // flat, not yet in an area
-                    m_flatSeeds.push_back(static_cast<int32_t>(i));
-                }
-            }
+        for (const uint32_t p : m_nextLit[0])
+            if (LitWanted(p) && flat(static_cast<int>(LitX(p)), static_cast<int>(LitY(p))))
+                m_flatSeeds.push_back(static_cast<int32_t>(LitY(p) * kWidth + LitX(p)));
+        std::sort(m_flatSeeds.begin(), m_flatSeeds.end()); // (row by row: the order the areas are found in matters)
+        for (const int32_t i : m_flatSeeds)
+            m_flatLabel[i] = -2; // flat, not yet in an area
         auto inner = [&](int x, int y) { return x >= 3 && x < kWidth - 3 && y >= 3 && y < kHeight - 3; };
         for (const int32_t seed : m_flatSeeds)
         {
