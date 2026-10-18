@@ -522,14 +522,12 @@ namespace
                 return std::vector<uint8_t>(zip + data, zip + data + packed);
             if (method != 8)
                 return {};
-            int length = 0;
-            char *bytes = stbi_zlib_decode_noheader_malloc(reinterpret_cast<const char *>(zip + data), static_cast<int>(packed),
-                                                           &length);
-            if (!bytes)
-                return {};
-            std::vector<uint8_t> out(bytes, bytes + length);
-            STBI_FREE(bytes);
-            if (out.size() != unpacked)
+            // (straight into the size the zip gives: a buffer doubling to 8 MB, then copied, ran a few game switches
+            // out of memory)
+            std::vector<uint8_t> out(unpacked);
+            if (stbi_zlib_decode_noheader_buffer(reinterpret_cast<char *>(out.data()), static_cast<int>(unpacked),
+                                                 reinterpret_cast<const char *>(zip + data), static_cast<int>(packed)) !=
+                static_cast<int>(unpacked))
                 return {};
             return out;
         }
