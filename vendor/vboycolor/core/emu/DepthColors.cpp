@@ -421,46 +421,117 @@ void DepthColors::SmoothPass(const int16_t *cost, int16_t *sumAll, int first, in
             }
             else
             {
+                // (two pairs at a time, their chains interleaved: one alone waits on each result in turn)
                 __asm__ volatile(
                     "psq_l   0, 0(%[low]), 0, 7\n\t"     /* LOW */
                     "psq_l   1, 0(%[kc]), 0, 7\n\t"      /* kStep */
                     "psq_l   2, 4(%[kc]), 0, 7\n\t"
                     "ps_add  2, 2, 0\n\t"                 /* J = LOW + kJump */
-                    "psq_l   12, 8(%[kc]), 0, 7\n\t"     /* NL = walls */
-                    "psq_l   3, -4(%[prev]), 0, 7\n\t"   /* Pm = prev[-2], prev[-1] */
-                    "psq_l   4, 0(%[prev]), 0, 7\n\t"    /* P0 = prev[0], prev[1] */
-                    "li      0, 40\n\t"
-                    "mtctr   0\n"
-                    "1:\n\t"
-                    "psq_l   5, 4(%[prev]), 0, 7\n\t"    /* Pp */
-                    "ps_merge10 6, 3, 4\n\t"              /* L = prev[di - 1], prev[di] */
-                    "ps_merge10 7, 4, 5\n\t"              /* R = prev[di + 1], prev[di + 2] */
-                    "ps_sub  9, 6, 7\n\t"
-                    "ps_sel  6, 9, 7, 6\n\t"              /* min(L, R) */
-                    "ps_add  6, 6, 1\n\t"                 /* + kStep */
-                    "ps_sub  9, 4, 6\n\t"
-                    "ps_sel  8, 9, 6, 4\n\t"              /* V = min(P0, step) */
-                    "ps_sub  9, 8, 2\n\t"
-                    "ps_sel  8, 9, 2, 8\n\t"              /* V = min(V, J) */
-                    "psq_l   10, 0(%[c]), 0, 7\n\t"
-                    "ps_add  10, 10, 8\n\t"
-                    "ps_sub  10, 10, 0\n\t"               /* O = C + V - LOW */
-                    "psq_st  10, 0(%[out]), 0, 7\n\t"
-                    "ps_sub  9, 12, 10\n\t"
-                    "ps_sel  12, 9, 10, 12\n\t"           /* NL = min(NL, O) */
+                    "psq_l   12, 8(%[kc]), 0, 7\n\t"     /* NL, NL2 = walls */
+                    "psq_l   22, 8(%[kc]), 0, 7\n\t"
+                    "li      0, 20\n\t"
+                    "mtctr   0\n\t"
                     "cmpwi   %[add], 0\n\t"
-                    "beq     2f\n\t"
+                    "beq     6f\n"
+                    "5:\n\t"
+                    "psq_l   3, -4(%[prev]), 0, 7\n\t"
+                    "psq_l   13, 0(%[prev]), 0, 7\n\t"
+                    "psq_l   4, 0(%[prev]), 0, 7\n\t"
+                    "psq_l   14, 4(%[prev]), 0, 7\n\t"
+                    "psq_l   5, 4(%[prev]), 0, 7\n\t"
+                    "psq_l   15, 8(%[prev]), 0, 7\n\t"
+                    "psq_l   10, 0(%[c]), 0, 7\n\t"
+                    "psq_l   20, 4(%[c]), 0, 7\n\t"
                     "psq_l   11, 0(%[sum]), 0, 7\n\t"
-                    "ps_add  10, 10, 11\n"
-                    "2:\n\t"
+                    "psq_l   21, 4(%[sum]), 0, 7\n\t"
+                    "ps_merge10 6, 3, 4\n\t"
+                    "ps_merge10 16, 13, 14\n\t"
+                    "ps_merge10 7, 4, 5\n\t"
+                    "ps_merge10 17, 14, 15\n\t"
+                    "ps_sub  9, 6, 7\n\t"
+                    "ps_sub  19, 16, 17\n\t"
+                    "ps_sel  6, 9, 7, 6\n\t"
+                    "ps_sel  16, 19, 17, 16\n\t"
+                    "ps_add  6, 6, 1\n\t"
+                    "ps_add  16, 16, 1\n\t"
+                    "ps_sub  9, 4, 6\n\t"
+                    "ps_sub  19, 14, 16\n\t"
+                    "ps_sel  8, 9, 6, 4\n\t"
+                    "ps_sel  18, 19, 16, 14\n\t"
+                    "ps_sub  9, 8, 2\n\t"
+                    "ps_sub  19, 18, 2\n\t"
+                    "ps_sel  8, 9, 2, 8\n\t"
+                    "ps_sel  18, 19, 2, 18\n\t"
+                    "ps_add  10, 10, 8\n\t"
+                    "ps_add  20, 20, 18\n\t"
+                    "ps_sub  10, 10, 0\n\t"
+                    "ps_sub  20, 20, 0\n\t"
+                    "psq_st  10, 0(%[out]), 0, 7\n\t"
+                    "psq_st  20, 4(%[out]), 0, 7\n\t"
+                    "ps_sub  9, 12, 10\n\t"
+                    "ps_sub  19, 22, 20\n\t"
+                    "ps_sel  12, 9, 10, 12\n\t"
+                    "ps_sel  22, 19, 20, 22\n\t"
+                    "ps_add  10, 10, 11\n\t"
+                    "ps_add  20, 20, 21\n\t"
                     "psq_st  10, 0(%[sum]), 0, 7\n\t"
-                    "ps_mr   3, 4\n\t"
-                    "ps_mr   4, 5\n\t"
-                    "addi    %[prev], %[prev], 4\n\t"
-                    "addi    %[c], %[c], 4\n\t"
-                    "addi    %[out], %[out], 4\n\t"
-                    "addi    %[sum], %[sum], 4\n\t"
-                    "bdnz    1b\n\t"
+                    "psq_st  20, 4(%[sum]), 0, 7\n\t"
+                    "addi    %[prev], %[prev], 8\n\t"
+                    "addi    %[c], %[c], 8\n\t"
+                    "addi    %[out], %[out], 8\n\t"
+                    "addi    %[sum], %[sum], 8\n\t"
+                    "bdnz    5b\n\t"
+                    "b       7f\n"
+                    "6:\n\t"
+                    "4:\n\t"
+                    "psq_l   3, -4(%[prev]), 0, 7\n\t"
+                    "psq_l   13, 0(%[prev]), 0, 7\n\t"
+                    "psq_l   4, 0(%[prev]), 0, 7\n\t"
+                    "psq_l   14, 4(%[prev]), 0, 7\n\t"
+                    "psq_l   5, 4(%[prev]), 0, 7\n\t"
+                    "psq_l   15, 8(%[prev]), 0, 7\n\t"
+                    "psq_l   10, 0(%[c]), 0, 7\n\t"
+                    "psq_l   20, 4(%[c]), 0, 7\n\t"
+                    "ps_merge10 6, 3, 4\n\t"
+                    "ps_merge10 16, 13, 14\n\t"
+                    "ps_merge10 7, 4, 5\n\t"
+                    "ps_merge10 17, 14, 15\n\t"
+                    "ps_sub  9, 6, 7\n\t"
+                    "ps_sub  19, 16, 17\n\t"
+                    "ps_sel  6, 9, 7, 6\n\t"
+                    "ps_sel  16, 19, 17, 16\n\t"
+                    "ps_add  6, 6, 1\n\t"
+                    "ps_add  16, 16, 1\n\t"
+                    "ps_sub  9, 4, 6\n\t"
+                    "ps_sub  19, 14, 16\n\t"
+                    "ps_sel  8, 9, 6, 4\n\t"
+                    "ps_sel  18, 19, 16, 14\n\t"
+                    "ps_sub  9, 8, 2\n\t"
+                    "ps_sub  19, 18, 2\n\t"
+                    "ps_sel  8, 9, 2, 8\n\t"
+                    "ps_sel  18, 19, 2, 18\n\t"
+                    "ps_add  10, 10, 8\n\t"
+                    "ps_add  20, 20, 18\n\t"
+                    "ps_sub  10, 10, 0\n\t"
+                    "ps_sub  20, 20, 0\n\t"
+                    "psq_st  10, 0(%[out]), 0, 7\n\t"
+                    "psq_st  20, 4(%[out]), 0, 7\n\t"
+                    "ps_sub  9, 12, 10\n\t"
+                    "ps_sub  19, 22, 20\n\t"
+                    "ps_sel  12, 9, 10, 12\n\t"
+                    "ps_sel  22, 19, 20, 22\n\t"
+                    "psq_st  10, 0(%[sum]), 0, 7\n\t"
+                    "psq_st  20, 4(%[sum]), 0, 7\n\t"
+                    "addi    %[prev], %[prev], 8\n\t"
+                    "addi    %[c], %[c], 8\n\t"
+                    "addi    %[out], %[out], 8\n\t"
+                    "addi    %[sum], %[sum], 8\n\t"
+                    "bdnz    4b\n\t"
+                    "7:\n\t"
+                    "ps_sub  9, 12, 22\n\t"
+                    "ps_sel  12, 9, 22, 12\n\t"           /* NL = min(NL, NL2) */
+                    "psq_l   3, -4(%[prev]), 0, 7\n\t"
+                    "psq_l   4, 0(%[prev]), 0, 7\n\t"
                     /* disparity 80 */
                     "psq_l   5, 4(%[prev]), 0, 7\n\t"
                     "ps_merge10 6, 3, 4\n\t"
@@ -492,7 +563,7 @@ void DepthColors::SmoothPass(const int16_t *cost, int16_t *sumAll, int first, in
                     : [c] "+b"(c), [out] "+b"(out), [sum] "+b"(sum), [prev] "+b"(prev)
                     : [kc] "b"(kConst), [add] "r"(addFlag), [low] "b"(low)
                     : "r0", "ctr", "cr0", "fr0", "fr1", "fr2", "fr3", "fr4", "fr5", "fr6", "fr7", "fr8", "fr9", "fr10",
-                      "fr11", "fr12", "memory");
+                      "fr11", "fr12", "fr13", "fr14", "fr15", "fr16", "fr17", "fr18", "fr19", "fr20", "fr21", "fr22", "memory");
             }
             rows[k & 1][2 + kD] = kWall; // (the pair at disparity 80 wrote the wall after it)
         }
