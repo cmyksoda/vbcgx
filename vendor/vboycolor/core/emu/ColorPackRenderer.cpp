@@ -1781,8 +1781,8 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
                               ((lit & 8) ? hi & lo : 0);
                 for (; on; on &= on - 1)
                 {
-                    const uint32_t y = y0 + static_cast<uint32_t>(__builtin_ctz(on)) / 2;
-                    const uint32_t rawPixel = eyeColumn[y];
+                    const unsigned bit = static_cast<unsigned>(__builtin_ctz(on));
+                    const uint32_t y = y0 + bit / 2, rawPixel = eyeColumn.words[w >> bit & 3];
                     const unsigned shade = (rawPixel >> 24) & 3;
                     if (column && (taggedBands >> (y >> 3) & 1) && vbgo_tag_drawn(column[y], view[eye].band_key[y >> 3]) &&
                         VBGO_TAG_PIXEL(column[y]))
