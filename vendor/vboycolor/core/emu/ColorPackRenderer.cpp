@@ -740,7 +740,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     }
     std::array<uint64_t, kBands> keep{}, keepRight{}; // (bit per cell)
     uint8_t keptCell[kBands][kGridW] = {}, keptRightCell[kBands][kGridW] = {}; // (the same, a byte each - 64-bit shifts cost PowerPC)
-    if (have[0] && !depth && view[0].clut && view[0].cell_version && view[0].band_chr)
+    if (have[0] && view[0].clut && view[0].cell_version && view[0].band_chr)
     {
         static const uint32_t kNoSlots[2048 / 32] = {};
         if (pack)
@@ -771,7 +771,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         for (unsigned s = 0; s < 4; ++s)
             rightOnShades |= static_cast<unsigned>((EyeTaggedWord(clut[s]) & 0xFFFFFFu) != 0) << s;
     }
-    if (have[1] && !depth && view[1].clut && view[1].cell_version)
+    if (have[1] && view[1].clut && view[1].cell_version)
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
         {
             const Band &band = rightBands[b];
@@ -1632,10 +1632,14 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     }
     if (depth)
     {
-        m_painted.fill((1ull << kGridW) - 1);
         brightest = std::max(brightest, PaintDepth(frame, fbWidth, eyeOffset, view, have, bg));
-        for (Band &band : bands)
-            band.version.fill(0); // (depth colors aren't the cell's own)
+        // (the cells depth colors were painted into aren't as their versions say: painted again next time)
+        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+        {
+            m_painted[b] |= m_depthCells[b];
+            for (uint64_t cells = m_depthCells[b]; cells; cells &= cells - 1)
+                bands[b].version[__builtin_ctzll(cells)] = 0;
+        }
     }
     if (!have[0])
         ForgetBands();
@@ -1751,6 +1755,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
     // shade the game switched off counts as nothing).
     bool any = false;
     unsigned brightest = 0;
+    m_depthCells.fill(0);
     for (unsigned eye = 0; eye < 2; ++eye)
     {
         const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
@@ -1821,6 +1826,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
         if (!DepthColors::LitWanted(p))
             continue;
         const uint32_t x = DepthColors::LitX(p), y = DepthColors::LitY(p);
+        m_depthCells[y >> 3] |= 1ull << (x >> 3);
         const size_t i = (static_cast<size_t>(y) * fbWidth + eyeOffset[0] + x) * 4;
         int d = m_depth.Disparity(x, y);
         const unsigned shade = DepthColors::LitShade(p);
