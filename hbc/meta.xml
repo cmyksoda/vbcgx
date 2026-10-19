@@ -2,8 +2,13 @@
 <app version="1">
   <name>VBoy Color GX</name>
   <coder>cmyksoda</coder>
-  <version>0.2.99-dev</version>
-  <short_description>Virtual Boy in color</short_description>
-  <long_description>VBoy Color with a GX frontend for Wii. Local color packs, 240p and 480p/i output. Requires GameCube, Classic, Wii U Pro, Remote + Nunchuk, or Wii U GamePad in Wii VC. No achievements or cover downloads.</long_description>
+  <version>1.0.0</version>
+  <release_date>20261019</release_date>
+  <short_description>Virtual Boy emulator, in color!</short_description>
+  <long_description>VBoy Color GX is a port of VBoy Color to the Wii, using Tantric's GX frontend.
+
+Optimized for steady performance during gameplay in every official release. Includes many different color options.
+
+Supports Wii Remote + Nunchuk, Classic Controller, Wii U Pro Controller, GameCube controller, and the Wii U GamePad in vWii.</long_description>
   <ahb_access />
 </app>
