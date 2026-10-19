@@ -418,6 +418,7 @@ typedef struct
    uint16 oam, chr;
    uint8 world;    /* (and its eyes, in bits 5 and 6) */
    int16 x[2]; /* each eye's */
+   uint16 entry[4]; /* its attributes as drawn */
 } SpriteDrawn;
 
 typedef struct
@@ -495,6 +496,7 @@ static void NoteSprites(int world, const uint16 *list, int count)
       drawn->world = world;
       drawn->x[0] = sign_x_to_s32(10, oam[0] - jp);
       drawn->x[1] = sign_x_to_s32(10, oam[0] + jp);
+      memcpy(drawn->entry, oam, sizeof(drawn->entry));
       Drawing->sprites++;
    }
 }
@@ -768,7 +770,8 @@ static uint64 SpriteChangedCells(const BlockInputs *was, int wasCount, uint32 dr
       for(k = 0; k < is->sprites && !b; k++)
          if(is->sprite[k].oam == a->oam && is->sprite[k].world == a->world)
             b = &is->sprite[k];
-      if(!b || ObjEntryChangedAt[a->oam] > drawnAt || ChrChangedAt[a->chr] > passAt)
+      /* (an entry written and written back as it was drawn is no change) */
+      if(!b || (ObjEntryChangedAt[a->oam] > drawnAt && memcmp(a->entry, b->entry, sizeof(a->entry))) || ChrChangedAt[a->chr] > passAt)
          cells |= SpriteCells(a) | (b ? SpriteCells(b) : 0);
    }
    for(k = 0; k < is->sprites; k++)
