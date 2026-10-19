@@ -272,6 +272,7 @@ private:
     // tile; the right picture's own tiles by region (see the class comment).
     std::vector<uint32_t> m_leftPairHashes; // open addressing, 0 = empty (hash 0 kept apart)
     std::vector<uint32_t> m_leftPairMasks;
+    std::vector<uint16_t> m_leftPairUsed; // (the slots filled: the next frame clears just those)
     uint32_t m_leftPairHashZero = 0;
     std::array<uint32_t, 2048> m_slotSharedAt{}, m_slotShared{}; // per slot: the frame last checked, and the pairs then
     bool SharedWithLeftPicture(unsigned chr, uint32_t hash, int pair);

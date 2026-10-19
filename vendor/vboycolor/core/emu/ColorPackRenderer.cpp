@@ -1003,8 +1003,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     // use, their pixels of tiles colored per map cell.
     if (pairs)
     {
-        m_leftPairHashes.assign(4096, 0);
-        m_leftPairMasks.assign(4096, 0);
+        if (m_leftPairHashes.size() != 4096)
+            m_leftPairHashes.assign(4096, 0), m_leftPairMasks.assign(4096, 0), m_leftPairUsed.clear();
+        for (const uint16_t i : m_leftPairUsed)
+            m_leftPairHashes[i] = 0, m_leftPairMasks[i] = 0;
+        m_leftPairUsed.clear();
         m_leftPairHashZero = 0;
     }
     std::array<uint32_t, 2048> leftPairSlot{}; // slots the left pictures drew this frame (bit per pair)
@@ -1247,7 +1250,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     uint32_t i = (hash * 2654435761u) & mask;
                     while (m_leftPairHashes[i] && m_leftPairHashes[i] != hash)
                         i = (i + 1) & mask;
-                    m_leftPairHashes[i] = hash;
+                    if (!m_leftPairHashes[i])
+                        m_leftPairHashes[i] = hash, m_leftPairUsed.push_back(static_cast<uint16_t>(i));
                     m_leftPairMasks[i] |= leftPairSlot[c];
                 }
         }
