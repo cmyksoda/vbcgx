@@ -578,6 +578,250 @@ void DepthColors::SmoothPass(const int16_t *cost, int16_t *sumAll, int first, in
 }
 #endif
 
+namespace
+{
+// A block's cost, from the matches and countable pixels in its 3x3 blocks (small) and its 11-block strip (wide) when those are
+// fewer than kSmallFull / kWideFull: worked out once for every pair that can come up (matches never exceed countable pixels).
+struct CostTables
+{
+    int16_t small[kSmallFull * kSmallFull];
+    int16_t wide[kWideFull * kWideFull];
+};
+
+const CostTables &Tables()
+{
+    static const CostTables t = [] {
+        CostTables r{};
+        for (int n = 0; n < kSmallFull; ++n)
+            for (int m = 0; m <= n; ++m)
+                r.small[n * kSmallFull + m] = static_cast<int16_t>(
+                    n ? (n * (1000 - ((m * (1000 * 65536 / n)) >> 16)) + (kSmallFull - n) * kNeutral) >> 5 : kNeutral);
+        for (int n = 0; n < kWideFull; ++n)
+            for (int m = 0; m <= n; ++m)
+                r.wide[n * kWideFull + m] = static_cast<int16_t>(
+                    n ? (n * (1000 - ((m * (1000 * 65536 / n)) >> 16)) + (kWideFull - n) * kNeutral) >> 6 : kNeutral);
+        return r;
+    }();
+    return t;
+}
+} // namespace
+
+struct DepthColors::CostRowArgs
+{
+    const uint8_t *matches[3]; // the counts at disparity 0 of the row above, the row and the row below (zeros past the picture)
+    const uint8_t *inside[3];
+    int step[3];               // bytes to the next disparity (0 for the zero rows)
+    const int32_t *perMille;
+    int16_t *cost;             // the row's first block's costs
+    int32_t *blockPixels;      // the row's blocks'
+    uint8_t *cheapestAt;       // ... where each one's lowest cost is
+    bool hadLast;
+};
+
+// The cost of a block at one disparity from its window counts: matches (m) among the countable pixels (in) of its 3x3 blocks,
+// and (wm, wn) the same for its 11-block strip.
+static int CostOf(int m, int in, int wm, int wn, const int32_t *perMille, const int16_t *smallTab, const int16_t *wideTab)
+{
+    const int small = in < kSmallFull ? smallTab[in * kSmallFull + m] : 1000 - ((m * perMille[in]) >> 16);
+    const int wide = wn < kWideFull ? wideTab[wn * kWideFull + wm] : 1000 - ((wm * perMille[wn]) >> 16);
+    return (small + wide) >> 1;
+}
+
+// The costs with the blocks that have a pixel sorted into lists by how their windows are counted: from the tables, or by the
+// formula; a run of one list at one disparity then does the same work for every block in it.
+template <bool kLast, bool kSmallTable, bool kWideTable>
+void DepthColors::CostRun(const uint8_t *__restrict list, int from, int to, const int16_t *__restrict eq, const int16_t *__restrict ep,
+                          const int *__restrict sBase, const int *__restrict wBase, int16_t *const *__restrict cols,
+                          int16_t *__restrict cheapest, uint8_t *__restrict cheapestAt, int di, int prior,
+                          const int16_t *__restrict smallTab, const int16_t *__restrict wideTab)
+{
+    for (int k = from; k < to; ++k)
+    {
+        const int bx = list[k];
+        const int m = eq[bx + 2] - eq[bx - 1];
+        const int wm = ep[bx + 6] - ep[bx - 5];
+        const int small = kSmallTable ? smallTab[sBase[bx] + m] : 1000 - ((m * sBase[bx]) >> 16);
+        const int wide = kWideTable ? wideTab[wBase[bx] + wm] : 1000 - ((wm * wBase[bx]) >> 16);
+        int c = ((small + wide) >> 1) + prior;
+        int16_t &out = cols[bx][di];
+        if (kLast)
+            c = (c * kKeepNow + out * kKeepLast) >> 8;
+        out = static_cast<int16_t>(c);
+        if (out < cheapest[bx])
+            cheapest[bx] = out, cheapestAt[bx] = static_cast<uint8_t>(di);
+    }
+}
+
+void DepthColors::CostRow(const CostRowArgs &a)
+{
+    static const CostTables &tables = Tables();
+    constexpr int kPad = 8, kPadded = kBlocksX + 2 * kWideBlocks, kEdge = 8, kReach = kEdge + kWideBlocks;
+    const int32_t *const perMille = a.perMille;
+    // (the countable pixels in each block's 3x3 blocks and 11-block strip at disparity 0, where all of them are)
+    int16_t in0[kBlocksX], wn0[kBlocksX];
+    {
+        const uint8_t *N = a.inside[1] + kMaxDisparity * a.step[1], *Nu = a.inside[0] + kMaxDisparity * a.step[0];
+        const uint8_t *Nd = a.inside[2] + kMaxDisparity * a.step[2];
+        int16_t pn[kPadded + 1], qn[kBlocksX + 3];
+        for (int i = 0; i <= kWideBlocks; ++i)
+            pn[i] = 0;
+        qn[0] = qn[1] = 0;
+        for (int bx = 0; bx < kBlocksX; ++bx)
+        {
+            pn[kWideBlocks + bx + 1] = static_cast<int16_t>(pn[kWideBlocks + bx] + N[bx]);
+            qn[bx + 2] = static_cast<int16_t>(qn[bx + 1] + N[bx] + Nu[bx] + Nd[bx]);
+        }
+        for (int i = kWideBlocks + kBlocksX + 1; i <= kPadded; ++i)
+            pn[i] = pn[i - 1];
+        qn[kBlocksX + 2] = qn[kBlocksX + 1];
+        for (int bx = 0; bx < kBlocksX; ++bx)
+        {
+            in0[bx] = static_cast<int16_t>(qn[bx + 3] - qn[bx]);
+            wn0[bx] = static_cast<int16_t>(pn[bx + 2 * kWideBlocks + 1] - pn[bx]);
+        }
+    }
+    // (the blocks with a pixel around them, by how their two windows are counted: bit 1 the small window from the table, bit 0 the strip)
+    uint8_t list[4][kBlocksX];
+    int count[4] = {};
+    int sBase[kBlocksX], wBase[kBlocksX];
+    int16_t *cols[kBlocksX];
+    int16_t cheapest[kBlocksX];
+    int empty[kBlocksX], emptyCount = 0, first = kBlocksX, last = -1;
+    uint8_t blocks[kBlocksX]; // (all the blocks with a pixel around them, in order)
+    int blockCount = 0;
+    for (int bx = 0; bx < kBlocksX; ++bx)
+    {
+        a.blockPixels[bx] = in0[bx];
+        cols[bx] = a.cost + static_cast<size_t>(bx) * kStride;
+        cheapest[bx] = 0x7FFF;
+        if (!in0[bx])
+        {
+            empty[emptyCount++] = bx;
+            continue;
+        }
+        first = std::min(first, bx), last = bx;
+        blocks[blockCount++] = static_cast<uint8_t>(bx);
+        const bool smallTable = in0[bx] < kSmallFull, wideTable = wn0[bx] < kWideFull;
+        const int cls = smallTable * 2 + wideTable;
+        sBase[bx] = smallTable ? in0[bx] * kSmallFull : perMille[in0[bx]];
+        wBase[bx] = wideTable ? wn0[bx] * kWideFull : perMille[wn0[bx]];
+        list[cls][count[cls]++] = static_cast<uint8_t>(bx);
+    }
+    // (how many of each list lie before block T, for the T blocks at an edge that a disparity changes, and past block kBlocksX - T)
+    int before[4][kReach + 1], beyond[4][kReach + 1];
+    for (int c = 0; c < 4; ++c)
+    {
+        int n = 0, m = count[c];
+        for (int t = 0; t <= kReach; ++t)
+        {
+            while (n < count[c] && list[c][n] < t)
+                ++n;
+            while (m > 0 && list[c][m - 1] >= kBlocksX - t)
+                --m;
+            before[c][t] = n, beyond[c][t] = m;
+        }
+    }
+    int priors[kDisparities], priors154[kDisparities];
+    for (int di = 0; di < kDisparities; ++di)
+        priors[di] = kPrior * std::abs(di - kMaxDisparity), priors154[di] = priors[di] * kKeepNow;
+    if (last >= 0)
+    {
+        // (prefix sums of the matches along the row, from the first block with a pixel: nothing before it, and the same past
+        // the last. The 3x3 blocks' matches sum a block's, its neighbours' and the rows' above and below, the strip's its row's)
+        int16_t eq[kPad + kBlocksX + kPad], ep[kPad + kBlocksX + kPad];
+        for (int i = 0; i < kPad + kBlocksX + kPad; ++i)
+            eq[i] = ep[i] = 0;
+        const int16_t *const e = eq + kPad, *const f = ep + kPad;
+        for (int di = 0; di < kDisparities; ++di)
+        {
+            const uint8_t *M = a.matches[1] + di * a.step[1], *Mu = a.matches[0] + di * a.step[0], *Md = a.matches[2] + di * a.step[2];
+            int q = 0, p = 0;
+            for (int bx = first; bx <= last; ++bx)
+            {
+                q += Mu[bx] + M[bx] + Md[bx];
+                p += M[bx];
+                eq[kPad + 1 + bx] = static_cast<int16_t>(q);
+                ep[kPad + 1 + bx] = static_cast<int16_t>(p);
+            }
+            for (int i = last + 2; i <= last + 6; ++i)
+                eq[kPad + i] = static_cast<int16_t>(q), ep[kPad + i] = static_cast<int16_t>(p);
+            const int d = di - kMaxDisparity, prior = priors[di];
+            // (the blocks near the left edge for d < 0, the right for d > 0 have fewer countable pixels than at disparity 0: the edge
+            // word's blocks that lose pixels are the first (|d| + 7) / 8, and their windows and strips reach 1 and 5 blocks further)
+            const int jmax = (std::abs(d) - 1) >> 3, reach = jmax + 6, lo = d < 0 ? 0 : kBlocksX - kEdge;
+            int from[4] = {}, to[4] = {count[0], count[1], count[2], count[3]};
+            for (int c = 0; c < 4 && d; ++c)
+            {
+                if (d < 0)
+                    from[c] = before[c][reach];
+                else
+                    to[c] = beyond[c][reach];
+            }
+#define VBGO_RUN(cls, S, W) \
+            if (a.hadLast) \
+                CostRun<true, S, W>(list[cls], from[cls], to[cls], e, f, sBase, wBase, cols, cheapest, a.cheapestAt, di, prior, tables.small, tables.wide); \
+            else \
+                CostRun<false, S, W>(list[cls], from[cls], to[cls], e, f, sBase, wBase, cols, cheapest, a.cheapestAt, di, prior, tables.small, tables.wide);
+            VBGO_RUN(0, false, false)
+            VBGO_RUN(1, false, true)
+            VBGO_RUN(2, true, false)
+            VBGO_RUN(3, true, true)
+#undef VBGO_RUN
+            if (d)
+            {
+                const uint8_t *N = a.inside[1] + di * a.step[1], *Nu = a.inside[0] + di * a.step[0], *Nd = a.inside[2] + di * a.step[2];
+                const uint8_t *N0 = a.inside[1] + kMaxDisparity * a.step[1], *Nu0 = a.inside[0] + kMaxDisparity * a.step[0];
+                const uint8_t *Nd0 = a.inside[2] + kMaxDisparity * a.step[2];
+                // (what the edge word's blocks lose, summed along them: the 3x3 blocks lose their share, the strips theirs)
+                int pd3[kEdge + 1], pdn[kEdge + 1];
+                pd3[0] = pdn[0] = 0;
+                const int j0 = d < 0 ? 0 : kEdge - 1 - jmax, j1 = d < 0 ? jmax : kEdge - 1;
+                for (int j = 0; j < kEdge; ++j)
+                {
+                    int dn = 0, d3 = 0;
+                    if (j >= j0 && j <= j1)
+                    {
+                        const int bx = lo + j;
+                        dn = N[bx] - N0[bx];
+                        d3 = dn + Nu[bx] - Nu0[bx] + Nd[bx] - Nd0[bx];
+                    }
+                    pdn[j + 1] = pdn[j] + dn;
+                    pd3[j + 1] = pd3[j] + d3;
+                }
+                const auto edgeBlock = [&](int bx) {
+                    const int r = bx - lo;
+                    const auto at = [](int j) { return std::min(std::max(j, 0), static_cast<int>(kEdge)); };
+                    const int in = in0[bx] + pd3[at(r + 2)] - pd3[at(r - 1)], wn = wn0[bx] + pdn[at(r + 6)] - pdn[at(r - 5)];
+                    int c = CostOf(e[bx + 2] - e[bx - 1], in, f[bx + 6] - f[bx - 5], wn, perMille, tables.small, tables.wide) + prior;
+                    int16_t &out = cols[bx][di];
+                    if (a.hadLast)
+                        c = (c * kKeepNow + out * kKeepLast) >> 8;
+                    out = static_cast<int16_t>(c);
+                    if (out < cheapest[bx])
+                        cheapest[bx] = out, a.cheapestAt[bx] = static_cast<uint8_t>(di);
+                };
+                if (d < 0)
+                    for (int k = 0; k < blockCount && blocks[k] < reach; ++k)
+                        edgeBlock(blocks[k]);
+                else
+                    for (int k = blockCount - 1; k >= 0 && blocks[k] >= kBlocksX - reach; --k)
+                        edgeBlock(blocks[k]);
+            }
+        }
+    }
+    // (a block with nothing around it costs only the pull towards the screen's plane)
+    for (int i = 0; i < emptyCount; ++i)
+    {
+        int16_t *const out = cols[empty[i]];
+        if (a.hadLast)
+            for (int di = 0; di < kDisparities; ++di)
+                out[di] = static_cast<int16_t>((priors154[di] + out[di] * kKeepLast) >> 8);
+        else
+            for (int di = 0; di < kDisparities; ++di)
+                out[di] = static_cast<int16_t>(priors[di]);
+    }
+}
+
 void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const want[2])
 {
     State &state = m_state;
@@ -616,121 +860,24 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     m_blockPixels.assign(kBlocks, 0);
     int32_t *blockPixels = m_blockPixels.data();
     const int32_t *const perMille = kPerMille.data();
-    int16_t cheapest[kBlocks]; // (each block's cheapest so far, for step 4: found as the costs are written)
-    uint8_t cheapestAt[kBlocks];
-    // (the 3-wide sums along a row of the three rows' counts added up - the 3x3 blocks - and the 11-wide ones of its own)
+    uint8_t cheapestAt[kBlocks]; // (each block's cheapest disparity, for step 4: found as its costs are written)
     static const uint8_t kNoCounts[kBlocksX] = {}; // (above the top row of blocks, below the bottom one)
-    // (inside: the sums at disparity 0, from which a disparity's differ only by its edge word's blocks - see step 1)
-    auto rowSums = [&](int by, int di, int16_t sums[4][kBlocksX], const int16_t (*inside)[kBlocksX]) {
-        constexpr int kPadded = kBlocksX + 2 * kWideBlocks;
-        auto at = [&](std::vector<uint8_t> &v, int row, int d) { return row >= 0 && row < kBlocksY ? counts(v, row, d) : kNoCounts; };
-        const uint8_t *M = at(m_matches, by, di), *Mu = at(m_matches, by - 1, di), *Md = at(m_matches, by + 1, di);
-        int16_t pm[kPadded + 1], qm[kBlocksX + 3];
-        for (int i = 0; i <= kWideBlocks; ++i)
-            pm[i] = 0;
-        qm[0] = qm[1] = 0;
-        for (int bx = 0; bx < kBlocksX; ++bx)
-        {
-            pm[kWideBlocks + bx + 1] = static_cast<int16_t>(pm[kWideBlocks + bx] + M[bx]);
-            qm[bx + 2] = static_cast<int16_t>(qm[bx + 1] + M[bx] + Mu[bx] + Md[bx]);
-        }
-        for (int i = kWideBlocks + kBlocksX + 1; i <= kPadded; ++i)
-            pm[i] = pm[i - 1];
-        qm[kBlocksX + 2] = qm[kBlocksX + 1];
-        for (int bx = 0; bx < kBlocksX; ++bx)
-        {
-            sums[0][bx] = static_cast<int16_t>(qm[bx + 3] - qm[bx]);
-            sums[2][bx] = static_cast<int16_t>(pm[bx + 2 * kWideBlocks + 1] - pm[bx]);
-        }
-        const uint8_t *N = at(m_inside, by, di), *Nu = at(m_inside, by - 1, di), *Nd = at(m_inside, by + 1, di);
-        if (!inside)
-        {
-            int16_t pn[kPadded + 1], qn[kBlocksX + 3];
-            for (int i = 0; i <= kWideBlocks; ++i)
-                pn[i] = 0;
-            qn[0] = qn[1] = 0;
-            for (int bx = 0; bx < kBlocksX; ++bx)
-            {
-                pn[kWideBlocks + bx + 1] = static_cast<int16_t>(pn[kWideBlocks + bx] + N[bx]);
-                qn[bx + 2] = static_cast<int16_t>(qn[bx + 1] + N[bx] + Nu[bx] + Nd[bx]);
-            }
-            for (int i = kWideBlocks + kBlocksX + 1; i <= kPadded; ++i)
-                pn[i] = pn[i - 1];
-            qn[kBlocksX + 2] = qn[kBlocksX + 1];
-            for (int bx = 0; bx < kBlocksX; ++bx)
-            {
-                sums[1][bx] = static_cast<int16_t>(qn[bx + 3] - qn[bx]);
-                sums[3][bx] = static_cast<int16_t>(pn[bx + 2 * kWideBlocks + 1] - pn[bx]);
-            }
-            return;
-        }
-        std::copy(inside[0], inside[0] + kBlocksX, sums[1]);
-        std::copy(inside[1], inside[1] + kBlocksX, sums[3]);
-        if (di == kMaxDisparity)
-            return;
-        constexpr int kEdge = 8; // (a 64-pixel word's blocks)
-        const int lo = di < kMaxDisparity ? 0 : kBlocksX - kEdge;
-        const uint8_t *N0 = at(m_inside, by, kMaxDisparity), *Nu0 = at(m_inside, by - 1, kMaxDisparity);
-        const uint8_t *Nd0 = at(m_inside, by + 1, kMaxDisparity);
-        int dn[kEdge], d3[kEdge];
-        for (int j = 0; j < kEdge; ++j)
-        {
-            const int bx = lo + j;
-            dn[j] = N[bx] - N0[bx];
-            d3[j] = dn[j] + Nu[bx] - Nu0[bx] + Nd[bx] - Nd0[bx];
-        }
-        for (int j = 0; j < kEdge; ++j)
-        {
-            for (int bx = std::max(0, lo + j - 1); bx <= std::min(kBlocksX - 1, lo + j + 1); ++bx)
-                sums[1][bx] = static_cast<int16_t>(sums[1][bx] + d3[j]);
-            for (int bx = std::max(0, lo + j - kWideBlocks); bx <= std::min(kBlocksX - 1, lo + j + kWideBlocks); ++bx)
-                sums[3][bx] = static_cast<int16_t>(sums[3][bx] + dn[j]);
-        }
-    };
     auto costRow = [&](int by) {
-        int16_t sums[4][kBlocksX], inside[2][kBlocksX];
-        // (what each block's 3x3 window holds at all: everything has its spot on screen at disparity 0)
-        rowSums(by, kMaxDisparity, sums, nullptr);
-        std::copy(sums[1], sums[1] + kBlocksX, inside[0]);
-        std::copy(sums[3], sums[3] + kBlocksX, inside[1]);
-        for (int bx = 0; bx < kBlocksX; ++bx)
-            blockPixels[by * kBlocksX + bx] = sums[1][bx];
-        for (int di = 0; di < kDisparities; ++di)
+        CostRowArgs a;
+        for (int r = 0; r < 3; ++r)
         {
-            rowSums(by, di, sums, inside);
-            for (int bx = 0; bx < kBlocksX; ++bx)
-            {
-                const int b = by * kBlocksX + bx;
-                int c = 0;
-                if (blockPixels[b])
-                {
-                    const int32_t m = sums[0][bx], in = sums[1][bx];
-                    // (a window full enough counts fully: w * x >> 5 is x itself then)
-                    const int w = std::min<int>(in, kSmallFull);
-                    const int small = in >= kSmallFull ? 1000 - ((m * perMille[in]) >> 16)
-                                      : in            ? (w * (1000 - ((m * perMille[in]) >> 16)) + (kSmallFull - w) * kNeutral) >> 5
-                                                      : kNeutral;
-                    const int32_t wm = sums[2][bx], wn = sums[3][bx];
-                    const int ww = std::min<int>(wn, kWideFull);
-                    const int wide = wn >= kWideFull ? 1000 - ((wm * perMille[wn]) >> 16)
-                                     : wn            ? (ww * (1000 - ((wm * perMille[wn]) >> 16)) + (kWideFull - ww) * kNeutral) >> 6
-                                                     : kNeutral;
-                    c = (small + wide) >> 1;
-                }
-                // (and a little for every pixel away from the screen's plane: where several
-                // shifts line up as well - a dithered field, a repeating pattern - the
-                // smallest wins, not the first tried)
-                c += kPrior * std::abs(di - kMaxDisparity);
-                // 3. ... and partly the last frame's (things move a little at a time).
-                int16_t &out = state.cost[static_cast<size_t>(b) * kStride + di];
-                if (hadLast)
-                    c = (c * kKeepNow + out * kKeepLast) >> 8;
-                out = static_cast<int16_t>(c);
-                const bool lower = di == 0 || out < cheapest[b];
-                cheapest[b] = lower ? out : cheapest[b];
-                cheapestAt[b] = lower ? static_cast<uint8_t>(di) : cheapestAt[b];
-            }
+            const int row = by + r - 1;
+            const bool inPicture = row >= 0 && row < kBlocksY;
+            a.matches[r] = inPicture ? counts(m_matches, row, 0) : kNoCounts;
+            a.inside[r] = inPicture ? counts(m_inside, row, 0) : kNoCounts;
+            a.step[r] = inPicture ? kBlocksX : 0;
         }
+        a.perMille = perMille;
+        a.cost = &state.cost[static_cast<size_t>(by) * kBlocksX * kStride];
+        a.blockPixels = blockPixels + by * kBlocksX;
+        a.cheapestAt = cheapestAt + by * kBlocksX;
+        a.hadLast = hadLast;
+        CostRow(a);
     };
 
     // (the counts of the last three rows of blocks: a row's costs need the rows above and below it)

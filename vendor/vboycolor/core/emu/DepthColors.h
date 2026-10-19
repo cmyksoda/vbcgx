@@ -94,6 +94,14 @@ private:
     int Votes(unsigned s, const unsigned left[7], int x, int y, int d) const;
     void LeftWindow(unsigned s, int x, int y, unsigned left[7]) const;
     static int WindowPixels(const unsigned left[7]);
+    // (Estimate's steps 2 and 3 for a row of blocks - see CostRow)
+    struct CostRowArgs;
+    static void CostRow(const CostRowArgs &a);
+    template <bool kLast, bool kSmallTable, bool kWideTable>
+    static void CostRun(const uint8_t *__restrict list, int from, int to, const int16_t *__restrict eq, const int16_t *__restrict ep,
+                        const int *__restrict sBase, const int *__restrict wBase, int16_t *const *__restrict cols,
+                        int16_t *__restrict cheapest, uint8_t *__restrict cheapestAt, int di, int prior,
+                        const int16_t *__restrict smallTab, const int16_t *__restrict wideTab);
 
     std::vector<Row> m_bits[2][3]; // per eye and shade 1-3: kHeight rows
     State m_state;
