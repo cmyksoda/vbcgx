@@ -349,6 +349,58 @@ else
 
 static int obj_search_which;
 
+/* A group's sprites sorted into the lists of the 28 blocks they reach (a sprite reaches two at most), as GatherOBJ walks them. */
+typedef struct
+{
+ uint64 serial; /* ObjSerial when sorted (0: not sorted) */
+ int32 start, end;
+ uint16 first[29]; /* block b's list is entry[first[b]] up to entry[first[b + 1]] */
+ uint16 entry[2048];
+} ObjLists;
+static ObjLists obj_sorted[4];
+static uint64 obj_walked[4]; /* ObjSerial when the group was last walked for a block */
+static uint32 obj_blocks[256]; /* by a sprite's JY low byte: the blocks (a bit each) GatherOBJ finds it in */
+static bool obj_blocks_ready;
+
+static void SortOBJ(ObjLists *sorted, int32 start_oam, int32 end_oam)
+{
+ int32 oam;
+ int b, fill[28];
+ if(!obj_blocks_ready)
+ {
+  int j;
+  for(j = 0; j < 256; j++)
+  {
+   obj_blocks[j] = 0;
+   for(b = 0; b < 28; b++)
+    if((((uint32)(b * 8 - j + 7)) & 0xFF) < 15)
+     obj_blocks[j] |= 1u << b;
+  }
+  obj_blocks_ready = true;
+ }
+ memset(sorted->first, 0, sizeof(sorted->first));
+ oam = start_oam;
+ do
+ {
+  uint32 m = obj_blocks[DRAM[(0x1E000 + (oam * 8) + 4) >> 1] & 0xFF];
+  for(; m; m &= m - 1)
+   sorted->first[__builtin_ctz(m) + 1]++;
+ } while( (oam = (oam - 1) & 1023) != end_oam);
+ for(b = 0; b < 28; b++)
+ {
+  sorted->first[b + 1] += sorted->first[b];
+  fill[b] = sorted->first[b];
+ }
+ oam = start_oam;
+ do
+ {
+  uint32 m = obj_blocks[DRAM[(0x1E000 + (oam * 8) + 4) >> 1] & 0xFF];
+  for(; m; m &= m - 1)
+   sorted->entry[fill[__builtin_ctz(m)]++] = oam;
+ } while( (oam = (oam - 1) & 1023) != end_oam);
+ sorted->start = start_oam, sorted->end = end_oam, sorted->serial = ObjSerial;
+}
+
 /* The OBJ group's sprites (in drawing order) with a row in the block that
  * starts at row block_y: the only ones DrawOBJ can draw on its 8 rows. */
 static int GatherOBJ(uint16 *list, uint16 block_y)
@@ -357,6 +409,21 @@ static int GatherOBJ(uint16 *list, uint16 block_y)
  int count = 0;
  const int32 start_oam = SPT[obj_search_which];
  const int32 end_oam = obj_search_which ? SPT[obj_search_which - 1] : 1023;
+
+ if(!(block_y & 7) && block_y < 224)
+ {
+  ObjLists *const sorted = &obj_sorted[obj_search_which];
+  if((sorted->serial != ObjSerial || sorted->start != start_oam || sorted->end != end_oam) && obj_walked[obj_search_which] == ObjSerial)
+   SortOBJ(sorted, start_oam, end_oam);
+  if(sorted->serial == ObjSerial && sorted->start == start_oam && sorted->end == end_oam)
+  {
+   const int b = block_y >> 3;
+   for(count = 0; count < sorted->first[b + 1] - sorted->first[b]; count++)
+    list[count] = sorted->entry[sorted->first[b] + count];
+   return count;
+  }
+  obj_walked[obj_search_which] = ObjSerial;
+ }
 
  oam = start_oam;
  do

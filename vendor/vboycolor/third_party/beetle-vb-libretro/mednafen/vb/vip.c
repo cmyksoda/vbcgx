@@ -402,6 +402,7 @@ static uint32 PassStartedAt; /* DrawSerial as the pass in progress started */
  * a block reads (vip_draw.inc); writes note when, in DrawSerial terms. */
 static uint32 GlobalChangedAt;    /* world attributes, palettes, background color */
 static uint32 SptChangedAt;       /* sprite groups (some games move them every frame) */
+static uint64 ObjSerial = 1;      /* bumped by every change to a sprite attribute or group: sorted sprite lists stay good until it moves */
 static uint32 RowChangedAt[1024]; /* DRAM, per 64 halfwords */
 static uint32 ChrChangedAt[2048];
 static uint32 ObjChangedAt[32];   /* sprite attributes, per 8 rows the sprite was or is on */
@@ -564,6 +565,7 @@ static void ForgetBlocks(void);
 static void ForgetPasses(void)
 {
    DrawSerial++;
+   ObjSerial++;
    ForgetBlocks();
    NewContents(0);
    NewContents(1);
@@ -678,6 +680,7 @@ static void DramChanging(uint32 a, uint16 v)
    }
    else if(h >= (0x1E000 >> 1))
    {
+      ObjSerial++;
       ObjEntryChangedAt[(h - (0x1E000 >> 1)) >> 2] = at;
       /* (a sprite's: the rows it's on, and will be on) */
       ObjRowsChanged(DRAM[(h & ~3u) + 2], at);
@@ -1163,7 +1166,7 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
       case 0x4c:
       case 0x4e:
          if(SPT[(A >> 1) & 3] != (V & 0x3FF))
-            SptChangedAt = ++DrawSerial;
+            SptChangedAt = ++DrawSerial, ObjSerial++;
          SPT[(A >> 1) & 3] = V & 0x3FF;
          break;
 
@@ -2553,6 +2556,7 @@ void VIP_SetRegister(const unsigned int id, const uint32 value)
       case VIP_GSREG_SPT2:
       case VIP_GSREG_SPT3:
          SPT[id - VIP_GSREG_SPT0] = value & 0x3FF;
+         ObjSerial++;
          break;
 
       case VIP_GSREG_GPLT0:
