@@ -767,12 +767,33 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
    if (!vbgo_tt_on)
       return;
    s_cpu[fb & 1] = 1;
-   Unshare(fb & 1, 0);
+   if (s_slot[fb & 1] == s_slot[(fb & 1) ^ 1])
+      Unshare(fb & 1, 0);
    slot = s_slot[fb & 1];
    if (s_lazy[0] | s_lazy[1] | s_lazy[2])
    {
       Settle(slot);
       SettleFrom(slot);
+   }
+   if (bytes == 4 && !(offset & 3) && offset / 64 < VBGO_TT_WIDTH && (offset % 64) * 4 / 8 + 1 < VBGO_TT_BLOCKS)
+   {
+      /* (a word: 16 pixels of a column, 8 in each of two blocks - the bytes' work below, at once) */
+      const unsigned column = offset / 64, row = (offset % 64) * 4, block = row / 8;
+      uint32_t *const tags = &s_tags[slot][lr & 1][column * VBGO_TT_COLUMN + row];
+      if (s_tagged[slot][block] >> (column / 8) & 1)
+         memset(tags, 0, 8 * sizeof(*tags));
+      if (s_tagged[slot][block + 1] >> (column / 8) & 1)
+         memset(tags + 8, 0, 8 * sizeof(*tags));
+      for (b = block; b <= block + 1; b++)
+         if (!(s_cpu_reset[slot] >> b & 1))
+         {
+            s_block_stamp[slot][b] = 0;
+            memset(s_cell_version[slot][b], 0, sizeof(s_cell_version[0][0]));
+            s_cell_black[slot][b] = 0;
+            memset(s_cell_worlds[slot][b], 0xFF, sizeof(s_cell_worlds[0][0]));
+            s_cpu_reset[slot] |= 1u << b;
+         }
+      return;
    }
    for (b = 0; b < bytes; b++)
    {
