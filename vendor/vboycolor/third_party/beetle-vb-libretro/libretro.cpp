@@ -330,6 +330,9 @@ uint32 MDFN_FASTCALL VBReadWord(v810_timestamp_t &timestamp, uint32 A)
 #endif
       return value;
    }
+   uint32 word;
+   if (((A >> 24) & 7) == 0 && VIP_ReadFBWord(A & ((1 << 27) - 1), &word))
+      return word;
    uint32 lo = MemRead16(timestamp, A);
    return lo | (uint32(MemRead16(timestamp, A | 2)) << 16);
 }
@@ -348,6 +351,8 @@ void MDFN_FASTCALL VBWriteWord(v810_timestamp_t &timestamp, uint32 A, uint32 V)
       memcpy(bytes, &V, sizeof(V));
       return;
    }
+   if (((A >> 24) & 7) == 0 && VIP_WriteFBWord(A & ((1 << 27) - 1), V))
+      return;
    MemWrite16(timestamp, A, V & 0xFFFF);
    MemWrite16(timestamp, A | 2, V >> 16);
 }

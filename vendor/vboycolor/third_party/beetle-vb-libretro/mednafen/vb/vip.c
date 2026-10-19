@@ -1231,6 +1231,16 @@ uint8 VIP_Read8(int32 timestamp, uint32 A)
    return 0;
 }
 
+/* The CPU's word read from a frame buffer, as its two halfword reads (false: A isn't one). */
+bool VIP_ReadFBWord(uint32 A, uint32 *V)
+{
+   if((A >> 16) > 1 || (A & 0x7FFF) >= 0x6000 || (A & 3))
+      return false;
+   const uint8 *fb = &FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF];
+   *V = LoadU16_LE((const uint16 *)fb) | ((uint32)LoadU16_LE((const uint16 *)(fb + 2)) << 16);
+   return true;
+}
+
 uint16 VIP_Read16(int32 timestamp, uint32 A)
 {
    switch(A >> 16)
@@ -1315,6 +1325,26 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
          }
          break;
    }
+}
+
+/* The CPU's word write into a frame buffer, as its two halfword writes (false: A isn't one). */
+bool VIP_WriteFBWord(uint32 A, uint32 V)
+{
+   if((A >> 16) > 1 || (A & 0x7FFF) >= 0x6000 || (A & 3))
+      return false;
+   const int fb = (A >> 15) & 1, lr = (A >> 16) & 1;
+   PassClean[fb] = false;
+   PassTouched[fb] = true;
+   NewContents(fb);
+   for(int half = 0; half < 2; half++)
+   {
+      const uint32 a = A + 2 * half;
+      if((a & 63) < 56)
+         Blocks[fb][(a & 63) >> 1].valid = false, CellContent[fb][(a & 63) >> 1][((a & 0x7FFF) >> 9) % 48] = 0;
+      StoreU16_LE((uint16 *)&FB[fb][lr][a & 0x7FFF], half ? V >> 16 : V & 0xFFFF);
+   }
+   vbgo_tiletrack_cpu_fb_write(fb, lr, A & 0x7FFF, 4); /* VirtualBoyGo */
+   return true;
 }
 
 void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
