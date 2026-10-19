@@ -153,6 +153,9 @@ private:
         uint64_t marksAny = 0; // (a bit per cell whose marks hold a marker or a marker layer)
         uint64_t nearAny = 0; // (a bit per cell whose nearSprites or closeSprites are not clear)
         std::vector<uint64_t> pairSlots; // cell << 32 | left eye: chr | pairs << 11; right eye: chr | (pair + 1) << 11
+        uint64_t contextCells = 0; // (left eye: a bit per cell with a slow run whose colors go by markers nearby)
+        uint64_t markMoves = 0;    // (left eye: a bit per cell whose painting moved a marker in the grid - not to be skipped)
+        uint64_t markCells = 0;    // (right eye: a bit per cell whose runs add markers; a kept cell's other slow columns aren't scanned)
     };
     std::array<std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2>, 2> m_bands; // [eye][buffer]
     std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_painted{};
@@ -337,6 +340,29 @@ private:
     // (per grid: the cells with markers - all others are clear - so a frame's work is the few in use)
     std::vector<uint16_t> m_markerCells[3];
     std::array<uint8_t, kGridW * kGridH> m_markerIn[3]{};
+    // The markers Near and SpriteNear read around each grid cell that has any, as a frame buffer's last Paint saw them:
+    // its kept cells' slow columns are painted again only if one within reach changed.
+    struct WindowCell
+    {
+        uint16_t cell = 0;
+        uint8_t layers = 0;         // (entries in bound)
+        ContextGroupBits sprites;   // sprites' groups (the three grids together)
+        struct
+        {
+            uint8_t layer = 0;
+            ContextGroupBits bits;  // layer-bound groups marked on that layer
+        } bound[3];
+    };
+    struct Window
+    {
+        bool valid = false;
+        std::vector<WindowCell> cells;
+        std::vector<uint16_t> at; // grid cell -> index + 1 in cells
+    };
+    std::array<Window, 2> m_window; // per frame buffer, then the one being made
+    Window m_windowNow;
+    void ResetWindow(Window &window);
+    void WindowMoved(const Window &was, const Window &now, uint64_t moved[kBands]) const;
     void NoteMarkerCell(unsigned cell)
     {
         uint8_t &in = m_markerIn[m_gridCurrent][cell];

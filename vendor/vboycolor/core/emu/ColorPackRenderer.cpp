@@ -130,6 +130,8 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
     ClearMarkerCells();
     for (auto &grid : m_markerLayer)
         grid.clear();
+    for (Window &window : m_window)
+        window.valid = false;
     m_layerBound = ContextGroupBits{};
     // (pairs start over: their estimates belong to another game)
     for (Pair &pair : m_pairs)
@@ -792,6 +794,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         }
     for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
         m_painted[b] = ~keep[b] & ((1ull << kGridW) - 1);
+    uint64_t contextMoved[kBands] = {}; // (per cell: a marker within reach changed since this buffer's last Paint)
+    bool contextCompared = false, windowMade = false, markersAdded = false;
     ContextGroupBits *markers = nullptr; // this frame's marker grid (Near reads it and the two before it)
     uint8_t *markerLayers = nullptr;
     m_markersMovedLate = false;
@@ -922,8 +926,36 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         ContextGroupBits *rows = m_gridRows.data(), *closeRows = m_gridCloseRows.data(), *here = m_gridHere.data();
         const ContextGroupBits *a = m_markerGrid[(m_gridCurrent + 1) % 3].data(), *b = m_markerGrid[(m_gridCurrent + 2) % 3].data();
         const ContextGroupBits free = ~m_layerBound;
+        // (this cell's markers as Near reads them: sprites' groups, and per layer the layer-bound ones)
+        const auto NoteWindowCell = [&](unsigned i, const ContextGroupBits &sprites) {
+            WindowCell cell;
+            cell.cell = static_cast<uint16_t>(i);
+            cell.sprites = sprites;
+            for (unsigned k = 0; k < 3; ++k)
+            {
+                const unsigned g = (m_gridCurrent + k) % 3;
+                const ContextGroupBits bits = m_markerGrid[g][i] & m_layerBound;
+                if (!bits.Any())
+                    continue;
+                const uint8_t layer = m_markerLayer[g][i];
+                unsigned n = 0;
+                while (n < cell.layers && cell.bound[n].layer != layer)
+                    ++n;
+                if (n == cell.layers)
+                    cell.bound[cell.layers++].layer = layer;
+                cell.bound[n].bits |= bits;
+            }
+            for (unsigned n = 1; n < cell.layers; ++n)
+                for (unsigned m = n; m > 0 && cell.bound[m].layer < cell.bound[m - 1].layer; --m)
+                    std::swap(cell.bound[m], cell.bound[m - 1]);
+            if (cell.layers || cell.sprites.Any())
+                m_windowNow.cells.push_back(cell);
+        };
         uint16_t sources[kGridW * kGridH];
         int sourceCount = 0;
+        windowMade = have[0] && m_layerBound.Any();
+        if (windowMade)
+            ResetWindow(m_windowNow);
         {
             uint8_t seen[kGridW * kGridH] = {};
             for (unsigned k = 0; k < 3; ++k)
@@ -934,7 +966,20 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         here[i] = (a[i] | b[i] | markers[i]) & free;
                         if (here[i].Any())
                             sources[sourceCount++] = i;
+                        if (windowMade)
+                            NoteWindowCell(i, here[i]);
                     }
+        }
+        if (windowMade)
+        {
+            for (size_t k = 0; k < m_windowNow.cells.size(); ++k)
+                m_windowNow.at[m_windowNow.cells[k].cell] = static_cast<uint16_t>(k + 1);
+            const Window &was = m_window[buffer];
+            if (was.valid)
+            {
+                WindowMoved(was, m_windowNow, contextMoved);
+                contextCompared = true;
+            }
         }
         m_nearSprites.resize(kGridW * kGridH);
         m_closeSprites.resize(kGridW * kGridH);
@@ -1211,6 +1256,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     auto startCells = [&](Band &band, uint64_t kept, const uint32_t *versions, uint32_t clut, uint32_t paintState) {
         band.clut = clut;
         band.state = paintState;
+        band.contextCells &= kept;
+        band.markCells &= kept;
+        band.markMoves &= kept;
         if (kept != (1ull << kGridW) - 1)
             band.summed = false;
         for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
@@ -1328,7 +1376,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     {
                         if (here.first == kNoKey)
                             continue;
-                        if (!(here.first & kSlowColumn))
+                        if (!(here.first & kSlowColumn) || !(rightBands[b].markCells >> (x >> 3) & 1))
                         {
                             const uint64_t first = here.first & 0xFFFFFFFFFFFFull;
                             if (first != runKey)
@@ -1403,6 +1451,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             continue;
                         const bool sprite = VBGO_TAG_IS_OBJ(t) != 0;
                         const ContextGroupBits bits = m_slotMarkers[chr] & (sprite ? ~m_layerBound : m_layerBound);
+                        if (!kept && bits.Any())
+                            band.markCells |= 1ull << (x >> 3);
                         const int lx = LeftX(t, static_cast<int>(x), eye, y);
                         if (bits.Any() && lx >= 0 && lx < VBGO_TT_WIDTH)
                         {
@@ -1450,6 +1500,32 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         // A kept cell's slow columns are painted again only if the markers their context goes by
         // moved (without layer-bound groups, only sprites' count; their marker writes are the pre-pass's).
         uint8_t contextSame[kBands][kGridW] = {};
+        // (layer-bound groups: slow columns stay if no marker within reach changed since the buffer's last Paint, or the cell
+        // has no context tile - and painting them moves no marker)
+        if (haveContexts && m_layerBound.Any())
+        {
+            uint64_t spread[kBands];
+            uint64_t reach[kBands];
+            for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+            {
+                const uint64_t m = contextMoved[b];
+                uint64_t s = m;
+                for (unsigned k = 1; k <= kContextReach; ++k)
+                    s |= m << k | m >> k;
+                spread[b] = s & ((1ull << kGridW) - 1);
+            }
+            for (int b = 0; b < kBands; ++b)
+            {
+                uint64_t r = 0;
+                for (int d = std::max(0, b - kContextReach); d <= std::min(kBands - 1, b + kContextReach); ++d)
+                    r |= spread[d];
+                reach[b] = r;
+            }
+            for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+                for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
+                    contextSame[b][c] = keptCell[b][c] && !(bands[b].markMoves >> c & 1) &&
+                                        (!(bands[b].contextCells >> c & 1) || (contextCompared && !(reach[b] >> c & 1)));
+        }
         // (a cell's kept near / close groups are clear unless it or the frame has any: the frame's are m_spreadCells,
         // or every cell if it spread everywhere - only those cells are looked at)
         auto contextCell = [&](unsigned b, unsigned c) {
@@ -1629,6 +1705,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     {
                         run.band = static_cast<int>(y >> 3);
                         run.tile = contextTile(t, eye, static_cast<int>(x), static_cast<int>(y), nearCell, nearBits);
+                        if (m_slots[chr].contextCount && haveContexts)
+                            band.contextCells |= 1ull << (x >> 3);
                     }
                     if (newBand && markers && m_slotHasMarkers[chr])
                     {
@@ -1640,9 +1718,14 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         if (bits.Any())
                         {
                             const unsigned cell = (y >> 3) * kGridW + (x >> 3);
+                            const uint8_t layer = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
+                            if (!(markers[cell] == (markers[cell] | bits)) || (!sprite && markerLayers && markerLayers[cell] != layer))
+                            {
+                                markersAdded = true;
+                                band.markMoves |= 1ull << (x >> 3);
+                            }
                             markers[cell] |= bits;
                             NoteMarkerCell(cell);
-                            const uint8_t layer = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
                             if (!sprite && markerLayers && markerLayers[cell] != layer)
                             {
                                 m_markersMovedLate |= markerLayers[cell] != 0xFF;
@@ -1708,6 +1791,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         }
         if (!m_ambiguousPixels.empty())
             PaintAmbiguous(frame, fbWidth, eyeOffset[eye], v);
+        if (windowMade)
+        {
+            // (valid if the painting added no marker the pre-pass hadn't: Near answered from the grids as they were)
+            std::swap(m_window[buffer], m_windowNow);
+            m_window[buffer].valid = !markersAdded;
+        }
     }
     if (depth)
     {
@@ -1813,6 +1902,38 @@ bool ColorPackRenderer::Coast()
         m_gridCurrent = oldest;
     }
     return true;
+}
+
+void ColorPackRenderer::ResetWindow(Window &window)
+{
+    if (window.at.empty())
+        window.at.assign(kGridW * kGridH, 0);
+    for (const WindowCell &cell : window.cells)
+        window.at[cell.cell] = 0;
+    window.cells.clear();
+}
+
+// The cells (bit per cell, per band) whose markers differ between two windows.
+void ColorPackRenderer::WindowMoved(const Window &was, const Window &now, uint64_t moved[kBands]) const
+{
+    const auto mark = [&](unsigned cell) { moved[cell / kGridW] |= 1ull << (cell % kGridW); };
+    for (const WindowCell &cell : now.cells)
+    {
+        const unsigned at = was.at[cell.cell];
+        bool same = at != 0;
+        if (same)
+        {
+            const WindowCell &old = was.cells[at - 1];
+            same = old.layers == cell.layers && old.sprites == cell.sprites;
+            for (unsigned n = 0; same && n < cell.layers; ++n)
+                same = old.bound[n].layer == cell.bound[n].layer && old.bound[n].bits == cell.bound[n].bits;
+        }
+        if (!same)
+            mark(cell.cell);
+    }
+    for (const WindowCell &cell : was.cells)
+        if (!now.at[cell.cell])
+            mark(cell.cell);
 }
 
 void ColorPackRenderer::ClearMarkerCells()
