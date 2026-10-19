@@ -439,6 +439,10 @@ static BlockInputs Blocks[2][28];
  * where a column's block is converted again only if the buffer's pixels there
  * (per 8x8 cell) or the brightness table changed since. */
 static uint32 CellContent[2][28][48]; /* a version per cell's pixels, 0: unknown */
+/* Per frame buffer and cell column: a bit per (output eye, column of the cell) that has found every block's CellContent converted
+ * since the last edit to any of them (bit 8 * eye + column - cell * 8); every edit clears the bits, even one that left it as it was. */
+static uint16 CellClean[2][48];
+static void EditBlock(int fb) { memset(CellClean[fb], 0, sizeof(CellClean[fb])); }
 static uint32 Contents;
 static uint32 ShownContent[2][2][384][28]; /* [fb][output eye][column][block]: CellContent as converted */
 static uint32 ShownClut[2][2][384];        /* ... vbgo_tt_clut_serial as converted */
@@ -582,6 +586,7 @@ static void ForgetBlocks(void)
       {
          Blocks[fb][b].valid = false;
          memset(CellContent[fb][b], 0, sizeof(CellContent[fb][b]));
+         EditBlock(fb);
       }
 }
 
@@ -1293,7 +1298,8 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
             PassTouched[(A >> 15) & 1] = true;
             NewContents((A >> 15) & 1);
             if((A & 63) < 56)
-               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false, CellContent[(A >> 15) & 1][(A & 63) >> 1][((A & 0x7FFF) >> 9) % 48] = 0;
+               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false, CellContent[(A >> 15) & 1][(A & 63) >> 1][((A & 0x7FFF) >> 9) % 48] = 0,
+                  CellClean[(A >> 15) & 1][((A & 0x7FFF) >> 9) % 48] = 0;
             FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF] = V;
          }
          break;
@@ -1343,7 +1349,8 @@ bool VIP_WriteFBWord(uint32 A, uint32 V)
    {
       const uint32 a = A + 2 * half;
       if((a & 63) < 56)
-         Blocks[fb][(a & 63) >> 1].valid = false, CellContent[fb][(a & 63) >> 1][((a & 0x7FFF) >> 9) % 48] = 0;
+         Blocks[fb][(a & 63) >> 1].valid = false, CellContent[fb][(a & 63) >> 1][((a & 0x7FFF) >> 9) % 48] = 0,
+         CellClean[fb][((a & 0x7FFF) >> 9) % 48] = 0;
       StoreU16_LE((uint16 *)&FB[fb][lr][a & 0x7FFF], half ? V >> 16 : V & 0xFFFF);
    }
    vbgo_tiletrack_cpu_fb_write(fb, lr, A & 0x7FFF, 4); /* VirtualBoyGo */
@@ -1369,7 +1376,8 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
             PassTouched[(A >> 15) & 1] = true;
             NewContents((A >> 15) & 1);
             if((A & 63) < 56)
-               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false, CellContent[(A >> 15) & 1][(A & 63) >> 1][((A & 0x7FFF) >> 9) % 48] = 0;
+               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false, CellContent[(A >> 15) & 1][(A & 63) >> 1][((A & 0x7FFF) >> 9) % 48] = 0,
+                  CellClean[(A >> 15) & 1][((A & 0x7FFF) >> 9) % 48] = 0;
             StoreU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF], V);
          }
          break;
@@ -1870,6 +1878,7 @@ static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, c
    const uint8 *fb_source = &FB[fb][lr][64 * Column];
    uint32 *shown = ShownContent[fb][eye][Column];
    int block;
+   bool unknown, sameBits, reuse;
 
    ShownFB = fb;
    if(DisplayActive_arg)
@@ -1879,22 +1888,41 @@ static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, c
       /* (a buffer as it was converted, with the same brightness table: nothing to copy) */
       if(sameClut && FBVersion[fb] && ShownVersion[fb][eye][Column] == FBVersion[fb] && ShownLr[fb][eye][Column] == lr)
          return;
+      sameBits = ShownLr[fb][eye][Column] == lr; /* (the bits are the shown eye's as they were converted) */
       memcpy(EyeClut[fb][eye][Column], BrightCLUT[lr], sizeof(EyeClut[0][0][0]));
+      /* (no block's content edited since every one was found converted: the loop would skip them all) */
+      if(sameBits && (CellClean[fb][Column >> 3] >> (eye << 3 | (Column & 7)) & 1))
+      {
+         ShownVersion[fb][eye][Column] = FBVersion[fb];
+         return;
+      }
+      reuse = sameClut || sameBits;
+      unknown = false;
       for(block = 0; block < 28; block++, fb_source += 2)
       {
          const uint32 content = CellContent[fb][block][Column >> 3];
-         if(sameClut && content && shown[block] == content)
-            continue;
+         if(content)
+         {
+            if(reuse && shown[block] == content)
+               continue;
+         }
+         else
+            unknown = true;
          shown[block] = content;
          EyeBits[fb][eye][Column][block * 2] = fb_source[0];
          EyeBits[fb][eye][Column][block * 2 + 1] = fb_source[1];
       }
       ShownVersion[fb][eye][Column] = FBVersion[fb];
       ShownLr[fb][eye][Column] = lr;
+      if(unknown)
+         CellClean[fb][Column >> 3] &= ~(1 << (eye << 3 | (Column & 7)));
+      else
+         CellClean[fb][Column >> 3] |= 1 << (eye << 3 | (Column & 7));
    }
    else
    {
       ShownVersion[fb][eye][Column] = 0;
+      CellClean[fb][Column >> 3] &= ~(1 << (eye << 3 | (Column & 7)));
       memset(EyeClut[fb][eye][Column], 0, sizeof(EyeClut[0][0][0]));
       for(block = 0; block < 28; block++)
          shown[block] = 0;
@@ -2110,7 +2138,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
 
             BlockInputs *block = &Blocks[DrawingFB][DrawingBlock];
             if(skip && InstantDisplayHack && AllowDrawSkip)
-               PassTouched[DrawingFB] = true, NewContents(DrawingFB), block->valid = false, memset(CellContent[DrawingFB][DrawingBlock], 0, sizeof(CellContent[0][0]));
+               PassTouched[DrawingFB] = true, NewContents(DrawingFB), block->valid = false, memset(CellContent[DrawingFB][DrawingBlock], 0, sizeof(CellContent[0][0])), EditBlock(DrawingFB);
             else if(PassRepeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB])
             {
                CopyRepeatedBlock();
@@ -2120,6 +2148,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                else
                   block->valid = false;
                memcpy(CellContent[DrawingFB][DrawingBlock], CellContent[!DrawingFB][DrawingBlock], sizeof(CellContent[0][0]));
+               EditBlock(DrawingFB);
             }
             else
             {
@@ -2246,7 +2275,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      const uint32 fresh = NewContent();
                      for(c = 0; c < 48; c++)
                         if(!(same >> c & 1) || !CellContent[DrawingFB][DrawingBlock][c])
-                           CellContent[DrawingFB][DrawingBlock][c] = fresh;
+                           CellContent[DrawingFB][DrawingBlock][c] = fresh, CellClean[DrawingFB][c] = 0;
                   }
                   block->valid = true;
                   block->drawnAt = DrawSerial;
