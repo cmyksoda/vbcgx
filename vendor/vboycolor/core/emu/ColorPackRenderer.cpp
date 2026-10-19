@@ -1946,9 +1946,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         m_autoMaxLevel = brightest;
         SetFadeReference(brightest);
     }
-    // (depth colors keep estimates that age, so they never count as settled; pairs' ages and markers are kept by Coast)
+    // (depth colors stay as estimated while both pictures stay the same: another Paint colors them again alike; pairs' ages
+    // and markers are kept by Coast)
     // (the layers' extents shrinking toward their sizes don't unsettle it: Coast lets them, as another Paint would)
-    m_settled = !depth && !reestimated && m_autoWorlds == autoWorldsBefore && m_figureWorlds == figuresBefore &&
+    m_settled = !reestimated && m_autoWorlds == autoWorldsBefore && m_figureWorlds == figuresBefore &&
                 m_autoMaxLevel == maxLevelBefore;
     m_markersRead = haveContexts;
     m_markersSteady = -1;
