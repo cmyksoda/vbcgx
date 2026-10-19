@@ -5,6 +5,7 @@ dist/
 project-notes/
 *.log
 *.md
+!README.md
 *.MD
 AGENTS.*
 CLAUDE.*
