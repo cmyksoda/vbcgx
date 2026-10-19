@@ -1949,17 +1949,18 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
     {
         const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
         const uint32_t *const eyeClut = vbgo_vip_eye_clut(static_cast<int>(eye));
-        // A tag's slot by its sprite, pixel and world bits (19-26): -1 none,
-        // bit 6 set for a sprite pair's (which counts eye-only sprites).
-        int8_t slotOf[256];
+        // A tag's slot by its sprite, pixel and world bits (19-26): -1 none, else where its bit rows start; a sprite
+        // pair's also count only eye-only sprites (see slotSprite).
+        int32_t slotBase[256];
+        uint8_t slotSprite[256];
         for (unsigned i = 0; i < 256; ++i)
         {
             const unsigned world = i >> 3;
-            slotOf[i] = !(i >> 1 & 3) ? -1
-                        : !(i & 1)    ? layerSlot[eye][world]
-                        : spriteSlot[world] >= 0 ? static_cast<int8_t>(spriteSlot[world] | 0x40)
-                                                 : -1;
+            const int k = !(i >> 1 & 3) ? -1 : !(i & 1) ? layerSlot[eye][world] : spriteSlot[world];
+            slotBase[i] = k < 0 ? -1 : static_cast<int32_t>(k * 2 * eyeRows);
+            slotSprite[i] = (i & 1) && k >= 0;
         }
+        uint16_t shadePack[VBGO_TT_WIDTH] = {}; // (per column once used: the clut's tag shade by pixel value, 2 bits each, | 0x100)
         const uint32_t *worldsHere = view[eye].cell_worlds;
         const uint32_t *versions = view[eye].cell_version;
         std::vector<uint32_t> &versionWas = cache.version[eye];
@@ -1993,24 +1994,40 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
                 for (int x = c * 8; x < c * 8 + 8; ++x)
                 {
                     const uint32_t *column = view[eye].columns[x];
-                    const uint16_t *columnCells = view[eye].cells[x];
                     if (!column)
                         continue;
-                    uint32_t *at = bits + static_cast<size_t>(eye) * eyeRows + kGuardWords + (x >> 5) + b * 8 * 3 * kGuardedRow;
-                    const uint32_t bit = 1u << (x & 31);
-                    for (int y = b * 8; y < b * 8 + 8; ++y, at += 3 * kGuardedRow)
+                    // (the band's 8 pixel values; a row's shade is its value's tag in the column's clut)
+                    const uint8_t *packed = eyeBits + x * 56 + b * 2;
+                    unsigned values = packed[0] | packed[1] << 8;
+                    unsigned shades = shadePack[x];
+                    if (!shades)
                     {
-                        const uint32_t t = column[y];
+                        shades = 0x100;
+                        for (unsigned i = 0; i < 4; ++i)
+                            shades |= (EyeTaggedWord(eyeClut[x * 4 + i]) >> 24 & 3) << (2 * i);
+                        shadePack[x] = static_cast<uint16_t>(shades);
+                    }
+                    if (!values && !(shades & 3))
+                        continue;
+                    const uint32_t *tags = column + b * 8;
+                    uint32_t *at = bits + static_cast<size_t>(eye) * eyeRows + kGuardWords + (x >> 5) + (b * 8 * 3 - 1) * kGuardedRow; // (less a shade's row: shades count from 1)
+                    const uint32_t bit = 1u << (x & 31);
+                    for (int j = 0; j < 8; ++j, values >>= 2, at += 3 * kGuardedRow)
+                    {
+                        const unsigned shade = shades >> ((values & 3) * 2) & 3;
+                        if (!shade)
+                            continue;
+                        const uint32_t t = tags[j];
                         if (!vbgo_tag_drawn(t, bandKey))
                             continue;
-                        int k = slotOf[t >> 19 & 0xFF];
-                        if (k < 0)
+                        const unsigned i = t >> 19 & 0xFF;
+                        const int32_t base = slotBase[i];
+                        if (base < 0)
                             continue;
-                        if (k & 0x40 && EyeOnly(vbgo_tag_compose(t, columnCells[vbgo_tt_cell_at(static_cast<unsigned>(y))])) != (eye ? 2 : 1))
+                        if (slotSprite[i] &&
+                            EyeOnly(vbgo_tag_compose(t, view[eye].cells[x][vbgo_tt_cell_at(static_cast<unsigned>(b * 8 + j))])) != (eye ? 2 : 1))
                             continue;
-                        const unsigned shade = EyeTaggedPixel(eyeBits, eyeClut, static_cast<uint32_t>(x), static_cast<uint32_t>(y)) >> 24 & 3;
-                        if (shade)
-                            at[(k & 0x3F) * 2 * eyeRows + (shade - 1) * kGuardedRow] |= bit;
+                        at[base + static_cast<int>(shade) * kGuardedRow] |= bit;
                     }
                 }
             }
