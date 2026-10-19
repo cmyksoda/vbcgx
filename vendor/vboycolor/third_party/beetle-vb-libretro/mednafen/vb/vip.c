@@ -441,6 +441,8 @@ static uint32 CellContent[2][28][48]; /* a version per cell's pixels, 0: unknown
 static uint32 Contents;
 static uint32 ShownContent[2][2][384][28]; /* [fb][output eye][column][block]: CellContent as converted */
 static uint32 ShownClut[2][2][384];        /* ... vbgo_tt_clut_serial as converted */
+static uint32 ShownVersion[2][2][384];     /* ... FBVersion as converted, and from which eye's buffer (0: not all of it) */
+static uint8 ShownLr[2][2][384];
 static int ShownFB;
 /* VirtualBoyGo: the colorizer reads the picture, never shows it, so each eye is kept compact - per
  * frame buffer and column, its 2-bit pixels and the 4 values they stand for (vbgo_tiletrack.h). */
@@ -515,9 +517,20 @@ uint32 vbgo_vip_last_frame_picture(void) { return LastFramePicture; }
 /* Until when VIP register reads can't change but at an event (XPSTTS's SBOUT bit times out on its own). */
 int32 vbgo_vip_steady_until(int32 timestamp) { return timestamp < SBOUT_InactiveTime ? SBOUT_InactiveTime : 0x7FFFFFFF; }
 
+/* (the 2^32nd version on can't pass for one a column was converted at: those are forgotten) */
+static uint32 NextVersion(void)
+{
+   if(++Versions == 0)
+   {
+      memset(ShownVersion, 0, sizeof(ShownVersion));
+      ++Versions;
+   }
+   return Versions;
+}
+
 static void NewContents(int fb)
 {
-   FBVersion[fb] = ++Versions;
+   FBVersion[fb] = NextVersion();
    if(fb == DisplayFB)
       FrameChanged = true;
 }
@@ -536,11 +549,11 @@ static void StartFramePicture(void)
 {
    const bool sameKey = ShownKey[0] == FBVersion[DisplayFB] && ShownKey[1] == DisplaySerial;
    if(InstantDisplayHack)
-      LastFramePicture = sameKey ? LastFramePicture : ++Versions;
+      LastFramePicture = sameKey ? LastFramePicture : NextVersion();
    else
-      LastFramePicture = FrameChanged ? ++Versions : FramePicture;
+      LastFramePicture = FrameChanged ? NextVersion() : FramePicture;
    if(FrameChanged || !sameKey)
-      FramePicture = ++Versions;
+      FramePicture = NextVersion();
    ShownKey[0] = FBVersion[DisplayFB];
    ShownKey[1] = DisplaySerial;
    FrameChanged = false;
@@ -1830,6 +1843,9 @@ static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, c
    {
       const bool sameClut = ShownClut[fb][eye][Column] == vbgo_tt_clut_serial;
       ShownClut[fb][eye][Column] = vbgo_tt_clut_serial;
+      /* (a buffer as it was converted, with the same brightness table: nothing to copy) */
+      if(sameClut && FBVersion[fb] && ShownVersion[fb][eye][Column] == FBVersion[fb] && ShownLr[fb][eye][Column] == lr)
+         return;
       memcpy(EyeClut[fb][eye][Column], BrightCLUT[lr], sizeof(EyeClut[0][0][0]));
       for(block = 0; block < 28; block++, fb_source += 2)
       {
@@ -1840,9 +1856,12 @@ static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, c
          EyeBits[fb][eye][Column][block * 2] = fb_source[0];
          EyeBits[fb][eye][Column][block * 2 + 1] = fb_source[1];
       }
+      ShownVersion[fb][eye][Column] = FBVersion[fb];
+      ShownLr[fb][eye][Column] = lr;
    }
    else
    {
+      ShownVersion[fb][eye][Column] = 0;
       memset(EyeClut[fb][eye][Column], 0, sizeof(EyeClut[0][0][0]));
       for(block = 0; block < 28; block++)
          shown[block] = 0;
