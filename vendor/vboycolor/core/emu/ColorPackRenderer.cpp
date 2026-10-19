@@ -2639,6 +2639,8 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
                         for (int g = 0; g < 4; ++g)
                         {
                             const uint32_t a = near[g], b = near[g + 1];
+                            if (!(a | b))
+                                continue;
                             if (const uint32_t both = right & a)
                                 n[16 * g] += CountSet(both);
                             for (int sh = 2; sh < 32; sh += 2)
