@@ -121,6 +121,42 @@ int ColorPackRenderer::ShownBuffer()
     return vbgo_tiletrack_eye_view(0, &view) ? (view.fb & 1) : 0;
 }
 
+uint8_t ColorPackRenderer::MakeSummary(ColumnSummary &summary, const BandColumn *columns, uint32_t active)
+{
+    uint64_t runKey = ~0ull;
+    summary = ColumnSummary{};
+    for (uint32_t todo = active; todo; todo &= todo - 1)
+    {
+        const uint32_t b = static_cast<uint32_t>(__builtin_ctz(todo));
+        const BandColumn &here = columns[b];
+        if (here.first == kNoKey)
+            continue;
+        summary.slow |= (here.first & kSlowColumn ? 1u : 0u) << b;
+        const uint64_t first = here.first & 0xFFFFFFFFFFFFull;
+        if (first != runKey)
+        {
+            const unsigned row = b * 8 + static_cast<unsigned>(here.first >> 48 & 7), level = static_cast<unsigned>(here.first >> 52 & 63);
+            summary.brightest = static_cast<uint8_t>(std::max<unsigned>(summary.brightest, level));
+            if (!VBGO_TAG_IS_OBJ(first))
+            {
+                const unsigned world = VBGO_TAG_WORLD(first);
+                unsigned i = 0;
+                while (i < summary.layers && summary.world[i] != world)
+                    ++i;
+                if (i == ColumnSummary::kLayers)
+                    return 2;
+                if (i == summary.layers)
+                    summary.world[i] = static_cast<uint8_t>(world), summary.top[i] = summary.bottom[i] = static_cast<uint8_t>(row), ++summary.layers;
+                else
+                    summary.top[i] = std::min<uint8_t>(summary.top[i], static_cast<uint8_t>(row)),
+                    summary.bottom[i] = std::max<uint8_t>(summary.bottom[i], static_cast<uint8_t>(row));
+            }
+        }
+        runKey = here.last;
+    }
+    return 1;
+}
+
 void ColorPackRenderer::ForgetBands()
 {
     for (auto &copy : m_unfadedCell)
@@ -703,9 +739,13 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     std::array<Band, kBands> &bands = m_bands[0][buffer];
     auto &bandColumns = m_bandColumns[0][buffer];
     auto &bandsActive = m_bandsActive[0][buffer];
+    auto &summaries = m_columnSummary[0][buffer];
+    auto &summaryState = m_summaryState[0][buffer];
     std::array<Band, kBands> &rightBands = m_bands[1][rightBuffer];
     auto &rightColumns = m_bandColumns[1][rightBuffer];
     auto &rightActive = m_bandsActive[1][rightBuffer];
+    auto &rightSummaries = m_columnSummary[1][rightBuffer];
+    auto &rightSummaryState = m_summaryState[1][rightBuffer];
     {
         PaintState state;
         state.pack = pack;
@@ -1305,6 +1345,19 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         else
             brightest = std::max(brightest, level);
     };
+    // A column of kept bands: what its first runs added (see ColumnSummary), in one go.
+    auto addSummary = [&](const ColumnSummary &summary, unsigned x) {
+        brightest = std::max<unsigned>(brightest, summary.brightest);
+        for (unsigned i = 0; i < summary.layers; ++i)
+        {
+            const unsigned colors = m_worlds[summary.world[i]].colors;
+            worldsDrawn |= 1u << colors;
+            left[colors] = std::min<int16_t>(left[colors], static_cast<int16_t>(x));
+            right[colors] = std::max<int16_t>(right[colors], static_cast<int16_t>(x));
+            top[colors] = std::min<int16_t>(top[colors], summary.top[i]);
+            bottom[colors] = std::max<int16_t>(bottom[colors], summary.bottom[i]);
+        }
+    };
     // A band's cells' bookkeeping into the frame's.
     // (summed once per change of its cells: a band whose cells were all kept adds what it added before)
     auto addBand = [&](Band &band, unsigned b) {
@@ -1477,6 +1530,23 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 const uint16_t *columnCells = v.cells[x];
                 if (!column)
                     continue;
+                uint8_t &summaryAt = rightSummaryState[x];
+                if (!((rightActive[x] | taggedBands[x >> 3]) & ~keptRightBands[x >> 3]))
+                {
+                    ColumnSummary &summary = rightSummaries[x];
+                    if (!summaryAt)
+                        summaryAt = MakeSummary(summary, &rightColumns[x * kBands], rightActive[x]);
+                    bool unmoved = summaryAt == 1;
+                    for (uint32_t s = unmoved ? summary.slow : 0; unmoved && s; s &= s - 1)
+                        unmoved = !(rightBands[__builtin_ctz(s)].markCells >> (x >> 3) & 1);
+                    if (unmoved)
+                    {
+                        addSummary(summary, x);
+                        continue;
+                    }
+                }
+                else
+                    summaryAt = 0;
                 const EyeColumn eyeColumn(eyeBits, eyeClut, x);
                 uint64_t runKey = ~0ull;
                 uint32_t runHi = 0, runLo = ~0u;
@@ -1710,6 +1780,23 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             const uint16_t *columnCells = v.cells[x];
             if (!column)
                 continue;
+            uint8_t &summaryAt = summaryState[x];
+            if (!((bandsActive[x] | taggedBands[x >> 3]) & ~keptBands[x >> 3]))
+            {
+                ColumnSummary &summary = summaries[x];
+                if (!summaryAt)
+                    summaryAt = MakeSummary(summary, &bandColumns[x * kBands], bandsActive[x]);
+                bool unmoved = summaryAt == 1;
+                for (uint32_t s = unmoved ? summary.slow : 0; unmoved && s; s &= s - 1)
+                    unmoved = contextSame[__builtin_ctz(s)][x >> 3];
+                if (unmoved)
+                {
+                    addSummary(summary, x);
+                    continue;
+                }
+            }
+            else
+                summaryAt = 0;
             const EyeColumn eyeColumn(eyeBits, eyeClut, x);
             const size_t columnBase = (static_cast<size_t>(eyeOffset[0]) + x) * 4;
             uint64_t runKey = ~0ull;

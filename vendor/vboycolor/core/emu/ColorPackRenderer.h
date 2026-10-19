@@ -124,6 +124,15 @@ private:
         uint64_t first = kNoKey;
         uint64_t last = kNoKey; // the last one's run key
     };
+    // What the kept walk of a column adds to the frame's layer extents and brightness: its bands' first runs, where a band's
+    // differs from the last run of the band before (made while all its bands are kept; 0 again once one is painted)
+    struct alignas(32) ColumnSummary
+    {
+        static constexpr unsigned kLayers = 8;
+        uint32_t slow = 0; // (bands whose first run is a slow one: those need their cell's markers unchanged)
+        uint8_t brightest = 0, layers = 0;
+        uint8_t world[kLayers] = {}, top[kLayers] = {}, bottom[kLayers] = {}; // per drawing world: its first and last row
+    };
     struct CellSums // (what a band's 8x8 cells' runs added, as last painted: by field, so a band is read in a few lines)
     {
         std::array<uint32_t, VBGO_TT_WIDTH / 8> worlds{}; // (as worldsDrawn, with these extents)
@@ -167,6 +176,11 @@ private:
     std::array<std::array<std::array<BandColumn, (VBGO_TT_HEIGHT / 8) * VBGO_TT_WIDTH>, 2>, 2> m_bandColumns;
     // [eye][buffer][column]: a bit per band whose BandColumn holds a run; only those are read, the rest of first is stale
     std::array<std::array<std::array<uint32_t, VBGO_TT_WIDTH>, 2>, 2> m_bandsActive{};
+    std::array<std::array<std::array<ColumnSummary, VBGO_TT_WIDTH>, 2>, 2> m_columnSummary; // [eye][buffer][column]
+    // ... and whether it is made (1), or has more layers than fit (2), or isn't (0): kept apart, so a column that is painted costs
+    // a byte rather than a cache line
+    std::array<std::array<std::array<uint8_t, VBGO_TT_WIDTH>, 2>, 2> m_summaryState{};
+    static uint8_t MakeSummary(ColumnSummary &summary, const BandColumn *columns, uint32_t active);
     // Left eye, per colored picture: the pack colors painted at a faded level, before fading, laid out like the picture
     // (alpha kUnfaded), so a cell drawn as before is faded again from them; m_unfadedCell: the cell's copy is whole.
     static constexpr uint8_t kUnfaded = 0xFE;
