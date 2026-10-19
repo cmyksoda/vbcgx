@@ -1939,6 +1939,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     const TileColorPack::Tile *tile = run.tile;
                     const AutoColors::Ramp *ramp = run.ramp;
                     bool rampUsed = false;
+                    const uint32_t *nextTag = column + y + 1;
+                    const uint16_t *nextCell = columnCells + vbgo_tt_cell_at(y + 1);
                     for (;;)
                     {
                         if (pixel)
@@ -1953,10 +1955,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         bool more = false;
                         while (y + 1 < end)
                         {
-                            const uint32_t next = column[y + 1];
-                            if ((next & kRunMaskLo) != runLo || columnCells[vbgo_tt_cell_at(y + 1)] != runHi)
+                            const uint32_t next = *nextTag;
+                            if ((next & kRunMaskLo) != runLo || *nextCell != runHi)
                                 break;
-                            ++y, i += rowBytes, t = vbgo_tag_compose(next, columnCells[vbgo_tt_cell_at(y)]);
+                            ++y, i += rowBytes, t = vbgo_tag_compose(next, *nextCell);
+                            ++nextTag, nextCell += VBGO_TT_CELL_ROW;
                             rawPixel = eyeColumn.at(eyeBand, y);
                             pixel = VBGO_TAG_PIXEL(t);
                             if (!pixel || (rawPixel & 0xFFFFFFu))
