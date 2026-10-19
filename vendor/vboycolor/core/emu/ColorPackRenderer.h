@@ -110,9 +110,6 @@ public:
     // A pair's right world, per 8-row band: right-eye x -> left-eye x
     // (kNoDisparity if not known) - as last estimated.
     int PairDisparity(unsigned rightWorld, unsigned band) const;
-    // The same for one 8x8 block of the right picture (sprite pairs: pass
-    // the sprite world with sprites = true).
-    int PairBlockDisparity(unsigned rightWorld, unsigned bx, unsigned by, bool sprites = false) const;
 
 private:
     // Left-eye bands kept from the buffer's last Paint: same drawing version and paint state, no
@@ -243,8 +240,6 @@ private:
         bool estimated = false;
         uint32_t estimatedAt = 0, wantedAt = 0; // (frames: last estimated, last needed)
         std::array<int16_t, kBands> disparity{}; // right x -> left x, per band
-        std::vector<int16_t> blockDisparity;     // the same per 8x8 block of the right picture
-        std::vector<uint8_t> blockExact;         // per block: 1 where nearly all its pixels line up (the left drawing, shifted)
     };
     std::array<Pair, kMaxPairs> m_pairs{};
     int m_pairCount = 0;
@@ -267,7 +262,6 @@ private:
         std::vector<uint32_t> version[2];
     };
     std::array<GatherCache, 2> m_gatherCache;
-    std::vector<uint8_t> m_fineScores; // (EstimatePair: each band's fine search, per shift and 8 columns, for its blocks)
     // Tiles the left pictures of pairs draw this frame (by hash, with the
     // pairs whose left pictures draw them - bit per pair): a right
     // picture's pixel of a tile its own left picture draws is colored by
