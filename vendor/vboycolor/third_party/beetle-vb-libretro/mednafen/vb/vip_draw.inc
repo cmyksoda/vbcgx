@@ -675,6 +675,7 @@ static void DrawBGBlock(uint8 *fb_eye, unsigned block_no, bool lr, const VbgoWor
     const int flipped = (bgsc & 0x2000) != 0;
     const uint32 palette_selector = bgsc >> 14;
     const int fills_here = vbgo_tt_fills_from(char_no, cell);
+    int tile_tagged = 0; /* (the most any of its rows tagged: 1 something, 2 a fill too) */
     for(i = 0; i < (unsigned)n; i++)
     {
      const unsigned char_sub_y = ((bgsc & 0x1000) ? 7 : 0) ^ sy7[i];
@@ -704,12 +705,14 @@ static void DrawBGBlock(uint8 *fb_eye, unsigned block_no, bool lr, const VbgoWor
      {
       const int tagged = vbgo_tt_tag_row8(trow[i] + x * VBGO_TT_COLUMN, crow[i] + x * VBGO_TT_CELL_COLUMN, pixels, flipped,
                                           vbgo_bits | VBGO_TT_BG_BITS(char_no, 0, char_sub_y, palette_selector, 0), char_no, cell);
-      if(tagged)
-       vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_wcells[(x + 7) >> 3] |= vbgo_wbit;
-      if(tagged == 2)
-       vbgo_tt_fillc[x >> 3] = vbgo_tt_fillc[(x + 7) >> 3] = 1;
+      if(tagged > tile_tagged)
+       tile_tagged = tagged;
      }
     }
+    if(tile_tagged)
+     vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_wcells[(x + 7) >> 3] |= vbgo_wbit;
+    if(tile_tagged == 2)
+     vbgo_tt_fillc[x >> 3] = vbgo_tt_fillc[(x + 7) >> 3] = 1;
     x += 8;
     sx += 8;
    }
