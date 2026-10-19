@@ -298,8 +298,11 @@ void VSU_Update(int32 timestamp)
 
       /* Output sound here */
       VSU_CalcCurrentOutput(ch, &left, &right);
-      Blip_Synth_offset(&Synth, running_timestamp, left - last_output[ch][0], bb_l);
-      Blip_Synth_offset(&Synth, running_timestamp, right - last_output[ch][1], bb_r);
+      /* (no change adds nothing) */
+      if(left != last_output[ch][0])
+         Blip_Synth_offset(&Synth, running_timestamp, left - last_output[ch][0], bb_l);
+      if(right != last_output[ch][1])
+         Blip_Synth_offset(&Synth, running_timestamp, right - last_output[ch][1], bb_r);
       last_output[ch][0] = left;
       last_output[ch][1] = right;
 
@@ -333,6 +336,14 @@ void VSU_Update(int32 timestamp)
          }
 
          FreqCounter[ch] -= chunk_clocks;
+         if(ch != 5 && FreqCounter[ch] <= 0)
+         {
+            /* (the steps it takes to get above 0, at once: 2048 - EffFreq is never under 1) */
+            const int32 period = 2048 - EffFreq[ch];
+            const int32 steps = (FreqCounter[ch] + period > 0) ? 1 : 1 + (-FreqCounter[ch]) / period;
+            FreqCounter[ch] += steps * period;
+            WavePos[ch] = (WavePos[ch] + steps) & 0x1F;
+         }
          while(FreqCounter[ch] <= 0)
          {
             if(ch == 5)
@@ -458,8 +469,10 @@ void VSU_Update(int32 timestamp)
 
          /* Output sound here too. */
          VSU_CalcCurrentOutput(ch, &left, &right);
-         Blip_Synth_offset(&Synth, running_timestamp, left - last_output[ch][0], bb_l);
-         Blip_Synth_offset(&Synth, running_timestamp, right - last_output[ch][1], bb_r);
+         if(left != last_output[ch][0])
+            Blip_Synth_offset(&Synth, running_timestamp, left - last_output[ch][0], bb_l);
+         if(right != last_output[ch][1])
+            Blip_Synth_offset(&Synth, running_timestamp, right - last_output[ch][1], bb_r);
          last_output[ch][0] = left;
          last_output[ch][1] = right;
       }
