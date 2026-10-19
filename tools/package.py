@@ -16,6 +16,8 @@ for name in ['meta.xml', 'icon.png']:
 shutil.copyfile(root / 'executables/vbcgx-wii.dol', app / 'boot.dol')
 for folder in ['roms', 'saves', 'covers', 'artwork', 'screenshots', 'vboycolor']:
     (out / 'vbcgx' / folder).mkdir(parents=True)
+# (many unzippers drop empty folders, which would leave out vbcgx/ entirely)
+(out / 'vbcgx/roms/README.txt').write_text('Put your Virtual Boy games here (.vb, .vboy, .bin, or zipped).\n')
 
 licenses = app / 'licenses'
 licenses.mkdir()
