@@ -573,6 +573,72 @@ static void DrawAffine(uint8 *target, uint16 RealY, bool lr, uint32 ParamBase,]=
       }
       target++;]=]
         "vip_draw.inc (DrawOBJ store)")
+    # A sprite row inside the drawn columns (nearly all of them): no clip check for each pixel, and a row with every
+    # pixel drawn is stored straight through (VbgoObjRow does the others).
+    _vbgo_replace_once(DRAW
+        [=[static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, int count)]=]
+        [=[#if defined(__GNUC__)
+#define VBGO_NOINLINE __attribute__((noinline))
+#else
+#define VBGO_NOINLINE
+#endif
+/* VirtualBoyGo: a sprite row's pixels (in-tile x k shows at k, or 7 - k flipped) that aren't all drawn, inside the drawn columns */
+static VBGO_NOINLINE void VbgoObjRow(uint8 *target, uint32_t *tag, uint16_t *cell, const uint8 *plt, uint32 pixels, int flipped, uint32_t obits, uint16_t ocell)
+{
+ int k;
+ for(k = 0; k < 8; k++)
+ {
+  const uint32 pix = (pixels >> (k * 2)) & 3;
+  if(pix)
+  {
+   const int at = flipped ? 7 - k : k;
+   target[at] = plt[pix];
+   tag[at * VBGO_TT_COLUMN] = obits | k << 11 | pix << 20;
+   cell[at] = ocell;
+  }
+ }
+}
+
+static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, int count)]=]
+        "vip_draw.inc (DrawOBJ row helper)")
+    _vbgo_replace_once(DRAW
+        [=[    if(oam_ptr[3] & 0x2000)
+    {
+     int meow;
+     target += 7;
+]=]
+        [=[    if(vbgo_orow && pixels && x >= ClipX0 && x + 7 <= ClipX1) /* VirtualBoyGo */
+    {
+     const uint8 *const plt = JPLT_Cache[palette_selector];
+     uint32_t *tag = vbgo_orow + x * VBGO_TT_COLUMN;
+     uint16_t *const cell = vbgo_ocrow + x * VBGO_TT_CELL_COLUMN;
+     const int flipped = (oam_ptr[3] & 0x2000) != 0;
+     if(((pixels | (pixels >> 1)) & 0x5555) == 0x5555)
+     {
+      /* (every pixel drawn: straight-line, from the left, or from the right flipped) */
+      uint8 *dst = flipped ? target + 7 : target;
+      const int dst_step = flipped ? -1 : 1, tag_step = flipped ? -VBGO_TT_COLUMN : VBGO_TT_COLUMN;
+      const uint32 cells = (uint32)vbgo_ocell * 0x10001u;
+      if(flipped)
+       tag += 7 * VBGO_TT_COLUMN;
+#define VBGO_OBJ_PIXEL(k) { const uint32 pix = (pixels >> ((k) * 2)) & 3; *dst = plt[pix]; *tag = vbgo_obits | (k) << 11 | pix << 20; dst += dst_step; tag += tag_step; }
+      VBGO_OBJ_PIXEL(0) VBGO_OBJ_PIXEL(1) VBGO_OBJ_PIXEL(2) VBGO_OBJ_PIXEL(3)
+      VBGO_OBJ_PIXEL(4) VBGO_OBJ_PIXEL(5) VBGO_OBJ_PIXEL(6) VBGO_OBJ_PIXEL(7)
+#undef VBGO_OBJ_PIXEL
+      memcpy(cell, &cells, 4);
+      memcpy(cell + 2, &cells, 4);
+      memcpy(cell + 4, &cells, 4);
+      memcpy(cell + 6, &cells, 4);
+     }
+     else
+      VbgoObjRow(target, tag, cell, plt, pixels, flipped, vbgo_obits, vbgo_ocell);
+    }
+    else if(oam_ptr[3] & 0x2000)
+    {
+     int meow;
+     target += 7;
+]=]
+        "vip_draw.inc (DrawOBJ whole row)")
     # Which world (layer) is drawing.
     _vbgo_replace_once(DRAW
         [=[    uint8 *target = &fb[lr][x];
