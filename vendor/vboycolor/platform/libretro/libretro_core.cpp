@@ -752,8 +752,9 @@ namespace
                 const uint32_t eyeOffset[2] = {0, w - VBGO_TT_WIDTH};
                 g_renderer.SetPackShown(true);
                 auto shadeColumn = [&](unsigned x, unsigned first, unsigned count) {
-                    for (unsigned y = first; y < first + count && y < h; ++y)
-                        g_colorizer.Colorize(bits[0], x, y, 1, &colored[y * rowBytes + x * 4]);
+                    if (first < h)
+                        g_colorizer.ColorizeColumn(bits[0], x, first, std::min(first + count, h) - first, &colored[first * rowBytes + x * 4],
+                                                   rowBytes);
                 };
                 g_renderer.Paint(colored.data(), static_cast<uint32_t>(rowBytes / 4), eyeOffset, g_background,
                                  {shadeCells, shadeColumn, g_colorizer.Version()});

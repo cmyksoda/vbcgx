@@ -222,6 +222,14 @@ void ShadeColorizer::ColorizeCell(const uint8_t *bits, unsigned x, unsigned y, u
     }
 }
 
+void ShadeColorizer::ColorizeColumn(const uint8_t *bits, unsigned x, unsigned y, unsigned count, uint8_t *dst, size_t rowBytes) const
+{
+    const uint8_t *column = bits + x * 56;
+    const uint32_t *colors = &m_columnColors[x * 4];
+    for (unsigned yy = y; yy < y + count; ++yy, dst += rowBytes)
+        std::memcpy(dst, &colors[column[yy >> 2] >> ((yy & 3) * 2) & 3], 4);
+}
+
 void ShadeColorizer::Colorize(const uint8_t *bits, unsigned x, unsigned y, size_t pixelCount, uint8_t *dst) const
 {
     auto one = [&](unsigned column, uint8_t *out) {

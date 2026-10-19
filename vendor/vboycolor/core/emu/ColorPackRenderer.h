@@ -366,6 +366,9 @@ private:
     // With layer-bound groups only sprites' context tiles ask, so the cells
     // with markers are kept and a cell's groups worked out when asked (once a frame).
     std::vector<std::pair<uint16_t, ContextGroupBits>> m_spriteSources;
+    // (the same by cell: their groups, and per row a bit per cell that has any)
+    std::array<ContextGroupBits, kGridW * kGridH> m_spriteGrid{};
+    std::array<uint64_t, kGridH> m_spriteRows{};
     std::array<uint32_t, kGridW * kGridH> m_spriteNearAt{};
     void SpriteNear(unsigned i, ContextGroupBits &near, ContextGroupBits &close);
     bool m_spreadAll = true;

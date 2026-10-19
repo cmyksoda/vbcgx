@@ -760,16 +760,39 @@ static uint64 SpriteCells(const SpriteDrawn *drawn)
 static uint64 SpriteChangedCells(const BlockInputs *was, int wasCount, uint32 drawnAt, uint32 passAt, const BlockInputs *is)
 {
    uint64 cells = 0;
+   uint8 isAt[256], wasAt[256]; /* (open addressing by OAM entry and world: a list's index + 1, 0 free) */
    int i, k;
    if(wasCount < 0 || is->sprites < 0)
       return ~0ull;
+   memset(isAt, 0, sizeof(isAt));
+   memset(wasAt, 0, sizeof(wasAt));
+   for(k = 0; k < is->sprites; k++)
+   {
+      unsigned h = (is->sprite[k].oam * 5 + is->sprite[k].world * 41) & 255;
+      while(isAt[h] && !(is->sprite[isAt[h] - 1].oam == is->sprite[k].oam && is->sprite[isAt[h] - 1].world == is->sprite[k].world))
+         h = (h + 1) & 255;
+      if(!isAt[h])
+         isAt[h] = k + 1;
+   }
+   for(i = 0; i < wasCount; i++)
+   {
+      unsigned h = (was->sprite[i].oam * 5 + was->sprite[i].world * 41) & 255;
+      while(wasAt[h] && !(was->sprite[wasAt[h] - 1].oam == was->sprite[i].oam && was->sprite[wasAt[h] - 1].world == was->sprite[i].world))
+         h = (h + 1) & 255;
+      if(!wasAt[h])
+         wasAt[h] = i + 1;
+   }
    for(i = 0; i < wasCount; i++)
    {
       const SpriteDrawn *a = &was->sprite[i];
       const SpriteDrawn *b = NULL;
-      for(k = 0; k < is->sprites && !b; k++)
-         if(is->sprite[k].oam == a->oam && is->sprite[k].world == a->world)
-            b = &is->sprite[k];
+      unsigned h = (a->oam * 5 + a->world * 41) & 255;
+      while(isAt[h] && !b)
+      {
+         if(is->sprite[isAt[h] - 1].oam == a->oam && is->sprite[isAt[h] - 1].world == a->world)
+            b = &is->sprite[isAt[h] - 1];
+         h = (h + 1) & 255;
+      }
       /* (an entry written and written back as it was drawn is no change) */
       if(!b || (ObjEntryChangedAt[a->oam] > drawnAt && memcmp(a->entry, b->entry, sizeof(a->entry))) || ChrChangedAt[a->chr] > passAt)
          cells |= SpriteCells(a) | (b ? SpriteCells(b) : 0);
@@ -778,8 +801,12 @@ static uint64 SpriteChangedCells(const BlockInputs *was, int wasCount, uint32 dr
    {
       const SpriteDrawn *b = &is->sprite[k];
       int found = 0;
-      for(i = 0; i < wasCount && !found; i++)
-         found = was->sprite[i].oam == b->oam && was->sprite[i].world == b->world;
+      unsigned h = (b->oam * 5 + b->world * 41) & 255;
+      while(wasAt[h] && !found)
+      {
+         found = was->sprite[wasAt[h] - 1].oam == b->oam && was->sprite[wasAt[h] - 1].world == b->world;
+         h = (h + 1) & 255;
+      }
       if(!found)
          cells |= SpriteCells(b);
    }

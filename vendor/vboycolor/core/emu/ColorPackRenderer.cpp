@@ -503,16 +503,17 @@ void ColorPackRenderer::SpriteNear(unsigned i, ContextGroupBits &near, ContextGr
     {
         const int gx = static_cast<int>(i % kGridW), gy = static_cast<int>(i / kGridW);
         ContextGroupBits n, c;
-        for (const auto &source : m_spriteSources)
-        {
-            const int dx = std::abs(source.first % kGridW - gx), dy = std::abs(source.first / kGridW - gy);
-            if (dx <= kContextReach && dy <= kContextReach)
+        const int left = std::max(0, gx - kContextReach), right = std::min(kGridW - 1, gx + kContextReach);
+        const uint64_t window = ((2ull << right) - 1) & ~((1ull << left) - 1);
+        for (int y = std::max(0, gy - kContextReach); y <= std::min(kGridH - 1, gy + kContextReach); ++y)
+            for (uint64_t cells = m_spriteRows[y] & window; cells; cells &= cells - 1)
             {
-                n |= source.second;
-                if (dx <= 1 && dy <= 1)
-                    c |= source.second;
+                const int x = __builtin_ctzll(cells);
+                const ContextGroupBits &bits = m_spriteGrid[y * kGridW + x];
+                n |= bits;
+                if (std::abs(x - gx) <= 1 && std::abs(y - gy) <= 1)
+                    c |= bits;
             }
-        }
         m_nearSprites[i] = n, m_closeSprites[i] = c;
         m_spriteNearAt[i] = m_frame;
     }
@@ -928,9 +929,16 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         m_closeSprites.resize(kGridW * kGridH);
         if (m_layerBound.Any())
         {
+            for (const auto &source : m_spriteSources)
+                m_spriteGrid[source.first] = ContextGroupBits{};
+            m_spriteRows.fill(0);
             m_spriteSources.clear();
             for (int k = 0; k < sourceCount; ++k)
+            {
                 m_spriteSources.emplace_back(sources[k], here[sources[k]]);
+                m_spriteGrid[sources[k]] = here[sources[k]];
+                m_spriteRows[sources[k] / kGridW] |= 1ull << (sources[k] % kGridW);
+            }
             m_spreadAll = true;
         }
         else if (sourceCount <= 64)
