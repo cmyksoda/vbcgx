@@ -38,6 +38,14 @@
     } \
    }
 
+#if defined(__GNUC__)
+#define VBGO_NOINLINE __attribute__((noinline))
+#else
+#define VBGO_NOINLINE
+#endif
+static VBGO_NOINLINE void VbgoAffineRun(uint8 *target, int x, unsigned int offset, unsigned int run, uint32 p, uint32 bgsc, uint32 cbits,
+                          unsigned int cell, int fills, uint32_t *row, uint16_t *crow, uint32 wbit);
+
 static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, bool overplane, uint16 overplane_char, uint32 SourceX, uint32 SourceY, uint32 scx, uint32 scy, uint16 DestX, uint16 DestY, uint16 DestWidth, uint16 DestHeight)
 {
  int x;
@@ -146,6 +154,31 @@ static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, b
 
    x += 7;
    SourceX += 8;
+  }
+  else if(vbgo_row) /* VirtualBoyGo */
+  {
+   /* (the rest of this character's row inside the line, or what is left of the line: one run) */
+   const unsigned int offset = SourceX & 7;
+   unsigned int run = 8 - offset;
+   uint32 p = CHR16[char_no * 8 + char_sub_y];
+   if(run > (unsigned int)(final_x - x + 1))
+    run = final_x - x + 1;
+   if(char_no != used_chr)
+   {
+    USE_BG_CHR(char_no);
+    used_chr = char_no;
+   }
+   if(bgsc & 0x2000)
+   {
+    p = ((p >> 2) & 0x3333) | ((p & 0x3333) << 2);
+    p = ((p >> 4) & 0x0F0F) | ((p & 0x0F0F) << 4);
+    p = ((p >> 8) & 0x00FF) | ((p & 0x00FF) << 8);
+   }
+   p = (p >> (offset * 2)) & ((1u << (run * 2)) - 1);
+   VbgoAffineRun(target, x, offset, run, p, bgsc, vbgo_bits | VBGO_TT_BG_BITS(char_no, 0, char_sub_y, palette_selector, 0), vbgo_cell,
+                 vbgo_tt_fills_from(char_no, vbgo_cell), vbgo_row, vbgo_crow, vbgo_wbit);
+   x += run - 1;
+   SourceX += run;
   }
   else
   {
