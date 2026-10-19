@@ -738,13 +738,19 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             ++m_paintStateRight;
         }
     }
+    // (a repeat for the same pass's hashes would find every slot resolved already)
+    const uint32_t *resolvedFor = nullptr;
+    auto resolveSlots = [&](const uint32_t *hashes) {
+        if (hashes != resolvedFor)
+            ResolveSlots(hashes), resolvedFor = hashes;
+    };
     std::array<uint64_t, kBands> keep{}, keepRight{}; // (bit per cell)
     uint8_t keptCell[kBands][kGridW] = {}, keptRightCell[kBands][kGridW] = {}; // (the same, a byte each - 64-bit shifts cost PowerPC)
     if (have[0] && view[0].clut && view[0].cell_version && view[0].band_chr)
     {
         static const uint32_t kNoSlots[2048 / 32] = {};
         if (pack)
-            ResolveSlots(view[0].hashes);
+            resolveSlots(view[0].hashes);
         const uint32_t *ambiguous = pack ? m_ambiguousSlots : kNoSlots;
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
         {
@@ -814,7 +820,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             const vbgo_tt_eye_view &v = view[0];
             const uint8_t *const leftBits = vbgo_vip_eye_bits(0);
             const uint32_t *const leftClut = vbgo_vip_eye_clut(0);
-            ResolveSlots(v.hashes);
+            resolveSlots(v.hashes);
             const uint32_t *markerSlots = m_markerSlots;
             uint32_t anyBits = 0;
             for (unsigned i = 0; i < 2048 / 32; ++i)
@@ -1209,7 +1215,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 taggedBands[c] |= (hi >> (c - 32) & 1) << b;
         }
         if (pack)
-            ResolveSlots(v.hashes);
+            resolveSlots(v.hashes);
         if (eye == 1 && pairs)
             reestimated = EstimatePairs(view) > 0;
         if (eye == 1 && pairs)
