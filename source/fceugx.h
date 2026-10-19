@@ -92,14 +92,6 @@ enum {
 #define VIDEO_FIXED_RATIO_MAX 2 // (3x of 224 rows won't fit any output mode)
 
 enum {
-	VIDEO_HW_SOFTEN_OFF = 0,
-	VIDEO_HW_SOFTEN_AUTO,
-	VIDEO_HW_SOFTEN_SHARP,
-	VIDEO_HW_SOFTEN_SOFT,
-	VIDEO_HW_SOFTEN_LENGTH
-};
-
-enum {
 	VIDEOMODE_AUTO = 0,
 	VIDEOMODE_NTSC,
 	VIDEOMODE_PROGRESSIVE,
@@ -108,22 +100,6 @@ enum {
 	VIDEOMODE_ORIGINAL_240P,
     VIDEOMODE_240P_PAL,
 	VIDEOMODE_LENGTH
-};
-
-enum {
-	HIDEOVERSCAN_OFF = 0,
-	HIDEOVERSCAN_VERTICAL,
-	HIDEOVERSCAN_HORIZONTAL,
-	HIDEOVERSCAN_BOTH,
-	HIDEOVERSCAN_LENGTH
-};
-
-enum {
-	TIMING_NTSC = 0,
-	TIMING_PAL,
-	TIMING_AUTOMATIC,
-	TIMING_DENDY,
-	TIMING_LENGTH
 };
 
 enum
@@ -177,9 +153,6 @@ struct SEmuSettings
 	int		videoAspectRatioCorrection;
 	int		videoFixedRatio; // 0 off, else rows per Virtual Boy row
 	bool	videoBilinearFilter;
-	int		videoHardwareSoften;
-	bool	videoScanlines;
-	int		videoUpscalingFilter;
 	float	videoZoomHor;
 	float	videoZoomVert;
 	int		videoXshift;
@@ -189,11 +162,7 @@ struct SEmuSettings
     int tintCustom;                  // Tint Color: 0 Default (Red), 1 Custom
     int tintRed, tintGreen, tintBlue; // the custom color, hundredths (0-100, steps of 5)
     bool colorPacks;
-	int		hideOverscan; // 0 = off, 1 = vertical, 2 = horizontal, 3 = both
 
-	bool	crosshair;
-	bool	spriteLimit;
-	int		timing;
 	int		wiimoteOrientation;
 	int		exitAction;
 	int		musicVolume;

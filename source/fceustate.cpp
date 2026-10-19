@@ -213,7 +213,6 @@ bool SavePreviewImg (char * filepath, bool silent)
 	{
 		char screenpath[MAXPATHLEN];
 		snprintf(screenpath, sizeof(screenpath), "%s", filepath);
-		screenpath[strlen(screenpath)] = 0;
 		strcat(screenpath, ".png");
 		SaveFile((char *)gameScreenPng.buffer, screenpath, gameScreenPng.size, silent);
 	}

@@ -60,7 +60,6 @@ private:
     std::array<uint32_t, 4> m_quadOf{};
     std::array<std::array<uint32_t, 4>, 256> m_quad{};
     std::array<ShadeRgb, 4> m_palette{};
-    // Gradient mode
     bool m_gradient = false;
     std::array<ShadeRgb, 5> m_stops{};
     int m_referenceLevel = -1, m_fixedReference = -1; // 1-63

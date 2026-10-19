@@ -577,7 +577,6 @@ namespace
         return "";
     }
 
-    // The scheme the options (and the game) call for, set up for coloring.
     void ApplyColors()
     {
         int multicolor = -1, gradient = -1, tint = -1;

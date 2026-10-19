@@ -1918,7 +1918,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
 
                     if ((t & kRunMask) != runKey)
                     {
-                        // A new run (see Run): the layers' extents, the brightness, and the rest.
                         runKey = t & kRunMask;
                         runHi = vbgo_tag_hi(t), runLo = vbgo_tag_lo(t) & kRunMaskLo;
                         countRun(runKey, x, y, rawPixel >> 26, firstHere ? nullptr : &sums, sumsAt);
@@ -2766,7 +2765,7 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
             }
         };
 
-        // (as search with stride and step 1)
+        // (like the coarse search, at step 1)
         auto fine = [&](int lo, int hi, int &bestD) {
             lo = std::max(-kMaxDisparity, lo), hi = std::min(kMaxDisparity, hi);
             int best = -1;

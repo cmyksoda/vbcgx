@@ -32,7 +32,6 @@
 #include "filelist.h"
 #include "menu.h"
 #include "fceuload.h"
-#include "filelist.h"
 #include "libgui/Gui.h"
 #include "menuart.h"
 #include "utils/decompress.h"
@@ -81,7 +80,6 @@ static GuiText * settingText = nullptr;
 static GuiText * settingText2 = nullptr;
 static int lastMenu = MENU_NONE;
 static int mapMenuCtrl = 0;
-static int mapMenuCtrlNES = 0;
 
 static int currentLanguage = -1;
 
@@ -2386,7 +2384,7 @@ static int MenuGameSettings()
 /****************************************************************************
  * MenuSettingsMappings
  ***************************************************************************/
-static int MenuSettingsMappings() { mapMenuCtrlNES = CTRL_PAD; return MENU_GAMESETTINGS_MAPPINGS_CTRL; }
+static int MenuSettingsMappings() { return MENU_GAMESETTINGS_MAPPINGS_CTRL; }
 
 static int MenuSettingsMappingsController()
 {
@@ -2399,7 +2397,7 @@ static int MenuSettingsMappingsController()
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,30);
 
-	sprintf(menuSubtitle, "%s", ctrlName[mapMenuCtrlNES]);
+	sprintf(menuSubtitle, "%s", ctrlName[CTRL_PAD]);
 	GuiText subtitleTxt(menuSubtitle, 20, MenuPaletteCurrent().textOnAccent);
 	subtitleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	subtitleTxt.setPosition(50,60);
@@ -2516,18 +2514,15 @@ static int MenuSettingsMappingsController()
 #ifndef HW_DOL
 
 
-	if(mapMenuCtrlNES == CTRL_PAD)
-	{
-		if(controller[0]->getPadData().hw_connected[INPUT_HW_DRC]) {
-			gamecubeBtn.setPosition(-200, 120);
-			nunchukBtn.setPosition(200, 120);
-			w.append(&drcBtn);
-		}
-
-		w.append(&classicBtn);
-		w.append(&nunchukBtn);
-		w.append(&wiiuproBtn);
+	if(controller[0]->getPadData().hw_connected[INPUT_HW_DRC]) {
+		gamecubeBtn.setPosition(-200, 120);
+		nunchukBtn.setPosition(200, 120);
+		w.append(&drcBtn);
 	}
+
+	w.append(&classicBtn);
+	w.append(&nunchukBtn);
+	w.append(&wiiuproBtn);
 #endif
 	w.append(&backBtn);
 
@@ -2693,7 +2688,7 @@ static int MenuSettingsMappingsMap()
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,30);
 
-	sprintf(menuSubtitle, "%s - %s", textTranslator->getText(ctrlName[mapMenuCtrlNES]), textTranslator->getText(ctrlrName[mapMenuCtrl]));
+	sprintf(menuSubtitle, "%s - %s", textTranslator->getText(ctrlName[CTRL_PAD]), textTranslator->getText(ctrlrName[mapMenuCtrl]));
 	GuiText subtitleTxt(menuSubtitle, 20, MenuPaletteCurrent().textOnAccent);
 	subtitleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	subtitleTxt.setPosition(50,60);
@@ -2773,7 +2768,7 @@ static int MenuSettingsMappingsMap()
 
 			if(choice == 1)
 			{
-				ResetControls(mapMenuCtrlNES, mapMenuCtrl);
+				ResetControls(CTRL_PAD, mapMenuCtrl);
 				firstRun = true;
 			}
 		}
@@ -2786,7 +2781,7 @@ static int MenuSettingsMappingsMap()
 
 			if (!buttonMappingCancelled)
 			{
-				btnmap[mapMenuCtrlNES][mapMenuCtrl][ret] = buttonPressed;
+				btnmap[CTRL_PAD][mapMenuCtrl][ret] = buttonPressed;
 			}
 		}
 
@@ -2797,9 +2792,9 @@ static int MenuSettingsMappingsMap()
 			for(i=0; i < options.length; i++)
 			{
 				options.value[i][0] = 0; // (unmapped, or a button this controller doesn't list)
-				for(j=0; j < ctrlr_def[mapMenuCtrl].num_btns && btnmap[mapMenuCtrlNES][mapMenuCtrl][i]; j++)
+				for(j=0; j < ctrlr_def[mapMenuCtrl].num_btns && btnmap[CTRL_PAD][mapMenuCtrl][i]; j++)
 				{
-					if(btnmap[mapMenuCtrlNES][mapMenuCtrl][i] == ctrlr_def[mapMenuCtrl].map[j].btn)
+					if(btnmap[CTRL_PAD][mapMenuCtrl][i] == ctrlr_def[mapMenuCtrl].map[j].btn)
 					{
 						sprintf(options.value[i], "%s", ctrlr_def[mapMenuCtrl].map[j].name);
 						break;
@@ -3230,7 +3225,6 @@ static int MenuVBOptions(bool colors)
     enum { kColorsRow, kPacksRow, kMulticolorRow, kGradientRow, kTintColorRow, kCustomTintRow };
     const char *colorNames[] = {"Colors", "Color Packs", "Multicolor Palette", "Gradient", "Tint Color", "Custom Tint Color"};
     int rows[6], rowCount = 0;
-    // (a mode's own rows show only for it)
     auto layoutColorRows = [&]() {
         rowCount = 0;
         rows[rowCount++] = kColorsRow;

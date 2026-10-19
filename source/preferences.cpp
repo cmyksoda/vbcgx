@@ -164,7 +164,6 @@ preparePrefsData ()
 	createXMLSetting("videoMode", "Output Mode", toStr(EmuSettings.videoMode));
 	createXMLSetting("videoScaling", "Aspect Ratio Correction", toStr(EmuSettings.videoAspectRatioCorrection));
 	createXMLSetting("videoFixedRatio", "Fixed Pixel Ratio", toStr(EmuSettings.videoFixedRatio));
-	createXMLSetting("hideOverscan", "Cropping", toStr(EmuSettings.hideOverscan));
 	createXMLSetting("currentPalette", "Palette", toStr(EmuSettings.currentPalette));
     createXMLSetting("colorPacks", "Color Packs", BtoStr(EmuSettings.colorPacks));
     createXMLSetting("tint", "tint", toStr(EmuSettings.tint));
@@ -175,19 +174,10 @@ preparePrefsData ()
     createXMLSetting("gradient", "gradient", toStr(EmuSettings.gradient));
     createXMLSetting("colorMode", "colorMode", toStr(EmuSettings.colorMode));
 	createXMLSetting("videoBilinearFilter", "Bilinear Filtering", BtoStr(EmuSettings.videoBilinearFilter));
-	createXMLSetting("videoHardwareSoften", "Hardware Soften", toStr(EmuSettings.videoHardwareSoften));
-	createXMLSetting("videoScanlines", "Scanlines", BtoStr(EmuSettings.videoScanlines));
-	createXMLSetting("videoUpscalingFilter", "Upscaling Filter Method", toStr(EmuSettings.videoUpscalingFilter));
 	createXMLSetting("videoZoomHor", "Horizontal Zoom Level", FtoStr(EmuSettings.videoZoomHor));
 	createXMLSetting("videoZoomVert", "Vertical Zoom Level", FtoStr(EmuSettings.videoZoomVert));
 	createXMLSetting("videoXshift", "Horizontal Video Shift", toStr(EmuSettings.videoXshift));
 	createXMLSetting("videoYshift", "Vertical Video Shift", toStr(EmuSettings.videoYshift));
-
-	createXMLSection("Emulation", "Emulation Settings");
-
-	createXMLSetting("timing", "Timing", toStr(EmuSettings.timing));
-	createXMLSetting("spriteLimit", "Sprite Limit", BtoStr(EmuSettings.spriteLimit));
-	createXMLSetting("crosshair", "Zapper Crosshair", BtoStr(EmuSettings.crosshair));
 
 	createXMLSection("Menu", "Menu Settings");
 
@@ -343,7 +333,6 @@ decodePrefsData ()
 	loadXMLSetting(&EmuSettings.videoMode, "videoMode");
 	loadXMLSetting(&EmuSettings.videoAspectRatioCorrection, "videoScaling");
 	loadXMLSetting(&EmuSettings.videoFixedRatio, "videoFixedRatio");
-	loadXMLSetting(&EmuSettings.hideOverscan, "hideOverscan");
 	loadXMLSetting(&EmuSettings.currentPalette, "currentPalette");
     loadXMLSetting(&EmuSettings.colorPacks, "colorPacks");
     loadXMLSetting(&EmuSettings.tint, "tint");
@@ -354,18 +343,10 @@ decodePrefsData ()
     loadXMLSetting(&EmuSettings.gradient, "gradient");
     loadXMLSetting(&EmuSettings.colorMode, "colorMode");
 	loadXMLSetting(&EmuSettings.videoBilinearFilter, "videoBilinearFilter");
-	loadXMLSetting(&EmuSettings.videoHardwareSoften, "videoHardwareSoften");
-	loadXMLSetting(&EmuSettings.videoUpscalingFilter, "videoUpscalingFilter");
-	loadXMLSetting(&EmuSettings.videoScanlines, "videoScanlines");
 	loadXMLSetting(&EmuSettings.videoZoomHor, "videoZoomHor");
 	loadXMLSetting(&EmuSettings.videoZoomVert, "videoZoomVert");
 	loadXMLSetting(&EmuSettings.videoXshift, "videoXshift");
 	loadXMLSetting(&EmuSettings.videoYshift, "videoYshift");
-
-	// Emulation Settings
-
-	loadXMLSetting(&EmuSettings.timing, "timing");
-	loadXMLSetting(&EmuSettings.spriteLimit, "spriteLimit");
 
 	// Menu Settings
 
@@ -378,8 +359,6 @@ decodePrefsData ()
 	loadXMLSetting(&EmuSettings.hideSramSaving, "hideSramSaving");
 
 	// Controller Settings
-
-	loadXMLSetting(&EmuSettings.crosshair, "crosshair");
 
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_GAMECUBE], "btnmapping_pad_gcpad");
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_CLASSIC], "btnmapping_pad_classic");
@@ -452,18 +431,12 @@ void FixInvalidSettings()
 		EmuSettings.sfxVolume = 40;
 	if(EmuSettings.language < 0 || EmuSettings.language >= LANG_LENGTH)
 		EmuSettings.language = LANG_ENGLISH;
-	if(!(EmuSettings.videoHardwareSoften >= VIDEO_HW_SOFTEN_OFF && EmuSettings.videoHardwareSoften < VIDEO_HW_SOFTEN_LENGTH))
-		EmuSettings.videoHardwareSoften = VIDEO_HW_SOFTEN_AUTO;
 	if(!(EmuSettings.videoAspectRatioCorrection >= SCALING_MAINTAIN_ASPECT && EmuSettings.videoAspectRatioCorrection < SCALING_LENGTH))
 		EmuSettings.videoAspectRatioCorrection = SCALING_MAINTAIN_ASPECT;
 	if(!(EmuSettings.videoFixedRatio >= 0 && EmuSettings.videoFixedRatio <= VIDEO_FIXED_RATIO_MAX))
 		EmuSettings.videoFixedRatio = 0;
 	if(!(EmuSettings.videoMode >= VIDEOMODE_AUTO && EmuSettings.videoMode < VIDEOMODE_LENGTH) || !VideoModeAvailable(EmuSettings.videoMode))
 		EmuSettings.videoMode = VIDEOMODE_AUTO;
-#if defined(HW_RVL) || defined(HW_DOL) || defined(__WIIU__)
-	if(!(EmuSettings.videoUpscalingFilter >= UPSCALE_NONE && EmuSettings.videoUpscalingFilter < NUM_UPSCALE_FILTERS))
-		EmuSettings.videoUpscalingFilter = UPSCALE_NONE;
-#endif
 	if(!(EmuSettings.wiimoteOrientation >= WIIMOTE_ORIENTATION_VERTICAL && EmuSettings.wiimoteOrientation < WIIMOTE_ORIENTATION_LENGTH))
 		EmuSettings.wiimoteOrientation = WIIMOTE_ORIENTATION_VERTICAL;
 }
@@ -519,18 +492,8 @@ void DefaultSettings()
 	ResetControls(); // controller button mappings
 
 	EmuSettings.videoMode = VIDEOMODE_AUTO;
-	EmuSettings.hideOverscan = HIDEOVERSCAN_BOTH;
 	EmuSettings.currentPalette = 0;
 	EmuSettings.videoBilinearFilter = false;
-	EmuSettings.videoHardwareSoften = VIDEO_HW_SOFTEN_SHARP;
-	EmuSettings.videoScanlines = false;
-#if defined(HW_RVL) || defined(HW_DOL)
-	EmuSettings.videoUpscalingFilter = UPSCALE_NONE;
-#elif defined(__WIIU__)
-	EmuSettings.videoUpscalingFilter = UPSCALE_SHARP_BILINEAR;
-#else
-	EmuSettings.videoUpscalingFilter = 0;
-#endif
 
 	// (a 16:9 TV is told from the system setting when drawing)
 	EmuSettings.videoAspectRatioCorrection = SCALING_MAINTAIN_ASPECT;
@@ -540,9 +503,6 @@ void DefaultSettings()
 	EmuSettings.tintCustom = 0;
 	EmuSettings.tintRed = 100, EmuSettings.tintGreen = 0, EmuSettings.tintBlue = 0;
     EmuSettings.colorPacks = true;
-    EmuSettings.timing = TIMING_AUTOMATIC;
-	EmuSettings.crosshair = true; // show zapper crosshair
-	EmuSettings.spriteLimit = true; // enforce 8 sprite limit
 
 	EmuSettings.wiimoteOrientation = WIIMOTE_ORIENTATION_VERTICAL;
 	EmuSettings.autoloadGame = false;
