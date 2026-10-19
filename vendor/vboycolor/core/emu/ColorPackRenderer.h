@@ -157,6 +157,8 @@ private:
     std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_depthCells{}; // (bit per left-eye cell PaintDepth last painted into)
     // [eye][buffer][column * bands + band]: a column's bands together (in the renderer itself, not on the heap: MEM1 on the Wii)
     std::array<std::array<std::array<BandColumn, (VBGO_TT_HEIGHT / 8) * VBGO_TT_WIDTH>, 2>, 2> m_bandColumns;
+    // [eye][buffer][column]: a bit per band whose BandColumn holds a run; only those are read, the rest of first is stale
+    std::array<std::array<std::array<uint32_t, VBGO_TT_WIDTH>, 2>, 2> m_bandsActive{};
     // What painting a band depends on beyond its drawing (bumps m_paintState when it changes).
     struct PaintState
     {

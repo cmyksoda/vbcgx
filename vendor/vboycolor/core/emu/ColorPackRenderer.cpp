@@ -689,8 +689,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     const int buffer = have[0] ? (view[0].fb & 1) : 0, rightBuffer = have[1] ? (view[1].fb & 1) : 0;
     std::array<Band, kBands> &bands = m_bands[0][buffer];
     auto &bandColumns = m_bandColumns[0][buffer];
+    auto &bandsActive = m_bandsActive[0][buffer];
     std::array<Band, kBands> &rightBands = m_bands[1][rightBuffer];
     auto &rightColumns = m_bandColumns[1][rightBuffer];
+    auto &rightActive = m_bandsActive[1][rightBuffer];
     {
         PaintState state;
         state.pack = pack;
@@ -736,6 +738,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     };
     std::array<uint64_t, kBands> keep{}, keepRight{}; // (bit per cell)
     uint8_t keptCell[kBands][kGridW] = {}, keptRightCell[kBands][kGridW] = {}; // (the same, a byte each - 64-bit shifts cost PowerPC)
+    uint32_t keptBands[kGridW] = {}, keptRightBands[kGridW] = {}; // (per cell column, a bit per band: the same again)
     if (have[0] && view[0].clut && view[0].cell_version && view[0].band_chr)
     {
         static const uint32_t kNoSlots[2048 / 32] = {};
@@ -755,6 +758,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 const uint32_t version = view[0].cell_version[b * kGridW + c];
                 keptCell[b][c] = version && band.version[c] == version;
                 keep[b] |= static_cast<uint64_t>(keptCell[b][c]) << c;
+                keptBands[c] |= static_cast<uint32_t>(keptCell[b][c]) << b;
             }
         }
     }
@@ -779,6 +783,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 const uint32_t version = view[1].cell_version[b * kGridW + c];
                 keptRightCell[b][c] = version && band.version[c] == version;
                 keepRight[b] |= static_cast<uint64_t>(keptRightCell[b][c]) << c;
+                keptRightBands[c] |= static_cast<uint32_t>(keptRightCell[b][c]) << b;
             }
         }
     for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
@@ -1283,8 +1288,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 Run run;
                 bool runSetUp = true;
                 const uint32_t tagged = taggedBands[x >> 3];
-                for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
+                uint32_t &active = rightActive[x];
+                // (only these bands do anything: the others are kept with nothing, or untagged with nothing to clear)
+                for (uint32_t todo = active | (tagged & ~keptRightBands[x >> 3]); todo; todo &= todo - 1)
                 {
+                    const uint32_t b = static_cast<uint32_t>(__builtin_ctz(todo));
                     const uint32_t bandKey = v.band_key[b];
                     BandColumn &here = rightColumns[x * kBands + b];
                     const bool kept = keptRightCell[b][x >> 3];
@@ -1307,7 +1315,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     if (!(tagged >> b & 1))
                     {
                         if (!kept)
-                            here.first = kNoKey; // (no tags there: the loop below would find none)
+                            active &= ~(1u << b); // (no tags there: the loop below would find none)
                         continue;
                     }
                     Band &band = rightBands[b];
@@ -1379,9 +1387,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     if (!kept)
                     {
                         if (counted)
-                            here.last = runKey, here.first |= slowHere ? kSlowColumn : 0;
+                            here.last = runKey, here.first |= slowHere ? kSlowColumn : 0, active |= 1u << b;
                         else
-                            here.first = kNoKey;
+                            active &= ~(1u << b);
                     }
                 }
             }
@@ -1440,8 +1448,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             int nearCell = -1; // (context: the last pixel's markers nearby, by cell and layer)
             NearBits nearBits{};
             const uint32_t tagged = taggedBands[x >> 3];
-            for (uint32_t b = 0; b < static_cast<uint32_t>(kBands); ++b)
+            uint32_t &active = bandsActive[x];
+            // (only these bands do anything: the others are kept with nothing, or untagged with nothing to clear)
+            for (uint32_t todo = active | (tagged & ~keptBands[x >> 3]); todo; todo &= todo - 1)
             {
+            const uint32_t b = static_cast<uint32_t>(__builtin_ctz(todo));
             const uint32_t bandKey = v.band_key[b];
             BandColumn &here = bandColumns[x * kBands + b];
             const bool kept = keptCell[b][x >> 3];
@@ -1466,7 +1477,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             if (!(tagged >> b & 1))
             {
                 if (!kept)
-                    here.first = kNoKey; // (no tags there: the loop below would find none)
+                    active &= ~(1u << b); // (no tags there: the loop below would find none)
                 continue;
             }
             Band &band = bands[b];
@@ -1621,9 +1632,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             if (!kept)
             {
                 if (counted)
-                    here.last = runKey, here.first |= slowHere ? kSlowColumn : 0;
+                    here.last = runKey, here.first |= slowHere ? kSlowColumn : 0, active |= 1u << b;
                 else
-                    here.first = kNoKey;
+                    active &= ~(1u << b);
             }
             }
         }
