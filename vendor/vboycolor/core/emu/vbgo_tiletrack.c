@@ -76,9 +76,10 @@ static int s_lazy_from[VBGO_TT_SLOTS];
 static uint64_t s_stale[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 /* Per cell, the worlds its tags showed as last drawn (bit per world; all: unknown). */
 static uint32_t s_cell_worlds[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
-/* The slot and block cpu_fb_write last reset (slot * VBGO_TT_BLOCKS + block), -1 once anything else may have
- * written their stamp, cell versions, black cells or worlds. */
-static int s_cpu_reset = -1;
+/* Per slot, the blocks (a bit each) cpu_fb_write has reset, none once anything else may have written their stamp,
+ * cell versions, black cells or worlds. */
+static uint32_t s_cpu_reset[VBGO_TT_SLOTS];
+static void ForgetCpuResets(void) { memset(s_cpu_reset, 0, sizeof(s_cpu_reset)); }
 static uint32_t s_versions;
 /* The block being drawn as it was (this buffer's last pass's, if s_old_valid),
  * and what that pass's copies said about tiles and sprites, to tell which
@@ -135,7 +136,7 @@ static int FreeSlot(void)
  * are forgotten (their old stamps would otherwise come round again). */
 static void RestampSlot(int k)
 {
-   s_cpu_reset = -1;
+   ForgetCpuResets();
    unsigned b;
    for (b = 0; b < VBGO_TT_BLOCKS; b++)
    {
@@ -156,7 +157,7 @@ static void RestampSlot(int k)
  * left untouched for 65535 passes can't come back to life. */
 static void NextStamp(int keep)
 {
-   s_cpu_reset = -1;
+   ForgetCpuResets();
    if (++s_next_stamp == 0)
    {
       int k;
@@ -260,7 +261,7 @@ static void Unshare(unsigned fb, int lazily)
    int from, to;
    if (s_slot[fb] != s_slot[fb ^ 1])
       return;
-   s_cpu_reset = -1;
+   ForgetCpuResets();
    from = s_slot[fb];
    to = FreeSlot();
    Settle(from); /* (no chains) */
@@ -292,7 +293,7 @@ static void Unshare(unsigned fb, int lazily)
 /* New tracking settings: no tags drawn before can stand for this pass's. */
 static void ForgetBlocks(void)
 {
-   s_cpu_reset = -1;
+   ForgetCpuResets();
    s_settings_serial++;
    memset(s_block_stamp, 0, sizeof(s_block_stamp));
    memset(s_cell_version, 0, sizeof(s_cell_version));
@@ -376,7 +377,7 @@ bool vbgo_tiletrack_is_enabled(void) { return vbgo_tt_on != 0; }
 
 void vbgo_tiletrack_reset(void)
 {
-   s_cpu_reset = -1;
+   ForgetCpuResets();
    memset(s_tags, 0, sizeof(s_tags));
    memset(s_lazy, 0, sizeof(s_lazy));
    memset(s_block_stamp, 0, sizeof(s_block_stamp));
@@ -395,7 +396,7 @@ void vbgo_tiletrack_reset(void)
 
 void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr)
 {
-   s_cpu_reset = -1;
+   ForgetCpuResets();
    Unshare(fb & 1, 0);
    Settle(s_slot[fb & 1]);
    SettleFrom(s_slot[fb & 1]);
@@ -428,7 +429,7 @@ void vbgo_tiletrack_set_fill_cells(const uint8_t *bits)
 void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *chr_ram, const uint16_t *dram,
                                 unsigned block_no, unsigned fb, const uint8_t *jplt)
 {
-   s_cpu_reset = -1;
+   ForgetCpuResets();
    if (!vbgo_tt_on)
       return;
    fb &= 1;
@@ -611,7 +612,7 @@ static int BlackCell(unsigned c)
 
 void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same_pixels, uint64_t unchanged)
 {
-   s_cpu_reset = -1;
+   ForgetCpuResets();
    uint32_t *version, fresh = 0;
    uint64_t was_black, black = 0;
    unsigned c;
@@ -698,7 +699,7 @@ void vbgo_tiletrack_share_pass(unsigned fb, unsigned src_fb)
 
 void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
 {
-   s_cpu_reset = -1;
+   ForgetCpuResets();
    unsigned e, x, y;
    int from, to;
    uint16_t old_stamp;
@@ -779,16 +780,18 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
       const unsigned column = o / 64, row = (o % 64) * 4;
       if (column >= VBGO_TT_WIDTH)
          continue;
-      for (p = 0; p < 4; p++)
-         s_tags[slot][lr & 1][column * VBGO_TT_COLUMN + row + p] = 0;
+      /* (a cell that may hold no tag has all of them 0 already) */
+      if (row / 8 >= VBGO_TT_BLOCKS || (s_tagged[slot][row / 8] >> (column / 8) & 1))
+         for (p = 0; p < 4; p++)
+            s_tags[slot][lr & 1][column * VBGO_TT_COLUMN + row + p] = 0;
       /* (a block reset again with nothing written there since is already as this leaves it) */
-      if (row / 8 < VBGO_TT_BLOCKS && s_cpu_reset != (int)(slot * VBGO_TT_BLOCKS + row / 8))
+      if (row / 8 < VBGO_TT_BLOCKS && !(s_cpu_reset[slot] >> (row / 8) & 1))
       {
          s_block_stamp[slot][row / 8] = 0;
          memset(s_cell_version[slot][row / 8], 0, sizeof(s_cell_version[0][0]));
          s_cell_black[slot][row / 8] = 0;
          memset(s_cell_worlds[slot][row / 8], 0xFF, sizeof(s_cell_worlds[0][0]));
-         s_cpu_reset = (int)(slot * VBGO_TT_BLOCKS + row / 8);
+         s_cpu_reset[slot] |= 1u << (row / 8);
       }
    }
 }
