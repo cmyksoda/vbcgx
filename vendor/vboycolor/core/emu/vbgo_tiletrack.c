@@ -84,7 +84,7 @@ static uint32_t s_versions;
  * and what that pass's copies said about tiles and sprites, to tell which
  * cells come out the same. */
 static uint32_t s_old_tags[2][VBGO_TT_WIDTH * 8];
-static uint16_t s_old_cells[2][VBGO_TT_WIDTH * 8];
+static uint16_t s_old_cells[2][VBGO_TT_WIDTH * 8] __attribute__((aligned(32))); /* (per cell: its 8 rows of 8) */
 static int s_old_valid;
 static uint32_t s_prev_hash[2048];
 static uint16_t s_prev_oam[VBGO_OAM_HALFWORDS];
@@ -549,11 +549,13 @@ void vbgo_tiletrack_block_drawing(bool compare)
          {
             /* (spelled out: on the Wii a memcpy call per column costs more than the copy itself) */
             const uint32_t *from = old_tags[e] + x * VBGO_TT_COLUMN;
-            unsigned y;
             to[0] = from[0], to[1] = from[1], to[2] = from[2], to[3] = from[3];
             to[4] = from[4], to[5] = from[5], to[6] = from[6], to[7] = from[7];
+         }
+         {
+            unsigned y;
             for (y = 0; y < 8; y++)
-               s_old_cells[e][x * 8 + y] = old_cells[e][y * VBGO_TT_CELL_ROW + x];
+               memcpy(&s_old_cells[e][c * 64 + y * 8], &old_cells[e][y * VBGO_TT_CELL_ROW + c * 8], 8 * sizeof(uint16_t));
          }
       }
    ClearCells(lazy ? s_stale[s_block_slot][s_block_no] : tagged);
@@ -570,7 +572,7 @@ static int SameCell(unsigned c)
       for (x = c * 8; x < c * 8 + 8; x++)
       {
          const uint32_t *was = &s_old_tags[e][x * 8], *is = vbgo_tt_dst[e] + x * VBGO_TT_COLUMN;
-         const uint16_t *was_cell = &s_old_cells[e][x * 8], *is_cell = vbgo_tt_cdst[e] + x;
+         const uint16_t *was_cell = &s_old_cells[e][c * 64 + (x - c * 8)], *is_cell = vbgo_tt_cdst[e] + x;
          /* (the column's 8 tags at once: most cells that differ differ there) */
          if ((was[0] ^ is[0]) | (was[1] ^ is[1]) | (was[2] ^ is[2]) | (was[3] ^ is[3]) | (was[4] ^ is[4]) |
              (was[5] ^ is[5]) | (was[6] ^ is[6]) | (was[7] ^ is[7]))
@@ -580,7 +582,7 @@ static int SameCell(unsigned c)
             uint64_t t;
             if (!is[y])
                continue;
-            if (was_cell[y] != is_cell[y * VBGO_TT_CELL_ROW])
+            if (was_cell[y * 8] != is_cell[y * VBGO_TT_CELL_ROW])
                return 0;
             t = vbgo_tag_compose(is[y], is_cell[y * VBGO_TT_CELL_ROW]);
             if (s_block_chr_changed && (s_chr_changed[VBGO_TAG_CHAR(t) >> 5] >> (VBGO_TAG_CHAR(t) & 31) & 1))
