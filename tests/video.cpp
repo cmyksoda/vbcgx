@@ -2,14 +2,20 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+
 static unsigned offset(unsigned x, unsigned y, unsigned w)
 {
     return ((y / 4) * (w / 4) + x / 4) * 64 + ((y % 4) * 4 + x % 4) * 2;
 }
+
 static void check(bool ok, const char *reason)
 {
-    if (!ok) { std::fprintf(stderr, "FAIL: %s\n", reason); std::exit(1); }
+    if (!ok) {
+        std::fprintf(stderr, "FAIL: %s\n", reason);
+        std::exit(1);
+    }
 }
+
 int main()
 {
     for (unsigned sourceH : {224u, 448u}) {
@@ -23,6 +29,7 @@ int main()
             check(red > 0, "every mono/top-bottom source row survives 240p reduction");
         }
     }
+
     std::vector<uint8_t> input(768 * 4 * 4), output(640 * 4 * 4);
     for (unsigned column = 0; column < 768; ++column) {
         std::fill(input.begin(), input.end(), 0);
@@ -32,9 +39,12 @@ int main()
         for (unsigned x = 0; x < 640; ++x) blue += output[offset(x, 0, 640) + 33];
         check(blue > 0, "every side-by-side source column survives reduction");
     }
+
     std::fill(input.begin(), input.end(), 0);
     for (size_t i = 0; i < input.size(); i += 4) {
-        input[i] = 17; input[i + 1] = 53; input[i + 2] = 129;
+        input[i] = 17;
+        input[i + 1] = 53;
+        input[i + 2] = 129;
     }
     ReduceVBFrame(input.data(), 768, 4, 768 * 4, output.data(), 640, 4);
     for (unsigned x = 0; x < 640; ++x) {

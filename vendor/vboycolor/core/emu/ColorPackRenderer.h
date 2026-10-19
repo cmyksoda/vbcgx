@@ -131,18 +131,22 @@ private:
         static constexpr unsigned kLayers = 8;
         uint32_t slow = 0; // (bands whose first run is a slow one: those need their cell's markers unchanged)
         uint8_t brightest = 0, layers = 0;
-        uint8_t world[kLayers] = {}, top[kLayers] = {}, bottom[kLayers] = {}; // per drawing world: its first and last row
+        // per drawing world: its first and last row
+        uint8_t world[kLayers] = {}, top[kLayers] = {}, bottom[kLayers] = {};
     };
-    struct CellSums // (what a band's 8x8 cells' runs added, as last painted: by field, so a band is read in a few lines)
+    // (what a band's 8x8 cells' runs added, as last painted: by field, so a band is read in a few lines)
+    struct CellSums
     {
         std::array<uint32_t, VBGO_TT_WIDTH / 8> worlds{}; // (as worldsDrawn, with these extents)
         std::array<uint8_t, VBGO_TT_WIDTH / 8> brightest{};
-        std::array<std::array<uint16_t, VBGO_TT_WIDTH / 8>, 32> extent{}; // [colors][cell]: left << 9 | right << 6 | top << 3 | bottom
+        // [colors][cell]: left << 9 | right << 6 | top << 3 | bottom
+        std::array<std::array<uint16_t, VBGO_TT_WIDTH / 8>, 32> extent{};
     };
     struct CellMarks // (a cell's markers, kept apart: the painting loops never read them)
     {
         ContextGroupBits markers; // (left eye: the marker pre-pass's grid cell)
-        ContextGroupBits nearSprites, closeSprites; // (left eye: sprites' markers around it as its slow runs were painted)
+        // (left eye: sprites' markers around it as its slow runs were painted)
+        ContextGroupBits nearSprites, closeSprites;
         uint8_t markerLayer = 0xFF;
     };
     struct BandSums // (what a band's cells add to the frame's bookkeeping, as in addBand)
@@ -157,7 +161,8 @@ private:
         uint32_t worldsState = 0;                    // (m_paintWorlds as it was painted)
         uint8_t onShades = 0; // (right eye: a bit per shade not black, as walked)
         bool summed = false;  // (sums is its cells' as they are)
-        std::array<uint32_t, VBGO_TT_WIDTH / 8> version{}; // (each cell's, as last painted: kept apart, read every frame)
+        // (each cell's, as last painted: kept apart, read every frame)
+        std::array<uint32_t, VBGO_TT_WIDTH / 8> version{};
         BandSums sums;
         CellSums cells;
         std::array<CellMarks, VBGO_TT_WIDTH / 8> marks{};
@@ -165,8 +170,10 @@ private:
         uint64_t nearAny = 0; // (a bit per cell whose nearSprites or closeSprites are not clear)
         std::vector<uint64_t> pairSlots; // cell << 32 | left eye: chr | pairs << 11; right eye: chr | (pair + 1) << 11
         uint64_t contextCells = 0; // (left eye: a bit per cell with a slow run whose colors go by markers nearby)
-        uint64_t markMoves = 0;    // (left eye: a bit per cell whose painting moved a marker in the grid - not to be skipped)
-        uint64_t markCells = 0;    // (right eye: a bit per cell whose runs add markers; a kept cell's other slow columns aren't scanned)
+        // (left eye: a bit per cell whose painting moved a marker in the grid - not to be skipped)
+        uint64_t markMoves = 0;
+        // (right eye: a bit per cell whose runs add markers; a kept cell's other slow columns aren't scanned)
+        uint64_t markCells = 0;
         uint64_t autoCells = 0;    // (left eye: a bit per cell with a pixel in an automatic ramp's color)
     };
     std::array<std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2>, 2> m_bands; // [eye][buffer]
@@ -186,7 +193,8 @@ private:
     static constexpr uint8_t kUnfaded = 0xFE;
     // (in the renderer itself, not on the heap - MEM1 on the Wii: sized for the frontend's rows, a cache line of padding each)
     static constexpr size_t kUnfadedRowBytes = (VBGO_TT_WIDTH + 8) * 4;
-    alignas(32) std::array<std::array<uint8_t, kUnfadedRowBytes * VBGO_TT_HEIGHT>, 2> m_unfaded; // (dcbz clears whole lines)
+    // (dcbz clears whole lines)
+    alignas(32) std::array<std::array<uint8_t, kUnfadedRowBytes * VBGO_TT_HEIGHT>, 2> m_unfaded;
     std::array<uint32_t, 2> m_unfadedWidth{}; // (the picture width each copy is laid out for; 0: none yet)
     std::array<std::array<std::array<uint8_t, VBGO_TT_WIDTH / 8>, VBGO_TT_HEIGHT / 8>, 2> m_unfadedCell{};
     // What painting a band depends on beyond its drawing (bumps m_paintState when it changes).
@@ -244,7 +252,8 @@ private:
     std::array<SlotLayer, 2048> m_slotLayer{};
 
     void ResolveSlots(const uint32_t *hashes);
-    const TileColorPack::Tile *LayerTile(unsigned chr, unsigned world); // the pack's colors for the slot's tile on that layer, or nullptr
+    // the pack's colors for the slot's tile on that layer, or nullptr
+    const TileColorPack::Tile *LayerTile(unsigned chr, unsigned world);
     void SetFadeReference(unsigned level);
     void ClassifyWorlds(const uint16_t *worlds);
 
@@ -260,7 +269,8 @@ private:
     static constexpr int kFigureSize = 128;
     uint32_t m_figureWorlds = 0, m_figuresUsed = ~0u;
     std::array<int16_t, 32> m_worldExtent{};
-    std::array<int16_t, 32> m_lastSize{}; // (the last Paint's size of each layer it drew - bit per layer in m_lastDrawn)
+    // (the last Paint's size of each layer it drew - bit per layer in m_lastDrawn)
+    std::array<int16_t, 32> m_lastSize{};
     uint32_t m_lastDrawn = 0;
     void UpdateAutoColors();
 
@@ -280,7 +290,8 @@ private:
     struct Pair
     {
         uint8_t left = 0, right = 0;
-        uint32_t leftWorlds = 0; // the left picture's worlds (bit per world): left, and any that draw with it for one right world
+        // the left picture's worlds (bit per world): left, and any that draw with it for one right world
+        uint32_t leftWorlds = 0;
         bool sprites = false; // a sprite world's left-only and right-only sprites (left = right = that world)
         std::array<uint16_t, 32> attributes{}; // both worlds' attribute blocks, as last estimated
         uint32_t otherAttributes = 0;          // (a hash of the other left worlds' blocks, as last estimated)
@@ -293,7 +304,8 @@ private:
     uint32_t m_frame = 0;
     // Pairs' disparities, where out of date (once a frame, before the right eye).
     int EstimatePairs(const vbgo_tt_eye_view view[2]);
-    bool PairDue(const Pair &pair, const uint16_t *worlds, std::array<uint16_t, 32> &attributes, uint32_t &others, bool &scrolled) const;
+    bool PairDue(const Pair &pair, const uint16_t *worlds, std::array<uint16_t, 32> &attributes, uint32_t &others,
+                 bool &scrolled) const;
     void EstimatePair(Pair &pair, const uint32_t *leftBits, const uint32_t *rightBits, bool scrolled);
     // (EstimatePairs: the pictures' shades as bit rows, per frame buffer, with what they were gathered from - a
     // cell whose version and band are unchanged keeps its bits when the rest is unchanged too)
@@ -331,13 +343,15 @@ private:
     struct Run
     {
         const TileColorPack::CellTile *cell = nullptr; // its map cell's colors (or the left partner's)
-        const TileColorPack::Tile *tile = nullptr;     // the tile's colors (palette, layer, context or its own) - never null
+        // the tile's colors (palette, layer, context or its own) - never null
+        const TileColorPack::Tile *tile = nullptr;
         const AutoColors::Ramp *ramp = nullptr;        // automatic colors, if on
         int ownPair = -1;                              // a pair's right picture's own tile
         int copyPair = -1;                             // a pair's right picture, a tile its left picture draws too
         bool slow = false;                             // context, ambiguous or a marker: per 8 rows (see Paint)
         bool flash = false;                            // a sprite in a palette showing all its shades alike
-        bool plain = false;                            // none of the above and no map cell colors: just the tile's or automatic colors
+        // none of the above and no map cell colors: just the tile's or automatic colors
+        bool plain = false;
         int band = -1;                                 // (slow: the row of grid cells its markers and tile are for)
         uint32_t pairSlot = 0;                         // (as Band::pairSlots keeps it, 0: none)
     };
@@ -444,8 +458,10 @@ private:
         ContextGroupBits bits, close;
     };
     std::array<std::vector<NearCell>, 32> m_nearCache; // (Near's, per layer and grid cell)
-    std::vector<ContextGroupBits> m_nearSprites;  // per grid cell: sprites' groups with a marker within reach (this frame and the last two)
-    std::array<ContextGroupBits, kGridW * kGridH> m_gridRows, m_gridCloseRows, m_gridHere; // (Paint's scratch for those)
+    // per grid cell: sprites' groups with a marker within reach (this frame and the last two)
+    std::vector<ContextGroupBits> m_nearSprites;
+    // (Paint's scratch for those)
+    std::array<ContextGroupBits, kGridW * kGridH> m_gridRows, m_gridCloseRows, m_gridHere;
     std::vector<uint16_t> m_spreadCells; // (the cells those reached last frame; all of them if m_spreadAll)
     // With layer-bound groups only sprites' context tiles ask, so the cells
     // with markers are kept and a cell's groups worked out when asked (once a frame).

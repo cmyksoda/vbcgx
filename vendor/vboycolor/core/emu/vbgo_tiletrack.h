@@ -57,7 +57,8 @@ static inline unsigned vbgo_tt_cell_at(unsigned y) { return y * VBGO_TT_CELL_ROW
  * vbgo_tag_compose(tag, cell), which the macros take. */
 
 #define VBGO_TAG_CHAR(t)     ((unsigned)(t) & 0x7FF)          /* character slot 0-2047 */
-#define VBGO_TAG_INDEX(t)    ((unsigned)((t) >> 11) & 63)     /* pixel in the tile: y * 8 + x (tile space, flips undone) */
+/* pixel in the tile: y * 8 + x (tile space, flips undone) */
+#define VBGO_TAG_INDEX(t)    ((unsigned)((t) >> 11) & 63)
 #define VBGO_TAG_SUBX(t)     ((unsigned)((t) >> 11) & 7)
 #define VBGO_TAG_SUBY(t)     ((unsigned)((t) >> 14) & 7)
 #define VBGO_TAG_PALETTE(t)  ((unsigned)((t) >> 17) & 3)      /* GPLT/JPLT palette number */

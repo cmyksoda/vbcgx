@@ -1,8 +1,10 @@
 #pragma once
 #include "drivers/InputData.h"
 #include <array>
+
 inline constexpr unsigned VB_BUTTON_COUNT = 14;
 inline constexpr unsigned VBButtonBits[VB_BUTTON_COUNT] = {0, 8, 10, 11, 2, 3, 4, 5, 6, 7, 12, 14, 13, 15};
+
 inline std::array<uint32_t, VB_BUTTON_COUNT> DefaultVBButtons(unsigned h)
 {
     std::array<uint32_t, VB_BUTTON_COUNT> b = {
@@ -12,10 +14,13 @@ inline std::array<uint32_t, VB_BUTTON_COUNT> DefaultVBButtons(unsigned h)
     };
     if (h == INPUT_HW_GAMECUBE) b[4] = INPUT_TRIGGER_ZR;
     if (h == INPUT_HW_WIIMOTE) b.fill(0);
-    if (h == INPUT_HW_NUNCHUK) b = {INPUT_TRIGGER_L, INPUT_BTN_A, INPUT_TRIGGER_ZL, INPUT_BTN_B,
-        INPUT_BTN_MINUS, INPUT_BTN_PLUS, 0, 0, 0, 0, INPUT_BTN_UP, INPUT_BTN_DOWN, INPUT_BTN_LEFT, INPUT_BTN_RIGHT};
+    if (h == INPUT_HW_NUNCHUK)
+        b = {INPUT_TRIGGER_L, INPUT_BTN_A, INPUT_TRIGGER_ZL, INPUT_BTN_B,
+            INPUT_BTN_MINUS, INPUT_BTN_PLUS, 0, 0, 0, 0,
+            INPUT_BTN_UP, INPUT_BTN_DOWN, INPUT_BTN_LEFT, INPUT_BTN_RIGHT};
     return b;
 }
+
 inline uint32_t TranslateVBPad(const InputPadData &pad, const uint32_t mappings[INPUT_HW_MAX][VB_BUTTON_COUNT])
 {
     uint32_t buttons = 0;

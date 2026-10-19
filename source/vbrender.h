@@ -35,7 +35,8 @@ inline void ConvertTile(const uint8_t *bgrx, size_t pitch, uint8_t *tile)
     for (unsigned y = 0; y < 4; ++y) {
         const uint8_t *src = bgrx + y * pitch;
         for (unsigned x = 0; x < 4; x += 2, src += 8) {
-            const uint32_t ar = BytesInOrder(255, src[2], 255, src[6]), gb = BytesInOrder(src[1], src[0], src[5], src[4]);
+            const uint32_t ar = BytesInOrder(255, src[2], 255, src[6]),
+                           gb = BytesInOrder(src[1], src[0], src[5], src[4]);
             std::memcpy(tile + y * 8 + x * 2, &ar, 4);
             std::memcpy(tile + 32 + y * 8 + x * 2, &gb, 4);
         }
@@ -64,12 +65,14 @@ inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned source
         ConvertVBCells(bgrx, pitch, tiled, w, h, changed);
         return;
     }
+
     if (w == sourceW && h == sourceH) {
         for (unsigned by = 0; by < h; by += 4)
             for (unsigned bx = 0; bx < w; bx += 4, tiled += 64)
                 ConvertTile(bgrx + by * pitch + bx * 4, pitch, tiled);
         return;
     }
+
     if (w == sourceW && h < sourceH && h <= 512) {
         // (240p: full width, fewer rows - each output row averages a run of source rows)
         unsigned rowFrom[512], rowCount[512];
@@ -78,6 +81,7 @@ inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned source
             rowFrom[y] = y0;
             rowCount[y] = std::max(y0 + 1, (y + 1) * sourceH / h) - y0;
         }
+
         auto convertTile = [&](unsigned by, unsigned bx, uint8_t *tile) {
             ZeroLine32(tile);
             ZeroLine32(tile + 32);
@@ -89,17 +93,22 @@ inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned source
                     unsigned r = src[2], g = src[1], b = src[0];
                     for (unsigned k = 1; k < count; ++k) {
                         const uint8_t *more = src + k * pitch;
-                        r += more[2]; g += more[1]; b += more[0];
+                        r += more[2];
+                        g += more[1];
+                        b += more[0];
                     }
                     if (count == 2)
                         r >>= 1, g >>= 1, b >>= 1;
                     else if (count > 2)
                         r /= count, g /= count, b /= count;
-                    ar[x * 2] = 255; ar[x * 2 + 1] = r;
-                    gb[x * 2] = g; gb[x * 2 + 1] = b;
+                    ar[x * 2] = 255;
+                    ar[x * 2 + 1] = r;
+                    gb[x * 2] = g;
+                    gb[x * 2 + 1] = b;
                 }
             }
         };
+
         const bool cells = changed && !(sourceH % 8) && w <= 64 * 8 && !(h % 4);
         for (unsigned by = 0; by < h; by += 4) {
             // (only the tiles whose source rows hold a changed cell)
@@ -115,6 +124,7 @@ inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned source
         }
         return;
     }
+
     for (unsigned y = 0; y < h; ++y) {
         const unsigned y0 = y * sourceH / h;
         const unsigned y1 = std::max(y0 + 1, (y + 1) * sourceH / h);
@@ -125,12 +135,18 @@ inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned source
             for (unsigned sy = y0; sy < y1; ++sy) {
                 for (unsigned sx = x0; sx < x1; ++sx) {
                     const uint8_t *pixel = bgrx + sy * pitch + sx * 4;
-                    b += pixel[0]; g += pixel[1]; r += pixel[2]; ++count;
+                    b += pixel[0];
+                    g += pixel[1];
+                    r += pixel[2];
+                    ++count;
                 }
             }
+
             unsigned at = ((y / 4) * (w / 4) + x / 4) * 64 + ((y % 4) * 4 + x % 4) * 2;
-            tiled[at] = 255; tiled[at + 1] = r / count;
-            tiled[at + 32] = g / count; tiled[at + 33] = b / count;
+            tiled[at] = 255;
+            tiled[at + 1] = r / count;
+            tiled[at + 32] = g / count;
+            tiled[at + 33] = b / count;
         }
     }
 }
