@@ -1407,8 +1407,13 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     {
                         // (a cell is read only where its tag may be drawn)
                         const uint32_t lo = column[y];
-                        if ((lo & kRunMaskLo) == runLo && columnCells[vbgo_tt_cell_at(y)] == skipHi && !run.slow)
+                        if ((lo & kRunMaskLo) == runLo && columnCells[vbgo_tt_cell_at(y)] == skipHi && (!run.slow || run.band == static_cast<int>(b)))
+                        {
+                            // (and the pixels after it that stay in the run)
+                            while (y + 1 < b * 8 + 8 && (column[y + 1] & kRunMaskLo) == runLo && columnCells[vbgo_tt_cell_at(y + 1)] == skipHi)
+                                ++y;
                             continue;
+                        }
                         if (!vbgo_tag_drawn(lo, bandKey))
                             continue;
                         const uint64_t t = vbgo_tag_compose(lo, columnCells[vbgo_tt_cell_at(y)]);
@@ -1659,43 +1664,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         band.pairSlots.push_back(cellBits | run.pairSlot);
                 }
                 slowHere |= run.slow;
-                if (run.plain)
-                {
-                    // Most runs: the tile's colors, else the automatic ones - pixel
-                    // after pixel while the tags stay in the run.
-                    const TileColorPack::Tile *tile = run.tile;
-                    const AutoColors::Ramp *ramp = run.ramp;
-                    for (;;)
-                    {
-                        if (pixel)
-                        {
-                            const unsigned shade = (rawPixel >> 24) & 3, index = VBGO_TAG_INDEX(t);
-                            const uint8_t *rgb = tile->mask >> index & 1 ? tile->rgb[index] : ramp && shade ? (*ramp)[shade - 1].data() : nullptr;
-                            if (rgb)
-                                write(&frame[i], rgb, rawPixel >> 26);
-                        }
-                        bool more = false;
-                        while (y + 1 < end)
-                        {
-                            const uint32_t next = column[y + 1];
-                            if ((next & kRunMaskLo) != runLo || columnCells[vbgo_tt_cell_at(y + 1)] != runHi)
-                                break;
-                            ++y, i += rowBytes, t = vbgo_tag_compose(next, columnCells[vbgo_tt_cell_at(y)]);
-                            rawPixel = eyeColumn.at(eyeBand, y);
-                            pixel = VBGO_TAG_PIXEL(t);
-                            if (!pixel || (rawPixel & 0xFFFFFFu))
-                            {
-                                more = true;
-                                break;
-                            }
-                        }
-                        if (!more)
-                            break;
-                    }
-                    continue;
-                }
                 const unsigned shade = (rawPixel >> 24) & 3, index = VBGO_TAG_INDEX(t);
                 const uint8_t *rgb = nullptr;
+                bool plainRest = run.plain; // (the run's pixels from here to the band's end take only the tile's colors)
                 if (run.slow && pixel)
                 {
                     const unsigned chr = VBGO_TAG_CHAR(t);
@@ -1735,6 +1706,42 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             }
                         }
                     }
+                    plainRest = !m_slots[chr].ambiguous && !run.cell && !run.flash;
+                }
+                if (plainRest)
+                {
+                    // Most runs: the tile's colors, else the automatic ones - pixel
+                    // after pixel while the tags stay in the run.
+                    const TileColorPack::Tile *tile = run.tile;
+                    const AutoColors::Ramp *ramp = run.ramp;
+                    for (;;)
+                    {
+                        if (pixel)
+                        {
+                            const unsigned shade = (rawPixel >> 24) & 3, index = VBGO_TAG_INDEX(t);
+                            const uint8_t *rgb = tile->mask >> index & 1 ? tile->rgb[index] : ramp && shade ? (*ramp)[shade - 1].data() : nullptr;
+                            if (rgb)
+                                write(&frame[i], rgb, rawPixel >> 26);
+                        }
+                        bool more = false;
+                        while (y + 1 < end)
+                        {
+                            const uint32_t next = column[y + 1];
+                            if ((next & kRunMaskLo) != runLo || columnCells[vbgo_tt_cell_at(y + 1)] != runHi)
+                                break;
+                            ++y, i += rowBytes, t = vbgo_tag_compose(next, columnCells[vbgo_tt_cell_at(y)]);
+                            rawPixel = eyeColumn.at(eyeBand, y);
+                            pixel = VBGO_TAG_PIXEL(t);
+                            if (!pixel || (rawPixel & 0xFFFFFFu))
+                            {
+                                more = true;
+                                break;
+                            }
+                        }
+                        if (!more)
+                            break;
+                    }
+                    continue;
                 }
                 // 1. The map cell's own colors for this tile (and fills).
                 if (run.cell)
