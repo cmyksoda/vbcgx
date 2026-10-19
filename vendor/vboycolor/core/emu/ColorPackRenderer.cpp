@@ -454,10 +454,8 @@ int ColorPackRenderer::LeftX(const uint64_t tag, int x, unsigned eye, unsigned y
 
 void ColorPackRenderer::Near(int x, int y, unsigned world, ContextGroupBits &near, ContextGroupBits &close)
 {
-    // Markers drawn within reach this frame (as gathered before coloring
-    // it) and over the last two (of a layer-bound group, only ones drawn on
-    // this pixel's layer) - in left-eye terms; kept per grid cell and layer
-    // for the frame. (Sprites' groups: m_nearSprites.)
+    // Layer-bound markers on this pixel's layer within reach, this frame and the last two (in left-eye terms),
+    // kept per grid cell and layer for the frame. (Sprites' groups: m_nearSprites.)
     const int cx = x >> 3, cy = y >> 3;
     std::vector<NearCell> &cache = m_nearCache[world & 31];
     if (cache.empty())
@@ -466,33 +464,19 @@ void ColorPackRenderer::Near(int x, int y, unsigned world, ContextGroupBits &nea
     if (known.frame != m_frame)
     {
         ContextGroupBits bits, closeBits;
-        const ContextGroupBits free = ~m_layerBound;
-        for (unsigned k = 0; k <= 2; ++k)
+        for (int gy = std::max(0, cy - kContextReach); gy <= std::min(kGridH - 1, cy + kContextReach); ++gy)
         {
-            const unsigned g = (m_gridCurrent + k) % 3;
-            const ContextGroupBits *grid = m_markerGrid[g].data();
-            const uint8_t *layers = m_layerBound.Any() ? m_markerLayer[g].data() : nullptr;
-            const auto add = [&](int i, int gx, int gy) {
-                const ContextGroupBits &here = grid[i];
-                if (!here.Any())
-                    return;
-                const ContextGroupBits found = !layers ? here : layers[i] == world ? here : here & free;
-                bits |= found;
-                if (std::abs(gy - cy) <= 1 && std::abs(gx - cx) <= 1)
-                    closeBits |= found;
-            };
-            // (every other cell of the grid is clear: when few have markers, those are all there is to look at)
-            if (m_markerCells[g].size() < static_cast<size_t>((2 * kContextReach + 1) * (2 * kContextReach + 1)))
-                for (const uint16_t i : m_markerCells[g])
-                {
-                    const int gx = i % kGridW, gy = i / kGridW;
-                    if (std::abs(gx - cx) <= kContextReach && std::abs(gy - cy) <= kContextReach)
-                        add(i, gx, gy);
-                }
-            else
-                for (int gy = std::max(0, cy - kContextReach); gy <= std::min(kGridH - 1, cy + kContextReach); ++gy)
-                    for (int gx = std::max(0, cx - kContextReach); gx <= std::min(kGridW - 1, cx + kContextReach); ++gx)
-                        add(gy * kGridW + gx, gx, gy);
+            const bool closeRow = std::abs(gy - cy) <= 1;
+            for (unsigned k = m_nearRow[gy]; k < m_nearRow[gy + 1]; ++k)
+            {
+                const NearMark &mark = m_nearMarks[k];
+                const int dx = std::abs(mark.gx - cx);
+                if (dx > kContextReach || mark.layer != world)
+                    continue;
+                bits |= mark.bits;
+                if (closeRow && dx <= 1)
+                    closeBits |= mark.bits;
+            }
         }
         known.frame = m_frame, known.bits = bits, known.close = closeBits;
     }
@@ -974,6 +958,25 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         {
             for (size_t k = 0; k < m_windowNow.cells.size(); ++k)
                 m_windowNow.at[m_windowNow.cells[k].cell] = static_cast<uint16_t>(k + 1);
+            {
+                // (the layer-bound marks by row, for Near: counted, then placed)
+                m_nearRow.fill(0);
+                size_t total = 0;
+                for (const WindowCell &cell : m_windowNow.cells)
+                    for (unsigned n = 0; n < cell.layers; ++n)
+                        ++m_nearRow[cell.cell / kGridW + 1], ++total;
+                for (unsigned row = 0; row < static_cast<unsigned>(kGridH); ++row)
+                    m_nearRow[row + 1] = static_cast<uint16_t>(m_nearRow[row + 1] + m_nearRow[row]);
+                m_nearMarks.resize(total);
+                std::array<uint16_t, kGridH> next;
+                std::copy(m_nearRow.begin(), m_nearRow.begin() + kGridH, next.begin());
+                for (const WindowCell &cell : m_windowNow.cells)
+                    for (unsigned n = 0; n < cell.layers; ++n)
+                    {
+                        NearMark &mark = m_nearMarks[next[cell.cell / kGridW]++];
+                        mark.gx = static_cast<uint8_t>(cell.cell % kGridW), mark.layer = cell.bound[n].layer, mark.bits = cell.bound[n].bits;
+                    }
+            }
             const Window &was = m_window[buffer];
             if (was.valid)
             {
@@ -1129,7 +1132,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 else if (m_layerBound.Any())
                 {
                     Near(lx, y, world, nearBits.near, nearBits.close);
-                    nearBits.near = nearBits.near & m_layerBound, nearBits.close = nearBits.close & m_layerBound;
                 }
                 else
                     nearBits = NearBits{};

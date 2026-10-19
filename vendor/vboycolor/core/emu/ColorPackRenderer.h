@@ -361,6 +361,14 @@ private:
     };
     std::array<Window, 2> m_window; // per frame buffer, then the one being made
     Window m_windowNow;
+    // (this frame's layer-bound markers, by grid row: what Near looks through)
+    struct NearMark
+    {
+        uint8_t gx = 0, layer = 0;
+        ContextGroupBits bits;
+    };
+    std::vector<NearMark> m_nearMarks;
+    std::array<uint16_t, kGridH + 1> m_nearRow{}; // first mark of each row
     void ResetWindow(Window &window);
     void WindowMoved(const Window &was, const Window &now, uint64_t moved[kBands]) const;
     void NoteMarkerCell(unsigned cell)
