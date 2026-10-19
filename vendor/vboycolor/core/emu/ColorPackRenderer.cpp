@@ -97,12 +97,22 @@ inline uint32_t LowFirst32(const uint8_t *p)
 }
 } // namespace
 
+// The worlds with tags drawn in a grid cell, a bit each.
+__attribute__((noinline)) static uint32_t CellWorlds(const vbgo_tt_eye_view &v, unsigned band, unsigned cell)
+{
+    uint32_t worlds = 0;
+    for (unsigned x = cell * 8; x < cell * 8 + 8; ++x)
+        if (const uint32_t *column = v.columns[x])
+            for (unsigned y = band * 8; y < band * 8 + 8; ++y)
+                if (vbgo_tag_drawn(column[y], v.band_key[band]))
+                    worlds |= 1u << VBGO_TAG_WORLD(column[y]);
+    return worlds;
+}
+
 bool ColorPackRenderer::PaintState::operator==(const PaintState &o) const
 {
     return pack == o.pack && automatic == o.automatic && pairs == o.pairs && shade == o.shade && fbWidth == o.fbWidth &&
-           eyeOffset == o.eyeOffset && fadeReference == o.fadeReference &&
-           flat == o.flat && std::equal(bg, bg + 3, o.bg) && worlds == o.worlds && pairOfLeft == o.pairOfLeft &&
-           pairOfRight == o.pairOfRight && spritePairOf == o.spritePairOf;
+           eyeOffset == o.eyeOffset && fadeReference == o.fadeReference && flat == o.flat && std::equal(bg, bg + 3, o.bg);
 }
 
 int ColorPackRenderer::ShownBuffer()
@@ -724,6 +734,24 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             m_autoWorldsWas = state.autoWorlds, m_figuresWas = state.figures;
             ++m_paintAuto;
         }
+        {
+            uint32_t moved = 0;
+            for (unsigned w = 0; w < 32; ++w)
+            {
+                const uint32_t sig = m_worlds[w].colors | static_cast<uint32_t>(static_cast<uint8_t>(m_pairOfLeft[w])) << 8 |
+                                     static_cast<uint32_t>(static_cast<uint8_t>(m_pairOfRight[w])) << 16 |
+                                     static_cast<uint32_t>(static_cast<uint8_t>(m_spritePairOf[w])) << 24;
+                if (sig != m_worldSigWas[w])
+                    m_worldSigWas[w] = sig, moved |= 1u << w;
+            }
+            if (moved)
+            {
+                ++m_paintWorlds;
+                for (unsigned w = 0; w < 32; ++w)
+                    if (moved >> w & 1)
+                        m_worldChangedAt[w] = m_paintWorlds;
+            }
+        }
         if (!(state == m_paintStateWas))
         {
             m_paintStateWas = state;
@@ -770,6 +798,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             const bool sameClut = band.clut == view[0].clut;
             if ((!sameClut && !(pack && band.clut && band.onShades == leftOnShades)) || band.state != m_paintState)
                 continue;
+            const uint32_t moved = WorldsMovedSince(band.worldsState);
             uint32_t ambiguousHere = 0;
             for (unsigned i = 0; i < 2048 / 32; ++i)
                 ambiguousHere |= view[0].band_chr[b * (2048 / 32) + i] & ambiguous[i];
@@ -778,7 +807,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 const uint32_t version = view[0].cell_version[b * kGridW + c];
                 // (not on depth frames: depth colors are painted over cells after them, and aren't in the copies)
                 keptCell[b][c] = version && band.version[c] == version && (sameClut || (!depth && m_unfadedCell[buffer][b][c])) &&
-                                 (band.autoState == m_paintAuto || !(band.autoCells >> c & 1));
+                                 (band.autoState == m_paintAuto || !(band.autoCells >> c & 1)) && !(moved && CellWorlds(view[0], b, c) & moved);
                 refadeCell[b][c] = keptCell[b][c] && !sameClut;
                 keep[b] |= static_cast<uint64_t>(keptCell[b][c]) << c;
                 refade[b] |= static_cast<uint64_t>(refadeCell[b][c]) << c;
@@ -802,10 +831,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             const bool sameShades = m_pack && band.clut && band.onShades == rightOnShades;
             if ((band.clut != view[1].clut && !sameShades) || band.state != m_paintStateRight)
                 continue;
+            const uint32_t moved = WorldsMovedSince(band.worldsState);
             for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
             {
                 const uint32_t version = view[1].cell_version[b * kGridW + c];
-                keptRightCell[b][c] = version && band.version[c] == version;
+                keptRightCell[b][c] = version && band.version[c] == version && !(moved && CellWorlds(view[1], b, c) & moved);
                 keepRight[b] |= static_cast<uint64_t>(keptRightCell[b][c]) << c;
                 keptRightBands[c] |= static_cast<uint32_t>(keptRightCell[b][c]) << b;
             }
@@ -1319,6 +1349,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         band.clut = clut;
         band.state = paintState;
         band.autoState = m_paintAuto;
+        band.worldsState = m_paintWorlds;
         band.autoCells &= kept;
         band.contextCells &= kept;
         band.markCells &= kept;

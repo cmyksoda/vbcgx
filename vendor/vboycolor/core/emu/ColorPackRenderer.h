@@ -145,6 +145,7 @@ private:
     struct Band
     {
         uint32_t clut = 0, state = 0, autoState = 0; // (autoState: m_paintAuto as it was painted)
+        uint32_t worldsState = 0;                    // (m_paintWorlds as it was painted)
         uint8_t onShades = 0; // (right eye: a bit per shade not black, as walked)
         bool summed = false;  // (sums is its cells' as they are)
         std::array<uint32_t, VBGO_TT_WIDTH / 8> version{}; // (each cell's, as last painted: kept apart, read every frame)
@@ -190,6 +191,18 @@ private:
     uint32_t m_paintState = 1, m_paintStateRight = 1; // (the right eye's: only what its scan reads)
     // The automatic colors' layers and figures change apart from m_paintState: they only reach the cells with a ramp's colors.
     uint32_t m_paintAuto = 1, m_autoWorldsWas = 0, m_figuresWas = 0;
+    // Painting goes by a world's layer and pair numbers only (its eyes, type and partner act through them), so those count per
+    // world: m_paintWorlds counts the frames one moved in, m_worldChangedAt says when each did.
+    uint32_t m_paintWorlds = 1;
+    std::array<uint32_t, 32> m_worldSigWas{}, m_worldChangedAt{};
+    __attribute__((noinline)) uint32_t WorldsMovedSince(uint32_t state) const
+    {
+        uint32_t moved = 0;
+        if (state != m_paintWorlds)
+            for (unsigned w = 0; w < 32; ++w)
+                moved |= static_cast<uint32_t>(m_worldChangedAt[w] > state) << w;
+        return moved;
+    }
     unsigned m_fadeReference = 0;
     unsigned m_lastLeftLevel = 0; // (the left eye's level at the last Paint: see m_unfaded)
 
