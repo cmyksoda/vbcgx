@@ -70,13 +70,39 @@ extern "C" v810_timestamp_t vbgo_vip_steady_until(v810_timestamp_t timestamp);
 static const uint64 kStoreFreeOps = 0x3F | 1ull << 7 | 0xFull << 12 | 0x3Full << 16 | 1ull << 23 | 3ull << 40 |
                                     0xFull << 44 | 0xBull << 48 | 0xBull << 56;
 
-/* A loop body that runs straight from its head to the branch back without storing. */
-static bool StoreFreeLoop(const uint8 *code)
+/* A leaf a loop calls: straight code of those ops, never writing r31, up to its return (JMP [r31]). */
+static bool StoreFreeLeaf(const uint8 *code)
+{
+   unsigned at = 0;
+   while(at < 32)
+   {
+      const unsigned h = LoadU16_LE((const uint16 *)(code + at)), op = h >> 10;
+      if(op == 6)
+         return (h & 31) == 31;
+      if(!(kStoreFreeOps >> op & 1) || ((h >> 5) & 31) == 31)
+         return false;
+      at += op >= 0x28 ? 4 : 2;
+   }
+   return false;
+}
+
+/* A loop body that runs straight from its head to the branch back without storing, calling such leaves in ROM (head:
+ * the loop's PC). */
+static bool StoreFreeLoop(const uint8 *code, uint32 head, uint8 *const *fastMap)
 {
    unsigned at = 0;
    while(at < 64)
    {
       const unsigned h = LoadU16_LE((const uint16 *)(code + at)), op = h >> 10;
+      if(op == 0x2B)
+      {
+         const uint32 target = head + at + (uint32)(((int32)(((h & 0x3FF) << 16) | LoadU16_LE((const uint16 *)(code + at + 2))) << 6) >> 6);
+         if(((head >> 24) & 7) != 7 || ((target >> 24) & 7) != 7 || (target & 1) || !fastMap[target >> V810_FAST_MAP_SHIFT] ||
+            !StoreFreeLeaf(&fastMap[target >> V810_FAST_MAP_SHIFT][target]))
+            return false;
+         at += 4;
+         continue;
+      }
       if((op >> 3) == 4)
       {
          const int32 disp = (h & 0x100) ? (int32)(h & 0x1FF) - 0x200 : (int32)(h & 0x1FF);
@@ -185,7 +211,7 @@ v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
       {
          IdleShape &seen = IdleShapeSeen;
          seen.code = code;
-         seen.storeFree = StoreFreeLoop(code);
+         seen.storeFree = StoreFreeLoop(code, head, FastMap);
          seen.counter = !seen.storeFree && CounterLoop(code, &seen.addr, &seen.counterBase, &seen.step, &seen.pollBase, &seen.pollDisp);
       }
       if(idle && !IdleShapeSeen.storeFree)
