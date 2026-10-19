@@ -37,7 +37,7 @@ bool SaveState (char * filepath, bool silent)
 
 	if(gameScreenPng.size > 0)
 	{
-		char screenpath[1024];
+		char screenpath[MAXPATHLEN];
 		snprintf(screenpath, sizeof(screenpath), "%s", filepath);
 		screenpath[strlen(screenpath)-4] = 0;
 		strcat(screenpath, ".png");
@@ -194,7 +194,7 @@ bool LoadState (char * filepath, bool silent)
 bool
 LoadStateAuto (bool silent)
 {
-	char filepath[1024];
+	char filepath[MAXPATHLEN];
 
 	if(!MakeFilePath(filepath, FILE_STATE, romFilename, 0))
 		return false;
@@ -211,7 +211,7 @@ bool SavePreviewImg (char * filepath, bool silent)
 
 	if(gameScreenPng.size > 0)
 	{
-		char screenpath[1024];
+		char screenpath[MAXPATHLEN];
 		snprintf(screenpath, sizeof(screenpath), "%s", filepath);
 		screenpath[strlen(screenpath)] = 0;
 		strcat(screenpath, ".png");

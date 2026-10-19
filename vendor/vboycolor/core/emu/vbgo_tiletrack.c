@@ -424,8 +424,6 @@ void vbgo_tiletrack_set_fill_mode(int mode)
    vbgo_tt_fill = mode;
 }
 
-int vbgo_tiletrack_fill_mode(void) { return vbgo_tt_fill; }
-
 void vbgo_tiletrack_set_fill_cells(const uint8_t *bits)
 {
    ForgetBlocks();
@@ -723,7 +721,7 @@ void vbgo_tiletrack_share_pass(unsigned fb, unsigned src_fb)
 void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
 {
    ForgetCpuResets();
-   unsigned e, x, y;
+   unsigned e, x;
    int from, to;
    uint16_t old_stamp;
 
@@ -900,44 +898,3 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view)
 
    return true;
 }
-
-bool vbgo_tiletrack_records(unsigned eye, uint64_t *records, uint32_t *cells, bool with_fills)
-{
-   vbgo_tt_eye_view view;
-   unsigned x, y;
-   if (!vbgo_tiletrack_eye_view(eye, &view))
-      return false;
-   for (x = 0; x < VBGO_TT_WIDTH; x++)
-   {
-      const uint32_t *col = view.columns[x];
-      const uint16_t *col_cells = view.cells[x];
-      for (y = 0; y < VBGO_TT_HEIGHT; y++)
-      {
-         const uint64_t t = col ? vbgo_tag_compose(col[y], col_cells[vbgo_tt_cell_at(y)]) : 0;
-         uint64_t out = 0;
-         uint32_t cell = 0;
-         if (t && vbgo_tag_drawn(t, view.band_key[y >> 3]) && (with_fills || VBGO_TAG_PIXEL(t)))
-         {
-            const unsigned chr = VBGO_TAG_CHAR(t);
-            out = (uint64_t)view.hashes[chr] | ((uint64_t)VBGO_TAG_SUBX(t) << 32) | ((uint64_t)VBGO_TAG_SUBY(t) << 35) |
-                  ((uint64_t)VBGO_TAG_PALETTE(t) << 38) | ((uint64_t)VBGO_TAG_IS_OBJ(t) << 40) |
-                  ((uint64_t)VBGO_TAG_PIXEL(t) << 41) | ((uint64_t)VBGO_TAG_WORLD(t) << 43) | ((uint64_t)chr << 48) |
-                  ((uint64_t)1 << 63);
-            if (VBGO_TAG_HAS_CELL(t))
-               cell = 0x80000000u | VBGO_TAG_CELL(t);
-         }
-         records[y * VBGO_TT_WIDTH + x] = out;
-         if (cells)
-            cells[y * VBGO_TT_WIDTH + x] = cell;
-      }
-   }
-   return true;
-}
-
-const uint16_t *vbgo_tiletrack_chr_ram(void)
-{
-   const int fb = s_last_fb;
-   return fb >= 0 && s_have[fb] ? s_chr[s_slot[fb]] : NULL;
-}
-
-uint32_t vbgo_tiletrack_hash_rows(const uint16_t rows[8]) { return HashChar(rows); }

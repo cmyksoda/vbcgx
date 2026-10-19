@@ -16,7 +16,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
-#include <string.h>
 
 #include "fceugx.h"
 #include "fceusupport.h"
@@ -129,7 +128,7 @@ void FreeRAMSnapshot (RAMSnapshot * snapshot)
 bool
 SaveRAMAuto (bool silent)
 {
-	char filepath[1024];
+	char filepath[MAXPATHLEN];
 
 	if(!MakeFilePath(filepath, FILE_RAM, romFilename, 0))
 		return false;

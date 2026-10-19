@@ -57,7 +57,6 @@ public:
     // Builds the lookup tables (call again whenever the pack changes; the
     // pack must outlive its use here). nullptr / an empty pack disables.
     void SetPack(const TileColorPack *pack);
-    bool HasPack() const { return m_pack != nullptr; }
     // Whether the pack's colors show (off: only automatic colors, if on - to
     // compare).
     void SetPackShown(bool shown) { m_packShown = shown; }
@@ -65,7 +64,6 @@ public:
     // doesn't color - all of them, without a pack - and by depth for what
     // no tile drew (see DepthColors.h).
     void SetAutoColors(bool on) { m_auto = on; }
-    bool AutoColorsOn() const { return m_auto; }
     // Something to paint: a pack, or automatic colors.
     bool Active() const { return m_pack != nullptr || m_auto; }
 
@@ -104,13 +102,8 @@ public:
     {
         uint8_t eyes = 0;    // bit 0: the left eye draws it, bit 1: the right eye (0: not drawn)
         uint8_t type = 0;    // 0 normal, 1 H-bias, 2 affine, 3 OBJ
-        int8_t partner = -1; // the other world of a per-eye pair
         uint8_t colors = 0;  // the world whose colors it takes: its left partner, else itself
     };
-    const std::array<World, 32> &Worlds() const { return m_worlds; }
-    // A pair's right world, per 8-row band: right-eye x -> left-eye x
-    // (kNoDisparity if not known) - as last estimated.
-    int PairDisparity(unsigned rightWorld, unsigned band) const;
 
 private:
     // Left-eye bands kept from the buffer's last Paint: same drawing version and paint state, no
@@ -205,8 +198,6 @@ private:
         uint32_t autoWorlds = 0, figures = 0, shade = 0, fbWidth = 0, eyeOffset = 0;
         unsigned fadeReference = 0, flat = 0;
         int bg[3] = {};
-        std::array<uint8_t, 32 * 4> worlds{};
-        std::array<int8_t, 32> pairOfLeft{}, pairOfRight{}, spritePairOf{};
         bool operator==(const PaintState &o) const;
     };
     PaintState m_paintStateWas, m_paintStateRightWas;
@@ -242,7 +233,6 @@ private:
         const TileColorPack::Tile *palette[4] = {};  // per palette: its own colors, else base
         uint32_t contextFirst = 0, contextCount = 0; // its context variants in the pack's ContextTiles()
         bool ambiguous = false;                      // painted two ways in a frame: takes its surroundings' colors
-        bool cellColored = false;                    // some map cell has colors of its own for it
     };
     struct SlotLayer // (a layered slot's last layer looked up, and its colors - see LayerTile)
     {
@@ -333,7 +323,6 @@ private:
     bool SharedWithLeftPicture(unsigned chr, uint32_t hash, int pair);
     int EyeOnly(uint64_t tag) const; // a sprite only the left (1) or right (2) eye shows, else 0
     const TileColorPack::CellTile *FindCell(unsigned cell, unsigned palette, uint32_t hash) const;
-    std::unordered_set<uint32_t> m_cellHashes; // tiles some map cell has colors for
 
     // What a run of pixels (down a column, from one tile in one map cell, or
     // one sprite's tile) shares - looked up once for the run. A run's key
@@ -368,7 +357,7 @@ private:
         uint32_t *leftPairSlot;
         unsigned flatObjPalettes; // (this eye's - see vbgo_tt_eye_view)
     };
-    Run SetUpRun(uint64_t tag, unsigned eye, int x, int y, const RunSetUp &setUp);
+    Run SetUpRun(uint64_t tag, unsigned eye, const RunSetUp &setUp);
     static constexpr int kRunCacheBits = 10, kRunCacheSize = 1 << kRunCacheBits;
     std::vector<CachedRun> m_runCache;
     uint32_t m_runCacheAt = 0; // (one more each eye painted)

@@ -363,7 +363,6 @@ namespace
     std::string g_romName;   // its file's name, without the folder or extension
     std::string g_romFolder; // with a trailing separator, or ""
     uint32_t g_romCrc = 0, g_romSize = 0;
-    bool g_loaded = false;
 
     // ---- Coloring ----
     TileColorPack g_pack;
@@ -411,7 +410,6 @@ namespace
     // The frame Beetle VB just drew (both eyes side by side).
     const uint8_t *g_frame = nullptr;
     unsigned g_frameW = 0, g_frameH = 0;
-    size_t g_framePitch = 0;
     // The two colored pictures: the left eye only, each row padded by a cache line (a column's rows spread over the cache
     // sets), kept in the program's own memory - on the Wii MEM1, not wherever earlier games left the heap.
     constexpr size_t kPictureRowBytes = (VBGO_TT_WIDTH + 8) * 4, kPictureBytes = kPictureRowBytes * VBGO_TT_HEIGHT;
@@ -477,12 +475,11 @@ namespace
         return same && (!g_shadeColors || !g_renderer.Active() || !vbgo_tiletrack_is_enabled() || g_renderer.Coast());
     }
 
-    void OnVideo(const void *data, unsigned width, unsigned height, size_t pitch)
+    void OnVideo(const void *data, unsigned width, unsigned height, size_t)
     {
         g_frame = static_cast<const uint8_t *>(data);
         g_frameW = width;
         g_frameH = height;
-        g_framePitch = pitch;
     }
 
     // ---- The built-in packs (a zip: the packs and index.txt) ----
@@ -560,7 +557,6 @@ namespace
     std::string LoadPack()
     {
         g_pack.Clear();
-        TileColorPack probe;
         const std::string file = g_romName + ".vbcp";
         if (!g_romFolder.empty() && g_pack.Deserialize(ReadFile(g_romFolder + file)))
             return "beside the ROM";
@@ -925,7 +921,6 @@ extern "C"
 
         if (!beetle_retro_load_game(game))
             return false;
-        g_loaded = true;
         bool achievements = true;
         g_env(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
 
@@ -955,7 +950,6 @@ extern "C"
         new (&g_pack) TileColorPack();
         for (auto &colored : g_colored)
             Picture().swap(colored);
-        g_loaded = false;
     }
 
     // For a frontend that keeps a converted copy of each picture: if frame is a colored picture, its cells (per

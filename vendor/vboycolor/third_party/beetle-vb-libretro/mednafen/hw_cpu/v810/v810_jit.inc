@@ -71,7 +71,6 @@ public:
    void Sthbrx(unsigned rs, unsigned ra, unsigned rb) { X(rs, ra, rb, 918); }
    void Stwbrx(unsigned rs, unsigned ra, unsigned rb) { X(rs, ra, rb, 662); }
 
-   void Add(unsigned rt, unsigned ra, unsigned rb) { XO(rt, ra, rb, 0, 266, 0); }
    void Subf(unsigned rt, unsigned ra, unsigned rb, unsigned rc = 0) { XO(rt, ra, rb, 0, 40, rc); } /* (rb - ra) */
    void AddcoDot(unsigned rt, unsigned ra, unsigned rb) { XO(rt, ra, rb, 1, 10, 1); }
    void SubfcoDot(unsigned rt, unsigned ra, unsigned rb) { XO(rt, ra, rb, 1, 8, 1); }

@@ -81,19 +81,13 @@ void ShadeColorizer::BuildGradient()
         const int fadeLevel = tag >> 2;
         // Fades relative to the game's own full brightness (the colors above
         // are what it shows there), on the core's gamma curve.
-        const float fade = std::min(1.0f, std::pow(fadeLevel / reference, 1.0f / 2.2f)); // = Fade(fadeLevel)
+        const float fade = std::min(1.0f, std::pow(fadeLevel / reference, 1.0f / 2.2f));
         const float t = shade == 0 ? 0.0f : fade;
         const ShadeRgb &target = m_palette[shade];
         m_lut[tag] = ToBgra(background.r + (target.r - background.r) * t,
                             background.g + (target.g - background.g) * t,
                             background.b + (target.b - background.b) * t);
     }
-}
-
-float ShadeColorizer::Fade(int level) const
-{
-    const float reference = m_gradient && m_referenceLevel > 0 ? static_cast<float>(m_referenceLevel) : 63.0f;
-    return std::min(1.0f, std::pow(std::clamp(level, 0, 63) / reference, 1.0f / 2.2f));
 }
 
 void ShadeColorizer::Observe(const uint8_t *const bits[2], const uint32_t *const clut[2], size_t width, size_t height, size_t rightX)

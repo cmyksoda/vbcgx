@@ -236,12 +236,8 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
     }
     const std::vector<TileColorPack::CellTile> &cells = m_pack->CellTiles(); // sorted by cell
     m_cellStart.assign(65537, 0);
-    m_cellHashes.clear();
     for (const TileColorPack::CellTile &cell : cells)
-    {
         ++m_cellStart[cell.cell + 1u];
-        m_cellHashes.insert(cell.hash);
-    }
     for (size_t i = 1; i < m_cellStart.size(); ++i)
         m_cellStart[i] += m_cellStart[i - 1];
     // Fills: a cell has some if any of its tile entries colors a pixel the
@@ -332,7 +328,6 @@ void ColorPackRenderer::ResolveSlots(const uint32_t *hashes)
         slot.layered = !m_layered.empty() && m_layered.count(slot.hash) != 0;
         m_slotLayer[c].world = 0xFF;
         slot.ambiguous = m_pack->IsAmbiguous(slot.hash);
-        slot.cellColored = !m_cellHashes.empty() && m_cellHashes.count(slot.hash) != 0;
         ContextGroupBits markerBits;
         slot.contextCount = 0;
         if (!m_markerBits.empty())
@@ -396,14 +391,10 @@ void ColorPackRenderer::ClassifyWorlds(const uint16_t *worlds)
         // table: three left worlds, one right); a right run's extra worlds
         // may pair with what follows.
         auto addPair = [&](int left, int right, uint32_t leftWorlds) {
-            next[right].partner = static_cast<int8_t>(left);
             next[right].colors = static_cast<uint8_t>(left);
             for (int w = 0; w < 32; ++w)
                 if (leftWorlds >> w & 1)
-                {
-                    next[w].partner = static_cast<int8_t>(right);
                     m_pairOfLeft[w] = static_cast<int8_t>(pairCount);
-                }
             // (the same pair as last frame keeps its estimates)
             Pair &pair = pairs[pairCount];
             for (int old = 0; old < m_pairCount; ++old)
@@ -486,14 +477,6 @@ int ColorPackRenderer::EyeOnly(uint64_t tag) const
         return 0;
     const unsigned flags = m_oam[VBGO_TAG_OBJ_NO(tag) * 4 + 1] & 0xC000;
     return flags == 0x8000 ? 1 : flags == 0x4000 ? 2 : 0;
-}
-
-int ColorPackRenderer::PairDisparity(unsigned rightWorld, unsigned band) const
-{
-    if (rightWorld >= 32 || band >= static_cast<unsigned>(kBands) || m_pairOfRight[rightWorld] < 0)
-        return kNoDisparity;
-    const Pair &pair = m_pairs[m_pairOfRight[rightWorld]];
-    return pair.estimated ? pair.disparity[band] : kNoDisparity;
 }
 
 int ColorPackRenderer::LeftX(const uint64_t tag, int x, unsigned eye, unsigned y) const
@@ -618,7 +601,7 @@ const TileColorPack::CellTile *ColorPackRenderer::FindCell(unsigned cell, unsign
     return nullptr;
 }
 
-ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, int x, int y, const RunSetUp &c)
+ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, const RunSetUp &c)
 {
     // A new run: everything but the pixel inside the tile (see Run).
     Run run;
@@ -711,7 +694,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     // (what carries over to later frames, to tell whether this one changed it)
     const uint32_t autoWorldsBefore = m_autoWorlds, figuresBefore = m_figureWorlds;
     const unsigned maxLevelBefore = m_autoMaxLevel;
-    const std::array<int16_t, 32> extentBefore = m_worldExtent;
     vbgo_tt_eye_view view[2];
     const bool have[2] = {vbgo_tiletrack_eye_view(0, &view[0]), vbgo_tiletrack_eye_view(1, &view[1])};
     const int bg[3] = {static_cast<int>(background.b * 255.0f + 0.5f), static_cast<int>(background.g * 255.0f + 0.5f),
@@ -769,16 +751,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         state.fadeReference = m_fadeReference;
         state.flat = have[0] ? view[0].flat_obj_palettes : 0;
         std::copy(bg, bg + 3, state.bg);
-        for (unsigned w = 0; w < 32; ++w)
-        {
-            state.worlds[w * 4] = m_worlds[w].eyes;
-            state.worlds[w * 4 + 1] = m_worlds[w].type;
-            state.worlds[w * 4 + 2] = static_cast<uint8_t>(m_worlds[w].partner);
-            state.worlds[w * 4 + 3] = m_worlds[w].colors;
-        }
-        state.pairOfLeft = m_pairOfLeft;
-        state.pairOfRight = m_pairOfRight;
-        state.spritePairOf = m_spritePairOf;
         if (state.autoWorlds != m_autoWorldsWas || state.figures != m_figuresWas)
         {
             m_autoWorldsWas = state.autoWorlds, m_figuresWas = state.figures;
@@ -1562,12 +1534,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         const uint32_t runAt = m_runCacheAt;
 
         // (as the last run with this key in this eye, if any)
-        auto setUpRun = [&](uint64_t t, uint64_t key, uint32_t x, uint32_t y) -> Run {
+        auto setUpRun = [&](uint64_t t, uint64_t key) -> Run {
             const uint32_t runHash = (static_cast<uint32_t>(key) ^ static_cast<uint32_t>(key >> 32)) * 2654435761u;
             CachedRun &cached = m_runCache[runHash >> (32 - kRunCacheBits)];
             if (cached.at != runAt || cached.key != key)
             {
-                cached.run = SetUpRun(t, eye, static_cast<int>(x), static_cast<int>(y), setUp);
+                cached.run = SetUpRun(t, eye, setUp);
                 cached.at = runAt;
                 cached.key = key;
             }
@@ -1697,7 +1669,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             runKey = t & kRunMask;
                             runHi = vbgo_tag_hi(t), runLo = lo & kRunMaskLo;
                             countRun(runKey, x, y, rawPixel >> 26, firstHere ? nullptr : &sums, sumsAt);
-                            run = setUpRun(t, runKey, x, y);
+                            run = setUpRun(t, runKey);
                             runSetUp = true;
                             if (run.pairSlot && !kept &&
                                 (band.pairSlots.empty() || band.pairSlots.back() != (cellBits | run.pairSlot)))
@@ -1707,7 +1679,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         {
                             if (!runSetUp)
                             {
-                                run = setUpRun(t, runKey, x, y);
+                                run = setUpRun(t, runKey);
                                 runSetUp = true;
                             }
                             if (firstHere && run.pairSlot && !kept &&
@@ -1976,7 +1948,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         runKey = t & kRunMask;
                         runHi = vbgo_tag_hi(t), runLo = vbgo_tag_lo(t) & kRunMaskLo;
                         countRun(runKey, x, y, rawPixel >> 26, firstHere ? nullptr : &sums, sumsAt);
-                        run = setUpRun(t, runKey, x, y);
+                        run = setUpRun(t, runKey);
                         runSetUp = true;
                         if (run.pairSlot && !kept &&
                             (band.pairSlots.empty() || band.pairSlots.back() != (cellBits | run.pairSlot)))
@@ -1986,7 +1958,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     {
                         if (!runSetUp)
                         {
-                            run = setUpRun(t, runKey, x, y);
+                            run = setUpRun(t, runKey);
                             runSetUp = true;
                         }
                         if (firstHere && run.pairSlot && !kept &&

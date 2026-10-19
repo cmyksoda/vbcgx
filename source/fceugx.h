@@ -128,17 +128,13 @@ enum {
 
 enum
 {
-	CTRL_PAD,
-	CTRL_ZAPPER,
-	CTRL_PAD2,
-	CTRL_PAD4,
-	CTRL_LENGTH
+	CTRL_PAD
 };
 
-#define CTRL_BTN_MAPPINGS 2 // CTRL_PAD and CTRL_ZAPPER
+#define CTRL_BTN_MAPPINGS 1
 
-const char ctrlName[6][20] =
-{ "Virtual Boy Pad", "NES Zapper", "NES Controllers (2)", "NES Controllers (4)" };
+const char ctrlName[1][20] =
+{ "Virtual Boy Pad" };
 
 enum
 {

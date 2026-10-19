@@ -40,7 +40,6 @@ extern "C" {
 
 #define VBGO_TT_WIDTH  384
 #define VBGO_TT_HEIGHT 224
-#define VBGO_TT_EYE_PIXELS (VBGO_TT_WIDTH * VBGO_TT_HEIGHT)
 /* Tags per column in the tag buffer (rows 0-223 used): a band's 8 tags are one aligned 32-byte line, and
  * unlike 256 (a 1 KB stride) the columns spread over the Wii's 128 L1 sets. */
 #define VBGO_TT_COLUMN 264
@@ -135,7 +134,6 @@ static inline uint32_t vbgo_eye_word(const uint8_t *bits, const uint32_t *clut, 
 #define VBGO_TT_FILLS_PACK 1 /* only in cells marked with vbgo_tiletrack_set_fill_cells */
 #define VBGO_TT_FILLS_ALL  2
 void vbgo_tiletrack_set_fill_mode(int mode);
-int vbgo_tiletrack_fill_mode(void);
 /* 65536-bit map (8 KB): bit n set = BG map cell n has fill colors. Copied. */
 void vbgo_tiletrack_set_fill_cells(const uint8_t *bits);
 
@@ -199,18 +197,6 @@ static inline int vbgo_obj_parallax(const uint16_t *oam, unsigned obj)
 
 /* False if that eye has shown nothing tracked yet. */
 bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view);
-
-/* The eye's frame as records (row-major, VBGO_TT_EYE_PIXELS) and, if cells
- * isn't NULL, their map cells. Fills are included only if with_fills. */
-bool vbgo_tiletrack_records(unsigned eye, uint64_t *records, uint32_t *cells, bool with_fills);
-
-/* Character memory as of the last drawing pass (2048 tiles of 8 rows),
- * everything the game had loaded - on screen or not. NULL until a frame was
- * drawn with tracking on. */
-const uint16_t *vbgo_tiletrack_chr_ram(void);
-
-/* The hash records use for a tile with these 8 rows. */
-uint32_t vbgo_tiletrack_hash_rows(const uint16_t rows[8]);
 
 /* ---- Core hooks (called from the patched vip.c / vip_draw.inc only) ---- */
 

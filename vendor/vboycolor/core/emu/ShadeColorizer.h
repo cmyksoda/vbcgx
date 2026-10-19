@@ -60,9 +60,6 @@ public:
     // before Colorize. Cheap: a sparse scan, and the table is only rebuilt
     // when something changed.
     void Observe(const uint8_t *const bits[2], const uint32_t *const clut[2], size_t width, size_t height, size_t rightX);
-    // How far a shade is toward its full color at a fade level (0-63) - the
-    // factor Colorize uses.
-    float Fade(int level) const;
     // The 4 colors as shown at full brightness (background, 3 shades).
     std::array<ShadeRgb, 4> Palette() const { return m_palette; }
 
