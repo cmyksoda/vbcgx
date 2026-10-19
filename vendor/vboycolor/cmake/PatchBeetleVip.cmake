@@ -364,6 +364,152 @@ static void DrawBG(uint8 *target, uint16 RealY,]=]
   SourceX += dx;
  }]=]
         "vip_draw.inc (DrawAffine no-rotation store)")
+    # The unrotated line one pixel a step (an unscaled affine map): a map cell's pixels are one run of its character
+    # row, drawn and tagged together. A whole opaque cell is straight-line code; the rest is in VbgoAffineRun.
+    _vbgo_replace_once(DRAW
+        [=[static void DrawAffine(uint8 *target, uint16 RealY, bool lr, uint32 ParamBase,]=]
+        [=[#if defined(__GNUC__)
+#define VBGO_NOINLINE __attribute__((noinline))
+#else
+#define VBGO_NOINLINE
+#endif
+/* VirtualBoyGo: an unrotated affine run (DrawAffine) that isn't a whole opaque cell's: fills, the line's ends,
+ * transparent pixels. Pixel j is at x + j and shows in-tile x offset + j, or 7 - offset - j flipped. */
+static VBGO_NOINLINE void VbgoAffineRun(uint8 *target, int x, unsigned int offset, unsigned int run, uint32 p, uint32 bgsc, uint32 cbits,
+                          unsigned int cell, int fills, uint32_t *row, uint16_t *crow, uint32 wbit)
+{
+ unsigned int j;
+ if(fills)
+ {
+  for(j = 0; j < run; j++)
+  {
+   const unsigned int char_sub_x = ((bgsc & 0x2000) ? 0xE : 0) ^ ((offset + j) * 2);
+   const uint32 pixel = (p >> (j * 2)) & 3;
+   if(pixel)
+   {
+    target[x + j] = GPLT_Cache[bgsc >> 14][pixel];
+    row[(x + j) * VBGO_TT_COLUMN] = cbits | char_sub_x << 10 | pixel << 20;
+    crow[(x + j) * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
+    vbgo_tt_wcells[(x + j) >> 3] |= wbit;
+   }
+   else
+    vbgo_tt_fill_at(&row[(x + j) * VBGO_TT_COLUMN], &crow[(x + j) * VBGO_TT_CELL_COLUMN], cbits | char_sub_x << 10, cell),
+    vbgo_tt_wcells[(x + j) >> 3] |= wbit, vbgo_tt_fillc[(x + j) >> 3] = 1;
+  }
+ }
+ else if(p)
+ {
+  /* All the run's shades at once, merged into the row under the drawn pixels (as DrawBG's whole-row path does). */
+  uint32 shades[2], drawn[2], line[2];
+  memcpy(&shades[0], GPLT_Quad[bgsc >> 14][p & 0xFF], 4);
+  memcpy(&shades[1], GPLT_Quad[bgsc >> 14][p >> 8], 4);
+  memcpy(&drawn[0], OpaqueQuad[p & 0xFF], 4);
+  memcpy(&drawn[1], OpaqueQuad[p >> 8], 4);
+  memcpy(&line[0], target + x, 4);
+  memcpy(&line[1], target + x + 4, 4);
+  line[0] = (line[0] & ~drawn[0]) | (shades[0] & drawn[0]);
+  line[1] = (line[1] & ~drawn[1]) | (shades[1] & drawn[1]);
+  memcpy(target + x, &line[0], 4);
+  memcpy(target + x + 4, &line[1], 4);
+  if(row)
+  {
+   const int flipped = (bgsc & 0x2000) != 0;
+   unsigned int in_tile = flipped ? 7 - offset : offset;
+   const uint32 drawn_mask = (p | (p >> 1)) & 0x5555; /* (bit 2j: pixel j is drawn) */
+   unsigned int first, last;
+   for(j = 0; j < run; j++, in_tile += flipped ? -1 : 1)
+    if((drawn_mask >> (j * 2)) & 1)
+     row[(x + j) * VBGO_TT_COLUMN] = cbits | in_tile << 11 | ((p >> (j * 2)) & 3) << 20, crow[(x + j) * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
+   /* (the 8 columns holding the first and the last drawn pixel) */
+   first = __builtin_ctz(drawn_mask) >> 1;
+   last = (31 - __builtin_clz(drawn_mask)) >> 1;
+   vbgo_tt_wcells[(x + first) >> 3] |= wbit;
+   vbgo_tt_wcells[(x + last) >> 3] |= wbit;
+  }
+ }
+}
+
+static void DrawAffine(uint8 *target, uint16 RealY, bool lr, uint32 ParamBase,]=]
+        "vip_draw.inc (DrawAffine run helper)")
+    _vbgo_replace_once(DRAW
+        [=[ const uint8 *plt = GPLT_Cache[0];
+ unsigned int char_sub_y = 0;
+ for(x = start_x; x <= final_x; x++)
+ {]=]
+        [=[ const uint8 *plt = GPLT_Cache[0];
+ unsigned int char_sub_y = 0;
+ if(dx == 512) /* VirtualBoyGo */
+ {
+  /* (a map's edge is on a cell's, so SourceX wraps only between runs) */
+  x = start_x;
+  while(x <= final_x)
+  {
+   uint32 p;
+   unsigned int offset, run;
+
+   SourceX &= SourceX_Mask;
+   bgsc = bgsc_overplane;
+   vbgo_cell = OverplaneChar & 0xFFFF;
+   if(SourceX < (SourceX_Size << 9))
+   {
+    vbgo_cell = (BGMap_Base | ((SourceX >> 6) & ~0xFFF) | ((SourceX >> 12) & 0x3F)) & 0xFFFF;
+    bgsc = BGMap[vbgo_cell];
+    USE_ROW(vbgo_cell);
+   }
+   vbgo_fills = vbgo_row && vbgo_tt_fills_from(bgsc & 0x7FF, vbgo_cell);
+   char_sub_y = (((int32)(bgsc << 19) >> 31) & 0x7) ^ ((SourceY >> 9) & 0x7);
+   p = CHR16[((bgsc & 0x7FF) * 8) | char_sub_y];
+   vbgo_cbits = vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, 0, char_sub_y, bgsc >> 14, 0);
+   if((bgsc & 0x7FF) != used_chr)
+   {
+    USE_BG_CHR(bgsc & 0x7FF);
+    used_chr = bgsc & 0x7FF;
+   }
+   /* (the run: this cell's pixels from where the line enters it, in screen order, two bits each) */
+   if(bgsc & 0x2000)
+   {
+    p = ((p >> 2) & 0x3333) | ((p & 0x3333) << 2);
+    p = ((p >> 4) & 0x0F0F) | ((p & 0x0F0F) << 4);
+    p = ((p >> 8) & 0x00FF) | ((p & 0x00FF) << 8);
+   }
+   offset = (SourceX >> 9) & 7;
+   run = 8 - offset;
+   if(run > (unsigned)(final_x - x + 1))
+    run = final_x - x + 1;
+   p = (p >> (offset * 2)) & ((1u << (run * 2)) - 1);
+   if(vbgo_row && !vbgo_fills && run == 8 && ((p | (p >> 1)) & 0x5555) == 0x5555)
+   {
+    /* (a whole cell, every pixel drawn: straight-line; pixel j shows in-tile x j, or 7 - j flipped) */
+    uint32 shades[2];
+    uint32_t *const tag = vbgo_row + x * VBGO_TT_COLUMN;
+    const uint32 b = vbgo_cbits | ((bgsc & 0x2000) ? 7u << 11 : 0u);
+    const int step = (bgsc & 0x2000) ? -(1 << 11) : (1 << 11);
+    const uint32 cells = (uint32)vbgo_cell * 0x10001u;
+    memcpy(&shades[0], GPLT_Quad[bgsc >> 14][p & 0xFF], 4);
+    memcpy(&shades[1], GPLT_Quad[bgsc >> 14][p >> 8], 4);
+    memcpy(target + x, &shades[0], 4);
+    memcpy(target + x + 4, &shades[1], 4);
+#define VBGO_AFFINE_TAG(j) tag[(j) * VBGO_TT_COLUMN] = (b + (uint32)((j) * step)) | ((p >> ((j) * 2)) & 3) << 20;
+    VBGO_AFFINE_TAG(0) VBGO_AFFINE_TAG(1) VBGO_AFFINE_TAG(2) VBGO_AFFINE_TAG(3)
+    VBGO_AFFINE_TAG(4) VBGO_AFFINE_TAG(5) VBGO_AFFINE_TAG(6) VBGO_AFFINE_TAG(7)
+#undef VBGO_AFFINE_TAG
+    memcpy(vbgo_crow + x * VBGO_TT_CELL_COLUMN, &cells, 4);
+    memcpy(vbgo_crow + x * VBGO_TT_CELL_COLUMN + 2, &cells, 4);
+    memcpy(vbgo_crow + x * VBGO_TT_CELL_COLUMN + 4, &cells, 4);
+    memcpy(vbgo_crow + x * VBGO_TT_CELL_COLUMN + 6, &cells, 4);
+    vbgo_tt_wcells[x >> 3] |= vbgo_wbit;
+    vbgo_tt_wcells[(x + 7) >> 3] |= vbgo_wbit;
+   }
+   else if(vbgo_fills || p)
+    VbgoAffineRun(target, x, offset, run, p, bgsc, vbgo_cbits, vbgo_cell, vbgo_fills, vbgo_row, vbgo_crow, vbgo_wbit);
+   x += run;
+   SourceX += run << 9;
+  }
+ }
+ else
+ for(x = start_x; x <= final_x; x++)
+ {]=]
+        "vip_draw.inc (DrawAffine no-rotation run)")
     _vbgo_replace_once(DRAW
         [=[    bgsc = BGMap[(BGMap_Base | m_index | sub_index) & 0xFFFF];
    }]=]
