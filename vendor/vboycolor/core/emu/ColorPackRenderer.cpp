@@ -1421,16 +1421,38 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         // A kept cell's slow columns are painted again only if the markers their context goes by
         // moved (without layer-bound groups, only sprites' count; their marker writes are the pre-pass's).
         uint8_t contextSame[kBands][kGridW] = {};
-        for (unsigned b = 0; haveContexts && !m_layerBound.Any() && b < static_cast<unsigned>(kBands); ++b)
-            for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
+        // (a cell's kept near / close groups are clear unless it or the frame has any: the frame's are m_spreadCells,
+        // or every cell if it spread everywhere - only those cells are looked at)
+        auto contextCell = [&](unsigned b, unsigned c) {
+            CellMarks &cell = bands[b].marks[c];
+            const unsigned i = b * kGridW + c;
+            contextSame[b][c] = keptCell[b][c] && cell.nearSprites == m_nearSprites[i] && cell.closeSprites == m_closeSprites[i];
+            cell.nearSprites = m_nearSprites[i];
+            cell.closeSprites = m_closeSprites[i];
+            if (cell.nearSprites.Any() || cell.closeSprites.Any())
+                bands[b].nearAny |= 1ull << c;
+            else
+                bands[b].nearAny &= ~(1ull << c);
+        };
+        if (haveContexts && !m_layerBound.Any())
+        {
+            if (m_spreadAll)
+                for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+                    for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
+                        contextCell(b, c);
+            else
             {
-                CellMarks &cell = bands[b].marks[c];
-                const unsigned i = b * kGridW + c;
-                contextSame[b][c] = keptCell[b][c] && cell.nearSprites == m_nearSprites[i] &&
-                                    cell.closeSprites == m_closeSprites[i];
-                cell.nearSprites = m_nearSprites[i];
-                cell.closeSprites = m_closeSprites[i];
+                std::memcpy(contextSame, keptCell, sizeof(contextSame));
+                uint64_t todo[kBands];
+                for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+                    todo[b] = bands[b].nearAny;
+                for (const uint16_t i : m_spreadCells)
+                    todo[i / kGridW] |= 1ull << (i % kGridW);
+                for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+                    for (uint64_t w = todo[b]; w; w &= w - 1)
+                        contextCell(b, static_cast<unsigned>(__builtin_ctzll(w)));
             }
+        }
         const size_t rowBytes = static_cast<size_t>(fbWidth) * 4;
         CellSums unkept; // (a kept cell's columns painted again: their bookkeeping goes nowhere)
         for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
