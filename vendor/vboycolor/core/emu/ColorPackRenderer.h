@@ -144,7 +144,7 @@ private:
     };
     struct Band
     {
-        uint32_t clut = 0, state = 0;
+        uint32_t clut = 0, state = 0, autoState = 0; // (autoState: m_paintAuto as it was painted)
         uint8_t onShades = 0; // (right eye: a bit per shade not black, as walked)
         bool summed = false;  // (sums is its cells' as they are)
         std::array<uint32_t, VBGO_TT_WIDTH / 8> version{}; // (each cell's, as last painted: kept apart, read every frame)
@@ -157,6 +157,7 @@ private:
         uint64_t contextCells = 0; // (left eye: a bit per cell with a slow run whose colors go by markers nearby)
         uint64_t markMoves = 0;    // (left eye: a bit per cell whose painting moved a marker in the grid - not to be skipped)
         uint64_t markCells = 0;    // (right eye: a bit per cell whose runs add markers; a kept cell's other slow columns aren't scanned)
+        uint64_t autoCells = 0;    // (left eye: a bit per cell with a pixel in an automatic ramp's color)
     };
     std::array<std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2>, 2> m_bands; // [eye][buffer]
     std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_painted{};
@@ -187,6 +188,8 @@ private:
     };
     PaintState m_paintStateWas, m_paintStateRightWas;
     uint32_t m_paintState = 1, m_paintStateRight = 1; // (the right eye's: only what its scan reads)
+    // The automatic colors' layers and figures change apart from m_paintState: they only reach the cells with a ramp's colors.
+    uint32_t m_paintAuto = 1, m_autoWorldsWas = 0, m_figuresWas = 0;
     unsigned m_fadeReference = 0;
     unsigned m_lastLeftLevel = 0; // (the left eye's level at the last Paint: see m_unfaded)
 

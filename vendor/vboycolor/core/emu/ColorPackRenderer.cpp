@@ -99,8 +99,8 @@ inline uint32_t LowFirst32(const uint8_t *p)
 
 bool ColorPackRenderer::PaintState::operator==(const PaintState &o) const
 {
-    return pack == o.pack && automatic == o.automatic && pairs == o.pairs && autoWorlds == o.autoWorlds && figures == o.figures &&
-           shade == o.shade && fbWidth == o.fbWidth && eyeOffset == o.eyeOffset && fadeReference == o.fadeReference &&
+    return pack == o.pack && automatic == o.automatic && pairs == o.pairs && shade == o.shade && fbWidth == o.fbWidth &&
+           eyeOffset == o.eyeOffset && fadeReference == o.fadeReference &&
            flat == o.flat && std::equal(bg, bg + 3, o.bg) && worlds == o.worlds && pairOfLeft == o.pairOfLeft &&
            pairOfRight == o.pairOfRight && spritePairOf == o.spritePairOf;
 }
@@ -719,6 +719,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         state.pairOfLeft = m_pairOfLeft;
         state.pairOfRight = m_pairOfRight;
         state.spritePairOf = m_spritePairOf;
+        if (state.autoWorlds != m_autoWorldsWas || state.figures != m_figuresWas)
+        {
+            m_autoWorldsWas = state.autoWorlds, m_figuresWas = state.figures;
+            ++m_paintAuto;
+        }
         if (!(state == m_paintStateWas))
         {
             m_paintStateWas = state;
@@ -772,7 +777,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             {
                 const uint32_t version = view[0].cell_version[b * kGridW + c];
                 // (not on depth frames: depth colors are painted over cells after them, and aren't in the copies)
-                keptCell[b][c] = version && band.version[c] == version && (sameClut || (!depth && m_unfadedCell[buffer][b][c]));
+                keptCell[b][c] = version && band.version[c] == version && (sameClut || (!depth && m_unfadedCell[buffer][b][c])) &&
+                                 (band.autoState == m_paintAuto || !(band.autoCells >> c & 1));
                 refadeCell[b][c] = keptCell[b][c] && !sameClut;
                 keep[b] |= static_cast<uint64_t>(keptCell[b][c]) << c;
                 refade[b] |= static_cast<uint64_t>(refadeCell[b][c]) << c;
@@ -1312,6 +1318,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     auto startCells = [&](Band &band, uint64_t kept, const uint32_t *versions, uint32_t clut, uint32_t paintState) {
         band.clut = clut;
         band.state = paintState;
+        band.autoState = m_paintAuto;
+        band.autoCells &= kept;
         band.contextCells &= kept;
         band.markCells &= kept;
         band.markMoves &= kept;
@@ -1812,12 +1820,15 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     // after pixel while the tags stay in the run.
                     const TileColorPack::Tile *tile = run.tile;
                     const AutoColors::Ramp *ramp = run.ramp;
+                    bool rampUsed = false;
                     for (;;)
                     {
                         if (pixel)
                         {
                             const unsigned shade = (rawPixel >> 24) & 3, index = VBGO_TAG_INDEX(t);
-                            const uint8_t *rgb = tile->mask >> index & 1 ? tile->rgb[index] : ramp && shade ? (*ramp)[shade - 1].data() : nullptr;
+                            const bool own = tile->mask >> index & 1;
+                            const uint8_t *rgb = own ? tile->rgb[index] : ramp && shade ? (*ramp)[shade - 1].data() : nullptr;
+                            rampUsed |= rgb && !own;
                             if (rgb)
                                 write(i, rgb, rawPixel >> 26);
                         }
@@ -1839,6 +1850,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         if (!more)
                             break;
                     }
+                    if (rampUsed)
+                        band.autoCells |= 1ull << (x >> 3);
                     continue;
                 }
                 // 1. The map cell's own colors for this tile (and fills).
@@ -1866,6 +1879,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     if (!run.ramp || !pixel || !shade)
                         continue;
                     rgb = (*run.ramp)[shade - 1].data();
+                    band.autoCells |= 1ull << (x >> 3);
                 }
                 if (run.flash && shade && (!run.ramp || rgb != (*run.ramp)[shade - 1].data()))
                 {
