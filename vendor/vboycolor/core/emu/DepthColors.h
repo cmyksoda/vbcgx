@@ -93,6 +93,7 @@ private:
     static void SmoothPass(const int16_t *cost, int16_t *sum, int first, int step, int count, int lines, int lineStep, bool add);
     int Votes(unsigned s, const unsigned left[7], int x, int y, int d) const;
     void LeftWindow(unsigned s, int x, int y, unsigned left[7]) const;
+    static int WindowPixels(const unsigned left[7]);
 
     std::vector<Row> m_bits[2][3]; // per eye and shade 1-3: kHeight rows
     State m_state;

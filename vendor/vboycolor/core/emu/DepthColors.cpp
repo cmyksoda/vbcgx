@@ -138,6 +138,13 @@ void DepthColors::LeftWindow(unsigned s, int x, int y, unsigned left[7]) const
     }
 }
 
+int DepthColors::WindowPixels(const unsigned left[7])
+{
+    // The most votes a disparity can have there: the left picture's pixels of the shade in the 7x7 window.
+    return kSetIn7.n[left[0]] + kSetIn7.n[left[1]] + kSetIn7.n[left[2]] + kSetIn7.n[left[3]] + kSetIn7.n[left[4]] +
+           kSetIn7.n[left[5]] + kSetIn7.n[left[6]];
+}
+
 std::vector<uint32_t> &DepthColors::NextLit(unsigned eye)
 {
     m_nextLit[eye].clear();
@@ -997,13 +1004,15 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
             int d = candidates[0] - kMaxDisparity, bestVotes = -1;
             unsigned left[7];
             bool haveLeft = false;
+            int pixels = 0;
             if (count > 1)
             {
                 LeftWindow(s, x, y, left);
                 haveLeft = true;
+                pixels = WindowPixels(left);
                 const int own = Votes(s, left, x, y, d);
                 bestVotes = own;
-                for (int k = 1; k < count; ++k)
+                for (int k = 1; k < count && pixels > std::max(own + kSwitch, bestVotes); ++k)
                 {
                     const int v = Votes(s, left, x, y, candidates[k] - kMaxDisparity);
                     if (v > own + kSwitch && v > bestVotes)
@@ -1019,10 +1028,13 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                 if (xr >= 0 && xr < kWidth && m_lastShades[1][static_cast<size_t>(y) * kWidth + xr] == shades[1][static_cast<size_t>(y) * kWidth + xr])
                 {
                     if (!haveLeft)
+                    {
                         LeftWindow(s, x, y, left);
+                        pixels = WindowPixels(left);
+                    }
                     if (bestVotes < 0)
                         bestVotes = Votes(s, left, x, y, d);
-                    if (Votes(s, left, x, y, last) >= bestVotes - 1)
+                    if (pixels >= bestVotes - 1 && Votes(s, left, x, y, last) >= bestVotes - 1)
                         d = last;
                 }
             }
