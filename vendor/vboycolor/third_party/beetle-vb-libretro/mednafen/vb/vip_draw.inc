@@ -451,12 +451,22 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, in
 }
 
 
+/* A drawn world's attributes, decoded once per block. */
+typedef struct
+{
+ uint32 bgmap_base, scy, scx, bgm, param_base;
+ bool over, lron[2];
+ uint16 gx, gp, gy, mx, mp, my, window_width, window_height, overplane_char;
+ int tt_world;
+} VbgoWorldAttr;
+
 void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
 {
  /* Row by row, each row through every world back to front: each pixel gets the
   * same writes in the same order, while the row's pixels and tags stay in the cache. */
  static uint16 obj_lists[32][1024];
  const uint16 *drawn[32];
+ VbgoWorldAttr attrs[32];
  int counts[32], drawn_count = 0, obj_lists_used = 0;
  int y, world, lr, k;
  for( y = 0; y < 8; y++)
@@ -487,6 +497,27 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
    if(obj_search_which)
     obj_search_which--;
   }
+  {
+   VbgoWorldAttr *const a = &attrs[drawn_count];
+   a->bgmap_base = world_ptr[0] & 0xF;
+   a->over = world_ptr[0] & 0x80;
+   a->scy = (world_ptr[0] >> 8) & 3;
+   a->scx = (world_ptr[0] >> 10) & 3;
+   a->bgm = (world_ptr[0] >> 12) & 3;
+   a->lron[0] = (bool)(world_ptr[0] & 0x8000);
+   a->lron[1] = (bool)(world_ptr[0] & 0x4000);
+   a->gx = sign_11_to_s16(world_ptr[1]);
+   a->gp = ParallaxDisabled ? 0 : sign_9_to_s16(world_ptr[2]);
+   a->gy = sign_11_to_s16(world_ptr[3]);
+   a->mx = world_ptr[4];
+   a->mp = ParallaxDisabled ? 0 : sign_9_to_s16(world_ptr[5]);
+   a->my = world_ptr[6];
+   a->window_width = sign_11_to_s16(world_ptr[7]);
+   a->window_height = (world_ptr[8] & 0x3FF);
+   a->param_base = (world_ptr[9] & 0xFFF0);
+   a->overplane_char = world_ptr[10];
+   a->tt_world = (int)((world_ptr - &DRAM[0x1D800 >> 1]) / 16);
+  }
   drawn[drawn_count++] = world_ptr;
  }
 
@@ -497,27 +528,14 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
 
   for(k = 0; k < drawn_count; k++)
   {
-  const uint16 *world_ptr = drawn[k];
+  VbgoWorldAttr *const a = &attrs[k];
+  const uint32 bgmap_base = a->bgmap_base, scy = a->scy, scx = a->scx, bgm = a->bgm, param_base = a->param_base;
+  const bool over = a->over;
+  bool *const lron = a->lron;
+  const uint16 gx = a->gx, gp = a->gp, gy = a->gy, mx = a->mx, mp = a->mp, my = a->my;
+  const uint16 window_width = a->window_width, window_height = a->window_height, overplane_char = a->overplane_char;
 
-  uint32 bgmap_base = world_ptr[0] & 0xF;
-  bool over = world_ptr[0] & 0x80;
-  uint32 scy = (world_ptr[0] >> 8) & 3;
-  uint32 scx = (world_ptr[0] >> 10) & 3;
-  uint32 bgm = (world_ptr[0] >> 12) & 3;
-  bool lron[2] =  { (bool)(world_ptr[0] & 0x8000), (bool)(world_ptr[0] & 0x4000) };
-
-  uint16 gx = sign_11_to_s16(world_ptr[1]);
-  uint16 gp = ParallaxDisabled ? 0 : sign_9_to_s16(world_ptr[2]);
-  uint16 gy = sign_11_to_s16(world_ptr[3]);
-  uint16 mx = world_ptr[4];
-  uint16 mp = ParallaxDisabled ? 0 : sign_9_to_s16(world_ptr[5]);
-  uint16 my = world_ptr[6];
-  uint16 window_width = sign_11_to_s16(world_ptr[7]);
-  uint16 window_height = (world_ptr[8] & 0x3FF);
-  uint32 param_base = (world_ptr[9] & 0xFFF0);
-  uint16 overplane_char = world_ptr[10];
-
-  vbgo_tt_world = (int)((world_ptr - &DRAM[0x1D800 >> 1]) / 16);
+  vbgo_tt_world = a->tt_world;
 
    if(bgm == BGM_OBJ)
     DrawOBJ(fb, (block_no * 8) + y, lron, obj_lists[obj_index++], counts[k]);
