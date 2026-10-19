@@ -68,6 +68,9 @@ struct EyeColumn
             words[i] = EyeTaggedWord(eyeClut[x * 4 + i]);
     }
     uint32_t operator[](uint32_t y) const { return words[bits[y >> 2] >> ((y & 3) * 2) & 3]; }
+    // The 8 rows of band b together (row j in bits 2j, 2j + 1), and a row of them: a band's pixels need its bytes once.
+    uint32_t band(uint32_t b) const { return bits[b * 2] | bits[b * 2 + 1] << 8; }
+    uint32_t at(uint32_t band, uint32_t y) const { return words[band >> ((y & 7) * 2) & 3]; }
 };
 
 const TileColorPack::Tile kNoTile{}; // (no tile colors: nothing painted)
@@ -1324,6 +1327,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     const uint64_t cellBits = static_cast<uint64_t>(x >> 3) << 32;
                     bool counted = false, slowHere = false;
                     uint32_t skipHi = VBGO_TAG_NO_HI; // (runHi once a pixel of the band is counted: until then each one is looked at)
+                    const uint32_t eyeBand = eyeColumn.band(b);
                     for (uint32_t y = b * 8; y < b * 8 + 8; ++y)
                     {
                         // (a cell is read only where its tag may be drawn)
@@ -1334,7 +1338,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             continue;
                         const uint64_t t = vbgo_tag_compose(lo, columnCells[vbgo_tt_cell_at(y)]);
                         const unsigned pixel = VBGO_TAG_PIXEL(t);
-                        const uint32_t rawPixel = eyeColumn[y];
+                        const uint32_t rawPixel = eyeColumn.at(eyeBand, y);
                         if (pixel && !(rawPixel & 0xFFFFFFu))
                             continue;
                         const bool firstHere = !counted;
@@ -1486,13 +1490,14 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             const uint64_t cellBits = static_cast<uint64_t>(x >> 3) << 32;
             bool counted = false, slowHere = false; // (a pixel of this band counted in this column yet, a slow run's)
             const uint32_t end = b * 8 + 8;
+            const uint32_t eyeBand = eyeColumn.band(b);
             for (uint32_t y = b * 8; y < end; ++y)
             {
                 if (!vbgo_tag_drawn(column[y], bandKey))
                     continue; // nothing tracked here this frame (background)
                 uint64_t t = vbgo_tag_compose(column[y], columnCells[vbgo_tt_cell_at(y)]);
                 size_t i = columnBase + y * rowBytes;
-                uint32_t rawPixel = eyeColumn[y]; // B, G, R, tag (shade, brightness) from the low byte up
+                uint32_t rawPixel = eyeColumn.at(eyeBand, y); // B, G, R, tag (shade, brightness) from the low byte up
                 unsigned pixel = VBGO_TAG_PIXEL(t);
                 if (pixel && !(rawPixel & 0xFFFFFFu))
                     continue; // drawn in a shade the game switched off - stays background
@@ -1547,7 +1552,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             if ((next & kRunMaskLo) != runLo || columnCells[vbgo_tt_cell_at(y + 1)] != runHi)
                                 break;
                             ++y, i += rowBytes, t = vbgo_tag_compose(next, columnCells[vbgo_tt_cell_at(y)]);
-                            rawPixel = eyeColumn[y];
+                            rawPixel = eyeColumn.at(eyeBand, y);
                             pixel = VBGO_TAG_PIXEL(t);
                             if (!pixel || (rawPixel & 0xFFFFFFu))
                             {
