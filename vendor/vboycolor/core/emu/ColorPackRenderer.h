@@ -2,6 +2,7 @@
 
 #include "emu/AutoColors.h"
 #include "emu/DepthColors.h"
+#include "emu/LineAligned.h"
 #include "emu/ShadeColorizer.h"
 #include "emu/TileColorPack.h"
 #include "emu/vbgo_tiletrack.h"
@@ -164,6 +165,14 @@ private:
     std::array<std::array<std::array<BandColumn, (VBGO_TT_HEIGHT / 8) * VBGO_TT_WIDTH>, 2>, 2> m_bandColumns;
     // [eye][buffer][column]: a bit per band whose BandColumn holds a run; only those are read, the rest of first is stale
     std::array<std::array<std::array<uint32_t, VBGO_TT_WIDTH>, 2>, 2> m_bandsActive{};
+    // Left eye, per colored picture: the pack colors painted at a faded level, before fading, laid out like the picture
+    // (alpha kUnfaded), so a cell drawn as before is faded again from them; m_unfadedCell: the cell's copy is whole.
+    static constexpr uint8_t kUnfaded = 0xFE;
+    // (in the renderer itself, not on the heap - MEM1 on the Wii: sized for the frontend's rows, a cache line of padding each)
+    static constexpr size_t kUnfadedRowBytes = (VBGO_TT_WIDTH + 8) * 4;
+    alignas(32) std::array<std::array<uint8_t, kUnfadedRowBytes * VBGO_TT_HEIGHT>, 2> m_unfaded; // (dcbz clears whole lines)
+    std::array<uint32_t, 2> m_unfadedWidth{}; // (the picture width each copy is laid out for; 0: none yet)
+    std::array<std::array<std::array<uint8_t, VBGO_TT_WIDTH / 8>, VBGO_TT_HEIGHT / 8>, 2> m_unfadedCell{};
     // What painting a band depends on beyond its drawing (bumps m_paintState when it changes).
     struct PaintState
     {
@@ -179,6 +188,7 @@ private:
     PaintState m_paintStateWas, m_paintStateRightWas;
     uint32_t m_paintState = 1, m_paintStateRight = 1; // (the right eye's: only what its scan reads)
     unsigned m_fadeReference = 0;
+    unsigned m_lastLeftLevel = 0; // (the left eye's level at the last Paint: see m_unfaded)
 
     uint8_t m_fadeLut[64][3][256];
     bool m_fadeLutValid = false;

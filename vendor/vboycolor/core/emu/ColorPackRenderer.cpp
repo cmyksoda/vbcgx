@@ -75,6 +75,16 @@ struct EyeColumn
 
 const TileColorPack::Tile kNoTile{}; // (no tile colors: nothing painted)
 
+// A 32-byte line cleared (on the Wii claimed in the cache without reading memory first).
+inline void ClearLine32(uint8_t *line)
+{
+#if defined(__PPC__) || defined(__powerpc__)
+    __asm__ volatile("dcbz 0,%0" : : "r"(line) : "memory");
+#else
+    std::memset(line, 0, 32);
+#endif
+}
+
 // Bits 0-31 of x: 16 pixels' 2-bit values from bytes stored lowest pixel first, whichever the byte order.
 inline uint32_t LowFirst32(const uint8_t *p)
 {
@@ -103,6 +113,9 @@ int ColorPackRenderer::ShownBuffer()
 
 void ColorPackRenderer::ForgetBands()
 {
+    for (auto &copy : m_unfadedCell)
+        for (auto &row : copy)
+            row.fill(0);
     for (auto &eye : m_bands)
         for (auto &bands : eye)
             for (Band &band : bands)
@@ -726,8 +739,19 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         if (hashes != resolvedFor)
             ResolveSlots(hashes), resolvedFor = hashes;
     };
-    std::array<uint64_t, kBands> keep{}, keepRight{}; // (bit per cell)
+    // (with a pack, a cell drawn as before but shown at another level with the same shades lit is faded again from its
+    // copy; level bookkeeping only matters without a pack)
+    unsigned leftOnShades = 0, leftLevel = 0;
+    if (have[0] && view[0].clut)
+    {
+        const uint32_t *clut = vbgo_vip_eye_clut(0);
+        for (unsigned s = 0; s < 4; ++s)
+            leftOnShades |= static_cast<unsigned>((EyeTaggedWord(clut[s]) & 0xFFFFFFu) != 0) << s;
+        leftLevel = EyeTaggedWord(clut[0]) >> 26;
+    }
+    std::array<uint64_t, kBands> keep{}, keepRight{}, refade{}; // (bit per cell; refade: kept, shown at another level)
     uint8_t keptCell[kBands][kGridW] = {}, keptRightCell[kBands][kGridW] = {}; // (the same, a byte each - 64-bit shifts cost PowerPC)
+    uint8_t refadeCell[kBands][kGridW] = {};
     uint32_t keptBands[kGridW] = {}, keptRightBands[kGridW] = {}; // (per cell column, a bit per band: the same again)
     if (have[0] && view[0].clut && view[0].cell_version && view[0].band_chr)
     {
@@ -738,7 +762,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
         {
             const Band &band = bands[b];
-            if (band.clut != view[0].clut || band.state != m_paintState)
+            const bool sameClut = band.clut == view[0].clut;
+            if ((!sameClut && !(pack && band.clut && band.onShades == leftOnShades)) || band.state != m_paintState)
                 continue;
             uint32_t ambiguousHere = 0;
             for (unsigned i = 0; i < 2048 / 32; ++i)
@@ -746,8 +771,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             for (unsigned c = 0; !ambiguousHere && c < static_cast<unsigned>(kGridW); ++c)
             {
                 const uint32_t version = view[0].cell_version[b * kGridW + c];
-                keptCell[b][c] = version && band.version[c] == version;
+                // (not on depth frames: depth colors are painted over cells after them, and aren't in the copies)
+                keptCell[b][c] = version && band.version[c] == version && (sameClut || (!depth && m_unfadedCell[buffer][b][c]));
+                refadeCell[b][c] = keptCell[b][c] && !sameClut;
                 keep[b] |= static_cast<uint64_t>(keptCell[b][c]) << c;
+                refade[b] |= static_cast<uint64_t>(refadeCell[b][c]) << c;
                 keptBands[c] |= static_cast<uint32_t>(keptCell[b][c]) << b;
             }
         }
@@ -777,7 +805,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             }
         }
     for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-        m_painted[b] = ~keep[b] & ((1ull << kGridW) - 1);
+        m_painted[b] = ~(keep[b] & ~refade[b]) & ((1ull << kGridW) - 1);
     uint64_t contextMoved[kBands] = {}; // (per cell: a marker within reach changed since this buffer's last Paint)
     bool contextCompared = false, windowMade = false, markersAdded = false;
     ContextGroupBits *markers = nullptr; // this frame's marker grid (Near reads it and the two before it)
@@ -1084,7 +1112,25 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     left.fill(VBGO_TT_WIDTH), right.fill(-1), top.fill(VBGO_TT_HEIGHT), bottom.fill(-1);
 
     UpdateFadeLut(bg);
-    auto write = [&](uint8_t *dst, const uint8_t *rgb, unsigned level) {
+    // (at a faded level with a pack, while the level moves, painting keeps the colors before fading too - see m_unfaded;
+    // at a steady level the copies would cost every painted pixel and pay only at a fade's first step)
+    uint8_t *unfaded = nullptr;
+    const bool levelMoved = leftLevel != m_lastLeftLevel;
+    m_lastLeftLevel = leftLevel;
+    if (pack && have[0] && !depth && view[0].clut && eyeOffset[0] == 0 && m_fade[leftLevel] != 256 && levelMoved &&
+        static_cast<size_t>(fbWidth) * 4 <= kUnfadedRowBytes && fbWidth % 8 == 0) // (rows of whole cache lines, for dcbz)
+    {
+        if (m_unfadedWidth[buffer] != fbWidth)
+        {
+            m_unfaded[buffer].fill(0);
+            m_unfadedWidth[buffer] = fbWidth;
+            for (auto &row : m_unfadedCell[buffer])
+                row.fill(0);
+        }
+        unfaded = m_unfaded[buffer].data();
+    }
+    auto write = [&](size_t i, const uint8_t *rgb, unsigned level) {
+        uint8_t *dst = &frame[i];
         const int fade = m_fade[level]; // 0-256
         if (fade == 256)
         {
@@ -1097,6 +1143,14 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             dst[0] = m_fadeLut[level][0][rgb[2]];
             dst[1] = m_fadeLut[level][1][rgb[1]];
             dst[2] = m_fadeLut[level][2][rgb[0]];
+            if (unfaded)
+            {
+                uint8_t *copy = unfaded + i;
+                copy[0] = rgb[2];
+                copy[1] = rgb[1];
+                copy[2] = rgb[0];
+                copy[3] = kUnfaded;
+            }
         }
     };
     // The tile's colors with context (the slow path - see Run::slow): the
@@ -1273,6 +1327,30 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         band.pairSlots.erase(std::remove_if(band.pairSlots.begin(), band.pairSlots.end(),
                                             [kept](uint64_t slot) { return !(kept >> (slot >> 32) & 1); }),
                              band.pairSlots.end());
+    };
+    // (a cell's copy, or a column of it, is cleared before it is painted and recorded again)
+    const size_t rowBytesAll = static_cast<size_t>(fbWidth) * 4;
+    auto clearCopy = [&](unsigned b, unsigned c) {
+        for (unsigned r = 0; r < 8; ++r)
+            ClearLine32(unfaded + (b * 8 + r) * rowBytesAll + c * 32);
+    };
+    auto clearCopyColumn = [&](unsigned x, unsigned b) {
+        for (unsigned r = 0; r < 8; ++r)
+            std::memset(unfaded + (b * 8 + r) * rowBytesAll + x * 4, 0, 4);
+    };
+    // (a refaded cell, shaded again just before: its painted pixels from their copies through the new level's table)
+    auto refadeFrom = [&](unsigned b, unsigned c) {
+        const uint8_t *lut0 = m_fadeLut[leftLevel][0], *lut1 = m_fadeLut[leftLevel][1], *lut2 = m_fadeLut[leftLevel][2];
+        const uint8_t *copy = m_unfaded[buffer].data();
+        for (unsigned r = 0; r < 8; ++r)
+        {
+            const size_t at = (b * 8 + r) * rowBytesAll + c * 32;
+            const uint8_t *from = copy + at;
+            uint8_t *to = frame + at;
+            for (unsigned k = 0; k < 8; ++k, from += 4, to += 4)
+                if (from[3] == kUnfaded)
+                    to[0] = lut0[from[0]], to[1] = lut1[from[1]], to[2] = lut2[from[2]];
+        }
     };
     // (without Auto colors, contexts or pairs, nothing the right eye's runs add reaches a picture: only the layers'
     // extents, which then go by the left eye alone)
@@ -1503,7 +1581,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         // (the bands kept: only what their runs add to the bookkeeping).
         static const uint32_t kNoVersions[kGridW] = {};
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+        {
             startCells(bands[b], keep[b], v.cell_version ? &v.cell_version[b * kGridW] : kNoVersions, v.clut, m_paintState);
+            bands[b].onShades = static_cast<uint8_t>(leftOnShades);
+        }
         // A kept cell's slow columns are painted again only if the markers their context goes by
         // moved (without layer-bound groups, only sprites' count; their marker writes are the pre-pass's).
         uint8_t contextSame[kBands][kGridW] = {};
@@ -1571,8 +1652,21 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         {
             if (!(x & 7))
                 for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-                    if (!keptCell[b][x >> 3])
-                        shade.cells(b, x >> 3, 1);
+                {
+                    const unsigned c = x >> 3;
+                    if (!keptCell[b][c])
+                    {
+                        shade.cells(b, c, 1);
+                        if (unfaded)
+                            clearCopy(b, c);
+                        m_unfadedCell[buffer][b][c] = unfaded != nullptr;
+                    }
+                    else if (refadeCell[b][c])
+                    {
+                        shade.cells(b, c, 1);
+                        refadeFrom(b, c);
+                    }
+                }
             const uint32_t *column = v.columns[x];
             const uint16_t *columnCells = v.cells[x];
             if (!column)
@@ -1611,6 +1705,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 }
                 shade.column(x, b * 8, 8); // (painted again; its bookkeeping is kept)
                 m_painted[b] |= 1ull << (x >> 3);
+                if (unfaded)
+                    clearCopyColumn(x, b);
+                else
+                    m_unfadedCell[buffer][b][x >> 3] = 0;
             }
             if (!(tagged >> b & 1))
             {
@@ -1721,7 +1819,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             const unsigned shade = (rawPixel >> 24) & 3, index = VBGO_TAG_INDEX(t);
                             const uint8_t *rgb = tile->mask >> index & 1 ? tile->rgb[index] : ramp && shade ? (*ramp)[shade - 1].data() : nullptr;
                             if (rgb)
-                                write(&frame[i], rgb, rawPixel >> 26);
+                                write(i, rgb, rawPixel >> 26);
                         }
                         bool more = false;
                         while (y + 1 < end)
@@ -1776,10 +1874,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     uint8_t washed[3];
                     for (int ch = 0; ch < 3; ++ch)
                         washed[ch] = static_cast<uint8_t>((rgb[ch] * 2 + kTarget[shade] * 3) / 5);
-                    write(&frame[i], washed, rawPixel >> 26);
+                    write(i, washed, rawPixel >> 26);
                     continue;
                 }
-                write(&frame[i], rgb, rawPixel >> 26);
+                write(i, rgb, rawPixel >> 26);
             }
             if (!kept)
             {
@@ -1799,7 +1897,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     leftPairSlot[entry & 0x7FF] |= static_cast<uint32_t>(entry) >> 11;
         }
         if (!m_ambiguousPixels.empty())
+        {
+            for (const auto &pixel : m_ambiguousPixels)
+                m_unfadedCell[buffer][pixel.second >> 3][pixel.first >> 3] = 0; // (their colors aren't in the copies)
             PaintAmbiguous(frame, fbWidth, eyeOffset[eye], v);
+        }
         if (windowMade)
         {
             // (valid if the painting added no marker the pre-pass hadn't: Near answered from the grids as they were)
