@@ -344,6 +344,10 @@ private:
             in = 1, m_markerCells[m_gridCurrent].push_back(static_cast<uint16_t>(cell));
     }
     void ClearMarkerCells();
+    bool SameMarkers(unsigned a, unsigned b) const;
+    bool MarkersCovered(unsigned grid, unsigned by, unsigned by2) const;
+    bool LateMarkersCovered() const;
+    void CopyMarkers(unsigned to, unsigned from);
     std::array<ContextGroupBits, 2048> m_slotMarkers{}; // per slot: the context groups its tile is a marker of
     std::array<bool, 2048> m_slotHasMarkers{};
     // (ResolveSlots' compact copies of the slots' hashes and flags, bit per slot: a frame's checks stay in cache)
@@ -352,6 +356,12 @@ private:
     std::vector<uint8_t> m_markerLayer[3];
     ContextGroupBits m_layerBound;
     unsigned m_gridCurrent = 0;
+    // This frame's markers as gathered, before coloring added any (see Coast)
+    std::vector<ContextGroupBits> m_markersGathered;
+    std::vector<uint8_t> m_markerLayersGathered;
+    bool m_markersMovedLate = false; // (coloring moved a cell's markers to another layer)
+    bool m_markersRead = false;      // (the last Paint read markers)
+    int m_markersSteady = -1;        // (whether its coloring added none new to Near; -1: not yet worked out)
     // (near: within kContextReach cells; close: within 1 - see contextTile)
     void Near(int x, int y, unsigned world, ContextGroupBits &near, ContextGroupBits &close);
     struct NearCell

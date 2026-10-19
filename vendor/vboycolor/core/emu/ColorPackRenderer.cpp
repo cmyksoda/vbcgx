@@ -794,6 +794,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         m_painted[b] = ~keep[b] & ((1ull << kGridW) - 1);
     ContextGroupBits *markers = nullptr; // this frame's marker grid (Near reads it and the two before it)
     uint8_t *markerLayers = nullptr;
+    m_markersMovedLate = false;
     if (haveContexts)
     {
         m_gridCurrent = (m_gridCurrent + 1) % 3;
@@ -902,6 +903,16 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         }
                     }
                 }
+            }
+        }
+        {
+            const std::vector<uint16_t> &cells = m_markerCells[m_gridCurrent];
+            m_markersGathered.resize(cells.size());
+            m_markerLayersGathered.resize(cells.size());
+            for (size_t i = 0; i < cells.size(); ++i)
+            {
+                m_markersGathered[i] = markers[cells[i]];
+                m_markerLayersGathered[i] = markerLayers ? markerLayers[cells[i]] : 0xFF;
             }
         }
         // Sprites' groups: this frame's and the last two frames' markers
@@ -1398,8 +1409,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             const unsigned cell = (y >> 3) * kGridW + (lx >> 3);
                             markers[cell] |= bits;
                             NoteMarkerCell(cell);
-                            if (!sprite && markerLayers)
-                                markerLayers[cell] = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
+                            const uint8_t layer = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
+                            if (!sprite && markerLayers && markerLayers[cell] != layer)
+                            {
+                                m_markersMovedLate |= markerLayers[cell] != 0xFF;
+                                markerLayers[cell] = layer;
+                            }
                         }
                     }
                     if (!kept)
@@ -1627,8 +1642,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             const unsigned cell = (y >> 3) * kGridW + (x >> 3);
                             markers[cell] |= bits;
                             NoteMarkerCell(cell);
-                            if (!sprite && markerLayers)
-                                markerLayers[cell] = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
+                            const uint8_t layer = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
+                            if (!sprite && markerLayers && markerLayers[cell] != layer)
+                            {
+                                m_markersMovedLate |= markerLayers[cell] != 0xFF;
+                                markerLayers[cell] = layer;
+                            }
                         }
                     }
                 }
@@ -1727,10 +1746,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         m_autoMaxLevel = brightest;
         SetFadeReference(brightest);
     }
-    // (depth colors keep estimates that age, so they never count as settled; pairs' ages are kept by Coast)
+    // (depth colors keep estimates that age, so they never count as settled; pairs' ages and markers are kept by Coast)
     // (the layers' extents shrinking toward their sizes don't unsettle it: Coast lets them, as another Paint would)
     m_settled = !depth && !reestimated && m_autoWorlds == autoWorldsBefore && m_figureWorlds == figuresBefore &&
-                m_autoMaxLevel == maxLevelBefore && MarkersSettled();
+                m_autoMaxLevel == maxLevelBefore;
+    m_markersRead = haveContexts;
+    m_markersSteady = -1;
     m_pairsChecked = pairs && have[1];
     m_pairsWanted = 0;
     for (int p = 0; p < m_pairCount; ++p)
@@ -1743,6 +1764,14 @@ bool ColorPackRenderer::Coast()
     // The same frame again after a settled Paint would change nothing but the
     // frame count and the pairs it wants - unless a pair's estimate comes due.
     if (!m_settled)
+        return false;
+    // (a game drawing every other frame never has three grids alike, A A B B: another Paint of B adds a copy of the
+    // newest and drops the oldest, nothing Near didn't see when the other two cover it and nothing came late)
+    const unsigned oldest = (m_gridCurrent + 1) % 3, middle = (m_gridCurrent + 2) % 3;
+    const bool rotate = !MarkersSettled();
+    if (rotate && m_markersSteady < 0)
+        m_markersSteady = m_markersRead && !m_markersMovedLate && LateMarkersCovered(); // (before any rotation)
+    if (rotate && (!m_markersSteady || !MarkersCovered(oldest, m_gridCurrent, middle)))
         return false;
     // Another Paint of this picture would only shrink each layer's extent a pixel toward its size (see Paint) - and
     // stop here if a layer would turn into a figure or back, which recolors it.
@@ -1778,6 +1807,11 @@ bool ColorPackRenderer::Coast()
         if (m_pairsWanted >> p & 1)
             m_pairs[p].wantedAt = m_frame;
     m_worldExtent = extent;
+    if (rotate)
+    {
+        CopyMarkers(oldest, m_gridCurrent);
+        m_gridCurrent = oldest;
+    }
     return true;
 }
 
@@ -1790,22 +1824,96 @@ void ColorPackRenderer::ClearMarkerCells()
     }
 }
 
+bool ColorPackRenderer::SameMarkers(unsigned a, unsigned b) const
+{
+    // (outside its cells a grid is clear, so the same cells with the same markers means the same grid)
+    if (m_markerCells[a].size() != m_markerCells[b].size())
+        return false;
+    for (const uint16_t c : m_markerCells[b])
+        if (!m_markerIn[a][c] || !(m_markerGrid[a][c] == m_markerGrid[b][c]) ||
+            (!m_markerLayer[b].empty() && m_markerLayer[a][c] != m_markerLayer[b][c]))
+            return false;
+    return true;
+}
+
+bool ColorPackRenderer::MarkersCovered(unsigned grid, unsigned by, unsigned by2) const
+{
+    // (as Near reads them: a layer-bound group's markers count only on their layer, the others anywhere)
+    const ContextGroupBits free = ~m_layerBound;
+    for (const uint16_t c : m_markerCells[grid])
+    {
+        const ContextGroupBits &bits = m_markerGrid[grid][c];
+        if ((bits & free & ~(m_markerGrid[by][c] | m_markerGrid[by2][c])).Any())
+            return false;
+        if (m_markerLayer[grid].empty())
+            continue;
+        ContextGroupBits sameLayer{};
+        if (m_markerLayer[by][c] == m_markerLayer[grid][c])
+            sameLayer |= m_markerGrid[by][c];
+        if (m_markerLayer[by2][c] == m_markerLayer[grid][c])
+            sameLayer |= m_markerGrid[by2][c];
+        if ((bits & m_layerBound & ~sameLayer).Any())
+            return false;
+    }
+    return true;
+}
+
+bool ColorPackRenderer::LateMarkersCovered() const
+{
+    // (what coloring added to this frame's markers was all where Near read it: in the gathered or the last two grids)
+    const unsigned now = m_gridCurrent, before = (now + 2) % 3, oldest = (now + 1) % 3;
+    const std::vector<uint16_t> &cells = m_markerCells[now];
+    const ContextGroupBits free = ~m_layerBound;
+    for (size_t i = 0; i < cells.size(); ++i)
+    {
+        const unsigned c = cells[i];
+        const bool gathered = i < m_markersGathered.size();
+        const ContextGroupBits was = gathered ? m_markersGathered[i] : ContextGroupBits{};
+        const ContextGroupBits added = m_markerGrid[now][c] & ~was;
+        if (!added.Any())
+            continue;
+        if ((added & free & ~(was | m_markerGrid[before][c] | m_markerGrid[oldest][c])).Any())
+            return false;
+        if (m_markerLayer[now].empty())
+            continue;
+        const uint8_t layer = m_markerLayer[now][c];
+        ContextGroupBits sameLayer{};
+        if ((gathered ? m_markerLayersGathered[i] : 0xFF) == layer)
+            sameLayer |= was;
+        if (m_markerLayer[before][c] == layer)
+            sameLayer |= m_markerGrid[before][c];
+        if (m_markerLayer[oldest][c] == layer)
+            sameLayer |= m_markerGrid[oldest][c];
+        if ((added & m_layerBound & ~sameLayer).Any())
+            return false;
+    }
+    return true;
+}
+
+void ColorPackRenderer::CopyMarkers(unsigned to, unsigned from)
+{
+    // (as Paint starts a grid over, then gathers the same picture's markers)
+    for (const uint16_t c : m_markerCells[to])
+    {
+        m_markerGrid[to][c] = ContextGroupBits{};
+        if (!m_markerLayer[to].empty())
+            m_markerLayer[to][c] = 0xFF;
+        m_markerIn[to][c] = 0;
+    }
+    m_markerCells[to] = m_markerCells[from];
+    for (const uint16_t c : m_markerCells[from])
+    {
+        m_markerGrid[to][c] = m_markerGrid[from][c];
+        if (!m_markerLayer[from].empty())
+            m_markerLayer[to][c] = m_markerLayer[from][c];
+        m_markerIn[to][c] = 1;
+    }
+}
+
 bool ColorPackRenderer::MarkersSettled() const
 {
     // Paint reads the last three frames' markers together: settled once all three agree.
-    // (outside its cells a grid is clear, so the same cells with the same markers means the same grid)
-    if (m_markerGrid[0].empty())
-        return true;
-    for (unsigned g = 1; g < 3; ++g)
-    {
-        if (m_markerCells[g].size() != m_markerCells[0].size())
-            return false;
-        for (const uint16_t c : m_markerCells[0])
-            if (!m_markerIn[g][c] || !(m_markerGrid[g][c] == m_markerGrid[0][c]) ||
-                (!m_markerLayer[0].empty() && m_markerLayer[g][c] != m_markerLayer[0][c]))
-                return false;
-    }
-    return true;
+    return m_markerGrid[0].empty() || (SameMarkers(1, 0) && SameMarkers(2, 0));
 }
 
 unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const uint32_t eyeOffset[2],
