@@ -560,14 +560,196 @@ typedef struct
  int tt_world;
 } VbgoWorldAttr;
 
+
+/* One ordinary background world's rows of the block, for one eye, a character at a time: what DrawBG draws row by row, pixel for
+ * pixel and tag for tag, but the up to 8 rows that share a map row read each map entry once. */
+static void DrawBGBlock(uint8 *fb_eye, unsigned block_no, bool lr, const VbgoWorldAttr *a)
+{
+ const uint16 *CHR16 = CHR_RAM;
+ const uint16 *BGMap = DRAM;
+ const uint32 SourceX_Size = 512 * (1u << a->scx), SourceY_Size = 512 * (1u << a->scy);
+ const uint32 SourceX_Mask = SourceX_Size - 1, SourceY_Mask = SourceY_Size - 1;
+ uint16 srcX = a->mx + (lr ? a->mp : -a->mp);
+ uint16 DestX = a->gx + (lr ? a->gp : -a->gp);
+ uint32 SourceX = (uint32)(int32)(int16)srcX;
+ const uint32_t vbgo_bits = vbgo_tt_call_bits();
+ const uint32_t vbgo_wbit = 1u << VBGO_TAG_WORLD(vbgo_bits);
+ int32 start_x, final_x;
+ int y = 0;
+
+ DestX = sign_10_to_s16(DestX);
+ if(DestX & 0x8000)
+  SourceX -= DestX;
+ start_x = (int16)DestX;
+ final_x = (int16)DestX + a->window_width;
+ if(start_x < 0)
+  start_x = 0;
+ if(final_x > 383)
+  final_x = 383;
+ if(start_x < ClipX0)
+ {
+  SourceX += ClipX0 - start_x;
+  start_x = ClipX0;
+ }
+ if(final_x > ClipX1)
+  final_x = ClipX1;
+ if(start_x > final_x)
+  return;
+
+ while(y < 8)
+ {
+  uint8 *tgt[8];
+  uint32_t *trow[8];
+  uint16_t *crow[8];
+  unsigned sy7[8];
+  int n = 0;
+  uint32 SourceY = 0, BGMap_Base, used_chr = 0xFFFF;
+  int32 x;
+  uint32 sx;
+  /* (rows outside the window draw nothing) */
+  for(; y < 8 && (uint16)((block_no * 8 + y) - a->gy) > a->window_height; y++)
+   ;
+  if(y == 8)
+   break;
+  for(; y < 8 && (uint16)((block_no * 8 + y) - a->gy) <= a->window_height; y++)
+  {
+   const uint16 srcY = a->my + ((uint16)(block_no * 8 + y) - a->gy);
+   const uint32 sy = ((uint32)(int32)(int16)srcY) & SourceY_Mask;
+   if(n && (sy >> 3) != (SourceY >> 3))
+    break;
+   SourceY = sy;
+   tgt[n] = fb_eye + y * 512;
+   trow[n] = vbgo_tt_row(tgt[n]);
+   crow[n] = vbgo_tt_cell_row(tgt[n]);
+   sy7[n] = sy & 7;
+   n++;
+  }
+
+  BGMap_Base = (a->bgmap_base << 12) | (((SourceY >> 3) & 0x3F) * 0x40) | (((SourceY << 3) & ~0xFFF) << a->scx);
+  USE_ROW(a->overplane_char);
+  {
+   int xs;
+   for(xs = 0; xs < (1 << a->scx); xs++)
+    USE_ROW(BGMap_Base | (xs << 12));
+  }
+
+  x = start_x;
+  sx = SourceX;
+  while(x <= final_x)
+  {
+   unsigned cell, offset, run, i;
+   uint32 bgsc, char_no;
+   sx &= SourceX_Mask;
+   cell = (BGMap_Base | ((sx << 3) & ~0xFFF) | ((sx >> 3) & 0x3F)) & 0xFFFF;
+   bgsc = BGMap[cell];
+   char_no = bgsc & 0x7FF;
+   if(char_no != used_chr)
+   {
+    USE_BG_CHR(char_no);
+    used_chr = char_no;
+   }
+   offset = sx & 7;
+   if(vbgo_tt_blank[char_no])
+   {
+    /* (a character that has no pixel can't fill either: it and the tiles after it with the same entry draw nothing) */
+    uint32 blank_w[4];
+    memcpy(blank_w, &CHR16[char_no * 8], 16);
+    if(!(blank_w[0] | blank_w[1] | blank_w[2] | blank_w[3]))
+    {
+     run = offset ? 8 - offset : 8;
+     x += run;
+     sx += run;
+     while(x + 7 <= final_x)
+     {
+      uint32 s2 = sx & SourceX_Mask;
+      if(BGMap[(BGMap_Base | ((s2 << 3) & ~0xFFF) | ((s2 >> 3) & 0x3F)) & 0xFFFF] != bgsc)
+       break;
+      x += 8;
+      sx += 8;
+     }
+     continue;
+    }
+   }
+   if(!offset && x + 7 <= final_x)
+   {
+    const int flipped = (bgsc & 0x2000) != 0;
+    const uint32 palette_selector = bgsc >> 14;
+    const int fills_here = vbgo_tt_fills_from(char_no, cell);
+    for(i = 0; i < (unsigned)n; i++)
+    {
+     const unsigned char_sub_y = ((bgsc & 0x1000) ? 7 : 0) ^ sy7[i];
+     uint32 pixels = CHR16[char_no * 8 + char_sub_y];
+     if(pixels)
+     {
+      /* All eight shades at once, merged into the row under the drawn pixels. */
+      uint32 p = pixels, shades[2], drawn[2], row[2];
+      if(flipped)
+      {
+       p = ((p >> 2) & 0x3333) | ((p & 0x3333) << 2);
+       p = ((p >> 4) & 0x0F0F) | ((p & 0x0F0F) << 4);
+       p = ((p >> 8) & 0x00FF) | ((p & 0x00FF) << 8);
+      }
+      memcpy(&shades[0], GPLT_Quad[palette_selector][p & 0xFF], 4);
+      memcpy(&shades[1], GPLT_Quad[palette_selector][p >> 8], 4);
+      memcpy(&drawn[0], OpaqueQuad[p & 0xFF], 4);
+      memcpy(&drawn[1], OpaqueQuad[p >> 8], 4);
+      memcpy(&row[0], tgt[i] + x, 4);
+      memcpy(&row[1], tgt[i] + x + 4, 4);
+      row[0] = (row[0] & ~drawn[0]) | (shades[0] & drawn[0]);
+      row[1] = (row[1] & ~drawn[1]) | (shades[1] & drawn[1]);
+      memcpy(tgt[i] + x, &row[0], 4);
+      memcpy(tgt[i] + x + 4, &row[1], 4);
+     }
+     if(trow[i] && (pixels || fills_here))
+     {
+      const int tagged = vbgo_tt_tag_row8(trow[i] + x * VBGO_TT_COLUMN, crow[i] + x * VBGO_TT_CELL_COLUMN, pixels, flipped,
+                                          vbgo_bits | VBGO_TT_BG_BITS(char_no, 0, char_sub_y, palette_selector, 0), char_no, cell);
+      if(tagged)
+       vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_wcells[(x + 7) >> 3] |= vbgo_wbit;
+      if(tagged == 2)
+       vbgo_tt_fillc[x >> 3] = vbgo_tt_fillc[(x + 7) >> 3] = 1;
+     }
+    }
+    x += 8;
+    sx += 8;
+   }
+   else
+   {
+    /* (the rest of this character's row inside the line, or what is left of the line: one run) */
+    const int fills_here = vbgo_tt_fills_from(char_no, cell);
+    const uint32 palette_selector = bgsc >> 14;
+    run = 8 - offset;
+    if(run > (unsigned int)(final_x - x + 1))
+     run = final_x - x + 1;
+    for(i = 0; i < (unsigned)n; i++)
+    {
+     const unsigned char_sub_y = ((bgsc & 0x1000) ? 7 : 0) ^ sy7[i];
+     uint32 p = CHR16[char_no * 8 + char_sub_y];
+     if(bgsc & 0x2000)
+     {
+      p = ((p >> 2) & 0x3333) | ((p & 0x3333) << 2);
+      p = ((p >> 4) & 0x0F0F) | ((p & 0x0F0F) << 4);
+      p = ((p >> 8) & 0x00FF) | ((p & 0x00FF) << 8);
+     }
+     p = (p >> (offset * 2)) & ((1u << (run * 2)) - 1);
+     VbgoAffineRun(tgt[i], x, offset, run, p, bgsc, vbgo_bits | VBGO_TT_BG_BITS(char_no, 0, char_sub_y, palette_selector, 0), cell,
+                   fills_here, trow[i], crow[i], vbgo_wbit);
+    }
+    x += run;
+    sx += run;
+   }
+  }
+ }
+}
+
 void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
 {
- /* Row by row, each row through every world back to front: each pixel gets the
-  * same writes in the same order, while the row's pixels and tags stay in the cache. */
+ /* World by world, back to front, each through its 8 rows: each pixel gets the same writes in the same order (rows don't touch
+  * each other), and a background world's rows share their map entries. */
  static uint16 obj_lists[32][1024];
  const uint16 *drawn[32];
  VbgoWorldAttr attrs[32];
- int counts[32], drawn_count = 0, obj_lists_used = 0;
+ int counts[32], drawn_count = 0, obj_lists_used = 0, obj_index = 0;
  int y, world, lr, k;
  for( y = 0; y < 8; y++)
  {
@@ -621,13 +803,8 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
   drawn[drawn_count++] = world_ptr;
  }
 
- for(y = 0; y < 8; y++)
+ for(k = 0; k < drawn_count; k++)
  {
-  uint8 *fb[2] = { &fb_l[y * 512], &fb_r[y * 512] };
-  int obj_index = 0;
-
-  for(k = 0; k < drawn_count; k++)
-  {
   VbgoWorldAttr *const a = &attrs[k];
   const uint32 bgmap_base = a->bgmap_base, scy = a->scy, scx = a->scx, bgm = a->bgm, param_base = a->param_base;
   const bool over = a->over;
@@ -637,10 +814,20 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
 
   vbgo_tt_world = a->tt_world;
 
-   if(bgm == BGM_OBJ)
-    DrawOBJ(fb, (block_no * 8) + y, lron, obj_lists[obj_index++], counts[k]);
-   else if(bgm == BGM_AFFINE)
+  if(bgm == BGM_OBJ)
+  {
+   const uint16 *const list = obj_lists[obj_index++];
+   for(y = 0; y < 8; y++)
    {
+    uint8 *fb[2] = { &fb_l[y * 512], &fb_r[y * 512] };
+    DrawOBJ(fb, (block_no * 8) + y, lron, list, counts[k]);
+   }
+  }
+  else if(bgm == BGM_AFFINE)
+  {
+   for(y = 0; y < 8; y++)
+   {
+    uint8 *fb[2] = { &fb_l[y * 512], &fb_r[y * 512] };
     for(lr = 0; lr < 2; lr++)
     {
      if(lron[lr])
@@ -650,7 +837,17 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
      }
     }
    }
-   else
+  }
+  else if(bgm == 0 && !over && vbgo_tt_on)
+  {
+   for(lr = 0; lr < 2; lr++)
+    if(lron[lr])
+     DrawBGBlock(lr ? fb_r : fb_l, block_no, lr, a);
+  }
+  else
+  for(y = 0; y < 8; y++)
+  {
+   uint8 *fb[2] = { &fb_l[y * 512], &fb_r[y * 512] };
    for(lr = 0; lr < 2; lr++)
    {
     uint16 srcX, srcY;
