@@ -6,45 +6,9 @@
 
 #include "emu/LineAligned.h"
 
-// Auto colors for what no tile drew: pixels the game's CPU wrote straight
-// into the frame buffer (Red Alarm's wireframe world and its whole screen,
-// Bound High's playfield, Virtual Lab's title and pause screens). The tile
-// tracker knows nothing about them, so the layer and sprite ramps of
-// AutoColors.h can't tell them apart - but the two eyes still say how far
-// away each thing is: the right picture shows it shifted from the left one
-// by its disparity (right x - left x: negative in front of the screen,
-// positive behind it). So they're colored by depth - far indigo, violet,
-// rose, orange, near gold - each shade its own step of that color.
-//
-// The disparity of the left picture's pixels:
-//  1. per 8x8 block, how well the two pictures line up (the same shade at
-//     the same spot) at each disparity - in a 24x24 window around the block
-//     and an 8-row strip 88 wide (text and tile patterns repeat; the wide
-//     strip sees past a repetition);
-//  2. smoothed over the block grid (semi-global matching: neighbouring
-//     blocks mostly lie at the same depth, but depth may jump at an edge),
-//     with a pull towards the frame's few main depths (most things a game
-//     draws sit on a handful of planes) and towards the last frame's;
-//  3. per pixel: of the disparities of its block and the 8 around it and
-//     the main depths, the one that lines up best in a 7x7 window around it,
-//     counting its own shade only (lines of different depths crossing in a
-//     block; a score in one shade in front of a block field in others) - and
-//     a pixel that hasn't changed keeps its disparity while it still fits as
-//     well;
-//  4. inside an area of one shade, where any shift lines up, one surface
-//     for the whole area: a plane through the disparities around it (its
-//     edges, the lines drawn across it - those far off it left out), its
-//     edge band pulled onto it too. (Each row blending its own ends'
-//     disparities streaked: neighbouring rows meet different lines.)
-// Where several shifts line up equally well (a dithered field, a pattern
-// that repeats), the one nearest the screen's plane wins - not the first
-// tried, which painted Golf's fairways in the nearest color.
-// The right picture's pixels take the disparity of the left pixel they show
-// (the same shade where that disparity puts it), so both eyes always show
-// the same colors; the few it doesn't show take their row's neighbours'.
-//
-// Nothing is worked out while both pictures stay the same (most 3D games
-// draw a new picture every other frame or less).
+// Colors by depth the pixels no tile drew (the game's CPU wrote them straight into the frame buffer, e.g. Red Alarm's
+// wireframes): the right picture shows each thing shifted from the left by its disparity (right x - left x: negative
+// in front of the screen). The right picture's pixels take the disparity of the left pixel they show: the eyes agree.
 class DepthColors
 {
 public:
@@ -77,7 +41,7 @@ public:
 
 private:
     static constexpr int kDisparities = 2 * kMaxDisparity + 1;
-    static constexpr int kStride = kDisparities + 1; // (per block in m_cost and m_sum)
+    static constexpr int kStride = kDisparities + 1; // (per block in State::cost and m_sum)
     static constexpr int kBlocksX = kWidth / 8, kBlocksY = kHeight / 8, kBlocks = kBlocksX * kBlocksY;
     // A row of one shade's pixels as bits (pixel x at bit x + 64): a guard
     // word before and two after, so a shift by up to 64 either way stays inside.
@@ -99,7 +63,7 @@ private:
     int Votes(unsigned s, const unsigned left[7], int x, int y, int d) const;
     void LeftWindow(unsigned s, int x, int y, unsigned left[7]) const;
     static int WindowPixels(const unsigned left[7]);
-    // (Estimate's steps 2 and 3 for a row of blocks - see CostRow)
+    // (Estimate's matching costs for a row of blocks - see CostRow)
     struct CostRowArgs;
     static void CostRow(const CostRowArgs &a);
     template <bool kLast, bool kSmallTable, bool kWideTable>
@@ -120,7 +84,7 @@ private:
     // Scratch (kept to avoid reallocating every frame).
     std::vector<uint8_t> m_matches, m_inside;   // the last 3 rows of blocks, per disparity: matching / countable pixels
     std::vector<int16_t> m_sum;          // the smoothed costs per block and disparity
-    static constexpr int kCandidates = 13;  // (a block's own disparity, its 8 neighbours', 4 main depths)
+    static constexpr int kCandidates = 13;  // (a block's own disparity, its 8 neighbors', 4 main depths)
     std::vector<uint8_t> m_candidates, m_candidateCount; // per block: Estimate's candidate disparities
     std::vector<int32_t> m_blockPixels;                   // per block: pixels in the 3x3 blocks around it
     struct Sample

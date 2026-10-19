@@ -30,9 +30,8 @@ void ShadeColorizer::SetPalette(const std::array<ShadeRgb, 4> &palette)
     {
         const int shade = tag & 3;
         const int fadeLevel = tag >> 2; // BrightnessCache[3] >> 2: linear light, 0-63
-        // Same gamma curve the core applies to its own output (see vip.c's
-        // MakeColorLUT), so the palette fades exactly as fast as the game's
-        // grayscale would have.
+        // Same gamma curve as the core's own output (vip.c's MakeColorLUT), so the palette fades exactly as fast as the
+        // game's grayscale would.
         const float fade = std::pow(fadeLevel / 63.0f, 1.0f / 2.2f);
         const float t = shade == 0 ? 0.0f : fade; // shade 0 is the VB's black - always the background
         const ShadeRgb &target = palette[shade];
@@ -94,8 +93,7 @@ void ShadeColorizer::Observe(const uint8_t *const bits[2], const uint32_t *const
 {
     if (!m_gradient)
         return;
-    // One sample per shade (a sparse scan - every other row, every third
-    // pixel - finds every shade on screen), plus the fade level it was drawn at.
+    // One sample per shade, plus its fade level (every other row and every third pixel finds every shade on screen).
     // (the core draws red, written as 0x00RRGGBB words: red's byte depends on the CPU's byte order)
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
     constexpr int kRedByte = 1;
@@ -133,9 +131,8 @@ void ShadeColorizer::Observe(const uint8_t *const bits[2], const uint32_t *const
         return;
     for (int shade = 1; shade < 4; ++shade)
     {
-        // Only from frames near full brightness (a deep fade rounds the
-        // values too coarsely); scaled up to the reference level along the
-        // core's gamma curve, where the brightest shade is (reference/63)^(1/2.2).
+        // Only from frames near full brightness (a deep fade rounds the values too coarsely); scaled up to the
+        // reference level along the core's gamma curve, where the brightest shade is (reference/63)^(1/2.2).
         if (value[shade] < 0 || levelOf[shade] * 2 < m_referenceLevel)
             continue;
         const float luma = std::min(1.0f, value[shade] / 255.0f *
@@ -159,8 +156,7 @@ uint32_t ShadeColorizer::ColorOf(uint32_t pixel) const
     uint32_t color, background;
     std::memcpy(&color, m_lut[in[3]].data(), 4);
     std::memcpy(&background, m_background.data(), 4);
-    // A shade switched fully off by the game (output 0) shows as
-    // background, whatever the fade level says.
+    // A shade switched fully off by the game (output 0) shows as background, whatever the fade level says.
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
     return (pixel & 0xFFFFFF00u) ? color : background;
 #else
@@ -191,7 +187,8 @@ void ShadeColorizer::ColorizeCell(const uint8_t *bits, unsigned x, unsigned y, u
     {
 #if defined(__PPC__) || defined(__powerpc__)
         for (unsigned row = 0; row < 8; ++row)
-            if (!(reinterpret_cast<uintptr_t>(dst + row * rowBytes) & 31)) // (whole lines about to be written: not read first)
+            // (whole lines about to be written: not read first)
+            if (!(reinterpret_cast<uintptr_t>(dst + row * rowBytes) & 31))
                 __asm__ volatile("dcbz 0,%0" : : "r"(dst + row * rowBytes) : "memory");
 #endif
         for (unsigned k = 0; k < 8; ++k)

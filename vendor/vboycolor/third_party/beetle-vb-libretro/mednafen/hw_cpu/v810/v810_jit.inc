@@ -131,9 +131,8 @@ private:
 const int32 kLastopUnknown = -2147483647 - 1;
 } // namespace
 
-/* Code for the block, or NULL. CTR holds the cycles left before the next event (from ENTER on), so the
- * check the interpreter makes before every op is one bdz after a one-cycle op. It returns a JIT_EXIT_*
- * (v810_blocks.inc) with the next PC in JitTarget; a branch it has linked runs on into the next block's code. */
+/* Code for the block, or NULL. CTR holds the cycles left before the next event (from ENTER on), so the interpreter's
+ * per-op check is one bdz after a one-cycle op. It returns a JIT_EXIT_* (v810_blocks.inc), next PC in JitTarget. */
 void *V810::CompileBlock(Block *block)
 {
    const uint8 *const base = (const uint8 *)P_REG;
@@ -466,9 +465,8 @@ void *V810::CompileBlock(Block *block)
       w.Word(0);
       w.Word((uint32)(uintptr_t)goOn);
    };
-   /* A branch's cycles and a known target: straight on into its code once that's compiled (RunBlock points the bl
-    * there), else back to the C side; first the events due. back: the interpreter's idle check after a short
-    * branch back. */
+   /* A branch's cycles and a known target: straight on into its code once compiled (RunBlock points the bl there),
+    * else back to the C side; events due first. back: the interpreter's idle check after a short branch back. */
    auto BranchTo = [&](uint32 target, unsigned opcode, bool back, int32 cycles) {
       w.Li(4, opcode);
       w.Stw(4, offLastop, JR_REGS);

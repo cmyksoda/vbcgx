@@ -15,42 +15,16 @@
 #include <unordered_set>
 #include <vector>
 
-// Paints a color pack (see TileColorPack.h) over a frame the shade
-// colorizer has already colored, from the tile tracker's per-pixel tags (see
-// vbgo_tiletrack.h). Kept free of any GPU/UI code so tools and tests can use
-// it as-is.
+// Paints a color pack (see TileColorPack.h) over a frame the shade colorizer has already colored, from the tile
+// tracker's per-pixel tags (see vbgo_tiletrack.h). Kept free of any GPU/UI code so tools and tests can use it as-is.
 //
-// Both eyes, same colors: a pixel's color depends only on what both eyes
-// share - the tile pixel, its palette, its map cell, its layer, what's
-// around it in left-eye terms - never on a per-frame search of the other
-// eye. How the Virtual Boy makes 3D decides what that is:
-//  - a layer both eyes draw (LON and RON) and every sprite both eyes show:
-//    the same tile pixels, shifted - looked up the same, so colored the same
-//    (context markers and ambiguous tiles go by where the left eye shows
-//    things, so they agree too);
-//  - a per-eye pair - a left-only layer next to a right-only one, or a
-//    sprite world's left-only and right-only sprites (JLON / JRON): the
-//    right picture takes its left partner's layer colors (variants,
-//    automatic ramp). Tiles its left partner also draws are colored by tile
-//    like anything else (a tile the pack colors per map cell: by the left
-//    picture's cell showing the same tile pixel on the row, else wherever
-//    the left picture shows the tile). The right picture's own tiles
-//    (Galactic Pinball, Wario Land's title: each eye's picture drawn
-//    separately) by their own map cells' colors if the pack has them
-//    (right-eye paintings), else from the left picture: per 8x8 block a
-//    disparity, found from the two pictures' shades when they change (not
-//    per frame) - near its band's, or anywhere if that lines up poorly
-//    (things at very different depths side by side) - and the color of the
-//    nearest left-picture pixel of the same shade where it puts the pixel -
-//    the same spot of the same object, whatever the two dithers do - else
-//    the most common color of that shade around it. Nothing searches per
-//    pixel per frame, so nothing flickers.
+// Both eyes get the same colors: a pixel's color depends only on what both eyes share (tile pixel, palette, map cell,
+// layer, what's around it in left-eye terms), never on a per-frame search of the other eye, so nothing flickers.
 //
-// Cost is kept per tile and per map cell rather than per pixel: a character
-// slot's colors (tile, palette variants) are looked up only when the slot's
-// contents change, map cells index straight into a table built once when
-// the pack is set, and a run of pixels from one tile in one map cell shares
-// one lookup - so a pixel is a few array reads, no hash lookups.
+// A per-eye pair's right picture takes its left partner's layer colors; tiles only it draws go by their own map cells'
+// colors if the pack has them, else by a disparity estimated when the pictures change (not per frame).
+//
+// Cost is kept per tile slot, map cell and run of pixels, not per pixel: a pixel is a few array reads, no hash lookups.
 class ColorPackRenderer
 {
 public:
@@ -60,9 +34,8 @@ public:
     // Whether the pack's colors show (off: only automatic colors, if on - to
     // compare).
     void SetPackShown(bool shown) { m_packShown = shown; }
-    // Automatic colors (see AutoColors.h) for every tracked pixel the pack
-    // doesn't color - all of them, without a pack - and by depth for what
-    // no tile drew (see DepthColors.h).
+    // Automatic colors (see AutoColors.h) for every tracked pixel the pack doesn't color (all of them, without a pack),
+    // and by depth for what no tile drew (see DepthColors.h).
     void SetAutoColors(bool on) { m_auto = on; }
     // Something to paint: a pack, or automatic colors.
     bool Active() const { return m_pack != nullptr || m_auto; }
@@ -91,9 +64,8 @@ public:
     const uint64_t *PaintedCells() const { return m_painted.data(); }
     // Forget what the colored pictures hold (something else drew in them).
     void ForgetBands();
-    // Instead of painting the same frame again after a Paint that left
-    // everything carried over to the next frame as it found it: false if it
-    // still needs painting.
+    // Instead of painting the same frame again after a Paint that left everything carried over to the next frame as it
+    // found it: false if it still needs painting.
     bool Coast();
 
     // How the last frame drew its worlds (for tools).
@@ -117,8 +89,8 @@ private:
         uint64_t first = kNoKey;
         uint64_t last = kNoKey; // the last one's run key
     };
-    // What the kept walk of a column adds to the frame's layer extents and brightness: its bands' first runs, where a band's
-    // differs from the last run of the band before (made while all its bands are kept; 0 again once one is painted)
+    // What the kept walk of a column adds to the frame's layer extents and brightness: its bands' first runs that
+    // differ from the last run of the band before (made while all its bands are kept; 0 once one is painted)
     struct alignas(32) ColumnSummary
     {
         static constexpr unsigned kLayers = 8;
@@ -172,19 +144,19 @@ private:
     std::array<std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2>, 2> m_bands; // [eye][buffer]
     std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_painted{};
     std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_depthCells{}; // (bit per left-eye cell PaintDepth last painted into)
-    // [eye][buffer][column * bands + band]: a column's bands together (in the renderer itself, not on the heap: MEM1 on the Wii)
+    // [eye][buffer][column * bands + band]: a column's bands together (in the renderer, off the heap: MEM1 on the Wii)
     std::array<std::array<std::array<BandColumn, (VBGO_TT_HEIGHT / 8) * VBGO_TT_WIDTH>, 2>, 2> m_bandColumns;
-    // [eye][buffer][column]: a bit per band whose BandColumn holds a run; only those are read, the rest of first is stale
+    // [eye][buffer][column]: a bit per band whose BandColumn has a run; only those are read, the rest of first is stale
     std::array<std::array<std::array<uint32_t, VBGO_TT_WIDTH>, 2>, 2> m_bandsActive{};
     std::array<std::array<std::array<ColumnSummary, VBGO_TT_WIDTH>, 2>, 2> m_columnSummary; // [eye][buffer][column]
-    // ... and whether it is made (1), or has more layers than fit (2), or isn't (0): kept apart, so a column that is painted costs
-    // a byte rather than a cache line
+    // ... and whether it is made (1), or has more layers than fit (2), or isn't (0): kept apart, so a column that is
+    // painted costs a byte rather than a cache line
     std::array<std::array<std::array<uint8_t, VBGO_TT_WIDTH>, 2>, 2> m_summaryState{};
     static uint8_t MakeSummary(ColumnSummary &summary, const BandColumn *columns, uint32_t active);
     // Left eye, per colored picture: the pack colors painted at a faded level, before fading, laid out like the picture
     // (alpha kUnfaded), so a cell drawn as before is faded again from them; m_unfadedCell: the cell's copy is whole.
     static constexpr uint8_t kUnfaded = 0xFE;
-    // (in the renderer itself, not on the heap - MEM1 on the Wii: sized for the frontend's rows, a cache line of padding each)
+    // (in the renderer, off the heap - MEM1 on the Wii: sized for the frontend's rows, a cache line of padding each)
     static constexpr size_t kUnfadedRowBytes = (VBGO_TT_WIDTH + 8) * 4;
     // (dcbz clears whole lines)
     alignas(32) std::array<std::array<uint8_t, kUnfadedRowBytes * VBGO_TT_HEIGHT>, 2> m_unfaded;
@@ -202,10 +174,10 @@ private:
     };
     PaintState m_paintStateWas, m_paintStateRightWas;
     uint32_t m_paintState = 1, m_paintStateRight = 1; // (the right eye's: only what its scan reads)
-    // The automatic colors' layers and figures change apart from m_paintState: they only reach the cells with a ramp's colors.
+    // The automatic colors' layers and figures change apart from m_paintState and reach only cells with ramp colors.
     uint32_t m_paintAuto = 1, m_autoWorldsWas = 0, m_figuresWas = 0;
-    // Painting goes by a world's layer and pair numbers only (its eyes, type and partner act through them), so those count per
-    // world: m_paintWorlds counts the frames one moved in, m_worldChangedAt says when each did.
+    // Painting goes by a world's layer and pair numbers only (its eyes, type and partner act through them), so those
+    // count per world: m_paintWorlds counts the frames one moved in, m_worldChangedAt says when each did.
     uint32_t m_paintWorlds = 1;
     std::array<uint32_t, 32> m_worldSigWas{}, m_worldChangedAt{};
     __attribute__((noinline)) uint32_t WorldsMovedSince(uint32_t state) const
@@ -253,9 +225,8 @@ private:
     uint32_t m_autoWorlds = 0, m_autoWorldsUsed = ~0u;
     unsigned m_autoMaxLevel = 0;
     std::array<AutoColors::Ramp, 32> m_autoLayer{};
-    // Figures: background layers no bigger than kFigureSize pixels across
-    // (lately) - characters some games draw on layers of their own - colored
-    // like sprites, so they stand out from the scenery (bit per world).
+    // Figures: background layers no bigger than kFigureSize pixels across (lately) - characters some games draw on
+    // layers of their own - colored like sprites, so they stand out from the scenery (bit per world).
     static constexpr int kFigureSize = 128;
     uint32_t m_figureWorlds = 0, m_figuresUsed = ~0u;
     std::array<int16_t, 32> m_worldExtent{};
@@ -311,10 +282,8 @@ private:
         std::vector<uint32_t> version[2];
     };
     std::array<GatherCache, 2> m_gatherCache;
-    // Tiles the left pictures of pairs draw this frame (by hash, with the
-    // pairs whose left pictures draw them - bit per pair): a right
-    // picture's pixel of a tile its own left picture draws is colored by
-    // tile; the right picture's own tiles by region (see the class comment).
+    // Tiles the left pictures of pairs draw this frame (by hash, with the pairs drawing them - bit per pair): a
+    // right-picture pixel of such a tile is colored by tile, the right picture's own tiles by map cell or disparity.
     std::vector<uint32_t> m_leftPairHashes; // open addressing, 0 = empty (hash 0 kept apart)
     std::vector<uint32_t> m_leftPairMasks;
     std::vector<uint16_t> m_leftPairUsed; // (the slots filled: the next frame clears just those)
@@ -324,11 +293,9 @@ private:
     int EyeOnly(uint64_t tag) const; // a sprite only the left (1) or right (2) eye shows, else 0
     const TileColorPack::CellTile *FindCell(unsigned cell, unsigned palette, uint32_t hash) const;
 
-    // What a run of pixels (down a column, from one tile in one map cell, or
-    // one sprite's tile) shares - looked up once for the run. A run's key
-    // (its tag but for the pixel in the tile) decides all of it within an
-    // eye's frame, so the last kRunCacheSize runs set up are kept by key: a
-    // tile's other columns, a layer's other cells showing it, reuse them.
+    // What a run of pixels (down a column, from one tile in one map cell, or one sprite's tile) shares, looked up once.
+    // A run's key (its tag but for the pixel in the tile) decides all of it within an eye's frame, so recent runs are
+    // kept by key (kRunCacheSize): a tile's other columns, a layer's other cells showing it, reuse them.
     struct Run
     {
         const TileColorPack::CellTile *cell = nullptr; // its map cell's colors (or the left partner's)
@@ -367,15 +334,9 @@ private:
     std::vector<std::pair<uint16_t, uint16_t>> m_ambiguousPixels;
     void PaintAmbiguous(uint8_t *frame, uint32_t fbWidth, uint32_t eyeOffset, const vbgo_tt_eye_view &view);
 
-    // Context (see TileColorPack.h): where markers were drawn, on a grid of
-    // 8x8-pixel cells in the left eye's terms (a right-eye pixel at its
-    // left-eye spot - so both eyes see the same markers around the same
-    // thing), this frame's (gathered before it's colored) and the last two
-    // frames' (a marker the game shows every other frame still counts). A shared tile takes a group's colors if one of
-    // its markers is within kContextReach cells. Sprites' groups only color
-    // sprites; layer-bound groups (background figures) only their own
-    // layer, by a marker drawn on it (each cell remembers the layer its last
-    // such marker was drawn on).
+    // Context (see TileColorPack.h): markers on a grid of 8x8 cells in left-eye terms, kept for this frame and the last
+    // two (a marker shown every other frame still counts). A shared tile takes a group's colors if a marker is within
+    // kContextReach cells; sprites' groups color only sprites, layer-bound ones (background figures) only their layer.
     static constexpr int kGridW = VBGO_TT_WIDTH / 8, kGridH = VBGO_TT_HEIGHT / 8, kContextReach = 4;
     std::unordered_map<uint32_t, ContextGroupBits> m_markerBits;
     std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> m_contextRange; // hash -> (first, count)

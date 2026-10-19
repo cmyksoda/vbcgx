@@ -1,16 +1,5 @@
-// VBoy Color as a libretro core - for RetroArch and the other libretro
-// frontends. Beetle VB emulates (its own entry points renamed beetle_retro_*,
-// see beetle_rename.h); this file is the core's face to the frontend: it
-// colors every frame as the app does - the game's color pack, Auto,
-// Multicolor palettes, gradients, tints (core/emu: ShadeColorizer,
-// ColorPackRenderer, TileColorPack; the schemes in ColorSchemes.h) - and shows
-// the left eye. (The Wii port has no 3D layouts; the right eye is still drawn,
-// since the left eye's automatic colors read it.)
-//
-// The color packs are built in (zipped - cmake/EmbedColorPacks.cmake); a
-// .vbcp beside the ROM, or in the frontend's system folder under vboycolor/,
-// takes their place. RetroAchievements, save states, the battery save and
-// the rest come straight from Beetle VB through the frontend.
+// VBoy Color as a libretro core: colors each frame Beetle VB draws, as the app does, and shows the left eye.
+// The right eye is still drawn because the left eye's automatic colors read it (the Wii port has no 3D layouts).
 
 #include <libretro.h>
 
@@ -299,10 +288,8 @@ namespace
         g_options = o;
     }
 
-    // Beetle VB asks the frontend through this. The 3D layout and the screen
-    // color are ours to set (side by side, unseparated: both eyes' pictures,
-    // which the coloring reads; red, as the app has it); its option
-    // definitions and geometry are replaced by ours.
+    // Beetle VB asks the frontend through this. We pin its 3D layout to side by side, unseparated (the coloring reads
+    // both eyes) and its screen color to red, as the app has it, and replace its option definitions and geometry.
     bool BeetleEnvironment(unsigned cmd, void *data)
     {
         switch (cmd)
@@ -410,8 +397,8 @@ namespace
     // The frame Beetle VB just drew (both eyes side by side).
     const uint8_t *g_frame = nullptr;
     unsigned g_frameW = 0, g_frameH = 0;
-    // The two colored pictures: the left eye only, each row padded by a cache line (a column's rows spread over the cache
-    // sets), kept in the program's own memory - on the Wii MEM1, not wherever earlier games left the heap.
+    // The two colored pictures: the left eye only, each row padded by a cache line (a column's rows spread over the
+    // cache sets), kept in the program's own memory - on the Wii MEM1, not wherever earlier games left the heap.
     constexpr size_t kPictureRowBytes = (VBGO_TT_WIDTH + 8) * 4, kPictureBytes = kPictureRowBytes * VBGO_TT_HEIGHT;
     alignas(32) uint8_t g_pictureStore[2][kPictureBytes];
     bool g_pictureStoreUsed[2];
@@ -519,8 +506,7 @@ namespace
                 return std::vector<uint8_t>(zip + data, zip + data + packed);
             if (method != 8)
                 return {};
-            // (straight into the size the zip gives: a buffer doubling to 8 MB, then copied, ran a few game switches
-            // out of memory)
+            // (straight into the size the zip gives: a doubling buffer, then a copy, ran out of memory)
             std::vector<uint8_t> out(unpacked);
             if (stbi_zlib_decode_noheader_buffer(reinterpret_cast<char *>(out.data()), static_cast<int>(unpacked),
                                                  reinterpret_cast<const char *>(zip + data), static_cast<int>(packed)) !=
@@ -550,10 +536,8 @@ namespace
         return bytes;
     }
 
-    // The game's color pack: one beside the ROM, then in the system folder
-    // (vboycolor/), then the built-in one by the ROM's name, then one made
-    // for this ROM (its CRC-32 and size - index.txt) under any name. Returns
-    // where it came from ("" none).
+    // The game's color pack, first match winning: beside the ROM, the system folder (vboycolor/), built in by the ROM's
+    // name, then built in by its CRC-32 and size (index.txt), under any name. Returns where it came from ("" none).
     std::string LoadPack()
     {
         g_pack.Clear();
@@ -871,12 +855,9 @@ extern "C"
     RETRO_API bool retro_serialize(void *data, size_t size) { return beetle_retro_serialize(data, size); }
     RETRO_API bool retro_unserialize(const void *data, size_t size)
     {
-        // The frame buffers now hold what the state saved, which the tile
-        // tracker didn't see drawn. Rewinding and run-ahead load states a
-        // frame or two away - nearly the same pixels, whose tags still fit
-        // (forgetting them would show rewinding without the pack's colors);
-        // a buffer that changed a lot (a save state from elsewhere in the
-        // game) loses its tags until the game draws it again.
+        // The loaded frame buffers weren't seen drawn by the tile tracker. Rewind and run-ahead load nearly the same
+        // pixels, whose tags still fit (forgetting them drops the pack's colors); a buffer that changed a lot loses
+        // its tags until the game redraws it.
         constexpr size_t kBufferBytes = 0x6000; // (FB[fb][lr]: 384 columns of 64 bytes)
         static std::vector<uint8_t> before(kBufferBytes * 4);
         std::memcpy(before.data(), vbgo_vip_framebuffers(), before.size());

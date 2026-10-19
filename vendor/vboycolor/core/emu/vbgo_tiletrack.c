@@ -14,10 +14,8 @@ const uint8_t *vbgo_tt_blank = s_no_blank;
 uint8_t vbgo_tt_fill_cells[8192];
 uint32_t vbgo_tt_clut_serial = 1;
 
-/* Tags in the VB's own frame buffer layout - [slot][eye][column * VBGO_TT_COLUMN + row].
- * Each frame buffer shows one slot's; a pass that repeats the other buffer's
- * (vbgo_tiletrack_share_pass) shares that buffer's slot, so a third slot is
- * always free for a pass of its own. */
+/* Tags in the VB's own frame buffer layout - [slot][eye][column * VBGO_TT_COLUMN + row]. Each frame buffer shows one
+ * slot's; a pass repeating the other buffer's (vbgo_tiletrack_share_pass) shares its slot: a third is always free. */
 #define VBGO_TT_SLOTS 3
 static uint32_t s_tags[VBGO_TT_SLOTS][2][VBGO_TT_WIDTH * VBGO_TT_COLUMN] __attribute__((aligned(32)));
 /* ... and each tag's cell, [slot][eye][row * VBGO_TT_CELL_ROW + column]. Only read where the tag is drawn, so they're
@@ -35,9 +33,8 @@ static inline void ClearLine(void *line)
 #endif
 }
 
-/* Per slot: its drawing pass's stamp (a pass number; tags don't carry it), the tracking settings it was drawn
- * with, and the character memory / tile hashes / blank flags as that pass
- * started. */
+/* Per slot: its drawing pass's stamp (a pass number; tags don't carry it), the tracking settings it was drawn with, and
+ * the character memory / tile hashes / blank flags as that pass started. */
 static uint16_t s_stamp[VBGO_TT_SLOTS];
 static uint16_t s_next_stamp;
 static unsigned s_settings[VBGO_TT_SLOTS];
@@ -52,17 +49,15 @@ static uint16_t s_worlds[VBGO_TT_SLOTS][VBGO_WORLD_HALFWORDS];
 static uint16_t s_oam[VBGO_TT_SLOTS][VBGO_OAM_HALFWORDS];
 static int s_have_attrs[VBGO_TT_SLOTS];
 static unsigned s_flat[VBGO_TT_SLOTS]; /* flat sprite palettes as its pass started (see the view) */
-/* Per slot and block: the stamp of the pass whose tags it holds there (0:
- * none), so a block a pass keeps from this buffer's last one can take the
- * new stamp instead of being drawn again (vbgo_tiletrack_keep_block). */
+/* Per slot and block: the stamp of the pass whose tags it holds there (0: none), so a block a pass keeps from this
+ * buffer's last one can take the new stamp instead of being drawn again (vbgo_tiletrack_keep_block). */
 #define VBGO_TT_BLOCKS (VBGO_TT_HEIGHT / 8)
 static uint16_t s_block_stamp[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 /* Per slot and block: the pass its tags last counted for (s_block_stamp also forgets blocks only so they aren't
  * kept). */
 static uint16_t s_band_pass[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
-/* ... the characters its drawing used (a bit each), and per 8x8 cell the
- * version of what it shows (0: one a renderer can't count on - see
- * vbgo_tiletrack_block_drawn). */
+/* ... the characters its drawing used (a bit each), and per 8x8 cell the version of what it shows (0: one a renderer
+ * can't count on - see vbgo_tiletrack_block_drawn). */
 #define VBGO_TT_CELLS (VBGO_TT_WIDTH / 8)
 static uint32_t s_block_chr[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][2048 / 32];
 static uint32_t s_cell_version[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
@@ -82,9 +77,8 @@ static uint32_t s_cell_worlds[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
 static uint32_t s_cpu_reset[VBGO_TT_SLOTS];
 static void ForgetCpuResets(void) { memset(s_cpu_reset, 0, sizeof(s_cpu_reset)); }
 static uint32_t s_versions;
-/* The block being drawn as it was (this buffer's last pass's, if s_old_valid),
- * and what that pass's copies said about tiles and sprites, to tell which
- * cells come out the same. */
+/* The block being drawn as it was (this buffer's last pass's, if s_old_valid), and what that pass's copies said about
+ * tiles and sprites, to tell which cells come out the same. */
 static uint32_t s_old_tags[2][VBGO_TT_WIDTH * 8];
 static uint16_t s_old_cells[2][VBGO_TT_WIDTH * 8] __attribute__((aligned(32))); /* (per cell: its 8 rows of 8) */
 static int s_old_valid;
@@ -359,8 +353,7 @@ static void StartPass(unsigned fb, const uint16_t *chr_ram, const uint16_t *dram
    for (c = 0; s_prev_valid && c < 1024; c++)
       s_obj_changed[c >> 5] |= (uint32_t)(memcmp(&s_oam[slot][c * 4], &s_prev_oam[c * 4], 8) != 0) << (c & 31);
 
-   /* (Tracking switched on mid-pass: the blocks before this one simply have
-    * no tags with this stamp.) */
+   /* (Tracking switched on mid-pass: the blocks before this one simply have no tags with this stamp.) */
    s_have[fb] = 1;
    s_cpu[fb] = 0; /* (the pass draws every pixel of the buffer anew) */
    s_pass_open = 1;
@@ -370,9 +363,7 @@ void vbgo_tiletrack_set_enabled(bool enabled)
 {
    if (!enabled && vbgo_tt_on)
    {
-      /* What was tracked goes stale while off - nothing to show until the
-       * next pass (switched back on: the screen shows tags again once a
-       * frame drawn with tracking on is displayed). */
+      /* What was tracked goes stale while off: nothing to show until a frame drawn with tracking on is displayed. */
       s_pass_open = 0;
       s_have[0] = s_have[1] = 0;
       memset(s_disp, 0, sizeof(s_disp));
@@ -441,8 +432,7 @@ void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *
       return;
    fb &= 1;
 
-   /* Once per pass (games update tile graphics between frames), or right
-    * after tracking was switched on mid-pass. */
+   /* Once per pass (games update tile graphics between frames), or right after tracking was switched on mid-pass. */
    if (block_no == 0 || !s_pass_open || (int)fb != s_last_fb)
    {
       unsigned p;
@@ -786,9 +776,8 @@ void vbgo_tiletrack_display_column(unsigned fb, unsigned lr, unsigned dest_lr, u
 
 void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsigned bytes)
 {
-   /* Pixels the game's CPU writes straight into the framebuffer (not drawn
-    * from tiles) - forget whatever tile was there. 4 pixels per byte,
-    * 64 bytes per column. */
+   /* Pixels the game's CPU writes straight into the frame buffer aren't drawn from tiles, so forget the tag there.
+    * 4 pixels per byte, 64 bytes per column. */
    unsigned b, p;
    int slot;
 

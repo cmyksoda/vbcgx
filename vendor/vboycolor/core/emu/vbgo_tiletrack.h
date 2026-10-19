@@ -1,32 +1,6 @@
-/* VirtualBoyGo tile tracking - records, for every pixel the Virtual Boy's
- * VIP draws, which 8x8 character (tile) it came from, where inside that
- * tile, and which background map cell put it there, so a frontend can
- * recolor by tile (per-game color packs) instead of only by shade.
- * Experimental.
- *
- * Hooked into the Beetle VB core through generated copies of vip.c and
- * vip_draw.inc (see cmake/PatchBeetleVip.cmake) - the submodule itself stays
- * untouched. Plain C, shared by the core (vip.c) and the frontend.
- *
- * How it works: while the VIP draws a frame buffer, every drawn pixel gets a
- * 32-bit tag (character slot, pixel inside the tile, palette, layer - see
- * VBGO_TAG_*) and a 16-bit map cell beside it: tags laid out like the VB's own
- * column-major frame buffer, cells row by row, double-buffered the same way. A
- * block's tags are cleared before it's drawn, so in a band the pass reached a
- * nonzero tag is one it drew. At the start of each pass the character
- * memory is snapshotted and every tile hashed once, so a tag's tile is known
- * by content (hash) even after the game has streamed new graphics in.
- *
- * Fills: background (non-sprite) tiles' transparent pixels can be tagged too
- * - where nothing else is drawn, the backmost non-blank tile's transparent
- * pixel is what the player sees there, so a color pack can color it (a court
- * surface between its speckles, say). VBGO_TT_FILLS_ALL tags all of them
- * (captures need to know every one); VBGO_TT_FILLS_PACK only those in map
- * cells the pack has fill colors for (cheap enough for the headset).
- *
- * Off by default; while off, the core draws exactly as upstream (only a
- * flag check per drawn pixel). Turn on with vbgo_tiletrack_set_enabled().
- */
+/* VirtualBoyGo tile tracking (experimental): tags every pixel the VIP draws with the 8x8 character and BG map cell it
+ * came from, so a frontend can recolor by tile (per-game color packs). Hooked in through generated copies of vip.c and
+ * vip_draw.inc (cmake/PatchBeetleVip.cmake), so the submodule stays untouched; while off, it draws as upstream. */
 #ifndef VBGO_TILETRACK_H
 #define VBGO_TILETRACK_H
 
@@ -80,7 +54,8 @@ static inline uint32_t vbgo_tag_lo(uint64_t t) { return (uint32_t)t; }
 static inline uint32_t vbgo_tag_key_hi(uint64_t key) { return (uint32_t)(key >> 32); }
 #define VBGO_TAG_NO_HI 0xFFFFFFFFu
 
-/* Whether t was drawn by the pass, in a band whose key is band_key (0 if the pass didn't reach it). */
+/* Whether t was drawn by the pass, in a band whose key is band_key (0 if the pass didn't reach it). A block's tags are
+ * cleared before it's drawn, so in a reached band a nonzero tag is one the pass drew. */
 static inline int vbgo_tag_drawn(uint64_t t, uint32_t band_key) { return (vbgo_tag_lo(t) & band_key) != 0; }
 #define VBGO_TT_BAND_REACHED 0xFFFFFFFFu
 
@@ -105,15 +80,12 @@ static inline int vbgo_tag_drawn(uint64_t t, uint32_t band_key) { return (vbgo_t
 
 void vbgo_tiletrack_set_enabled(bool enabled);
 bool vbgo_tiletrack_is_enabled(void);
-/* Forget every tag (a new game, or a save state loaded: what's in the frame
- * buffers now wasn't drawn by anything tracked - a game that draws with its
- * CPU and never runs a drawing pass would otherwise keep showing the old tags). */
+/* Forget every tag (a new game, or a save state loaded): the frame buffers now hold pixels nothing tracked drew, and a
+ * game that draws with its CPU and never runs a drawing pass would otherwise keep showing the old tags. */
 void vbgo_tiletrack_reset(void);
-/* Forget one frame buffer eye's tags, as if the CPU had drawn all of it (a
- * save state put other pixels there). The libretro core's way of loading a
- * state: rewinding and run-ahead load states only a frame or two away, whose
- * buffers still hold nearly what was tracked - only the ones that changed a
- * lot are forgotten (platform/libretro/libretro_core.cpp). */
+/* Forget one frame buffer eye's tags, as if the CPU had drawn all of it (a save state put other pixels there). The
+ * libretro core calls it only for buffers that changed a lot: rewind and run-ahead load states a frame or two away,
+ * whose buffers still hold nearly what was tracked (platform/libretro/libretro_core.cpp). */
 void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr);
 /* The VIP's frame buffers, FB[fb][lr][0x6000] (a function the patched vip.c
  * adds - see cmake/PatchBeetleVip.cmake). */
@@ -130,17 +102,18 @@ static inline uint32_t vbgo_eye_word(const uint8_t *bits, const uint32_t *clut, 
    return clut[x * 4 + (bits[x * 56 + (y >> 2)] >> ((y & 3) * 2) & 3)];
 }
 
+/* Fills: background tiles' transparent pixels tagged too. Where nothing else is drawn, the backmost non-blank tile's
+ * transparent pixel is what the player sees, so a pack can color it (a court surface between its speckles). */
 #define VBGO_TT_FILLS_NONE 0
-#define VBGO_TT_FILLS_PACK 1 /* only in cells marked with vbgo_tiletrack_set_fill_cells */
-#define VBGO_TT_FILLS_ALL  2
+#define VBGO_TT_FILLS_PACK 1 /* only in cells marked with vbgo_tiletrack_set_fill_cells (cheap for the headset) */
+#define VBGO_TT_FILLS_ALL  2 /* every one (captures need to know them all) */
 void vbgo_tiletrack_set_fill_mode(int mode);
 /* 65536-bit map (8 KB): bit n set = BG map cell n has fill colors. Copied. */
 void vbgo_tiletrack_set_fill_cells(const uint8_t *bits);
 
-/* What one eye showed in the frame most recently output by retro_run():
- * per column, the 224 tags and cells of that column (NULL if the column was blank),
- * plus each 8-row band's key (which of its tags the pass drew) and the
- * drawing pass's tile hashes / character memory (index by VBGO_TAG_CHAR). */
+/* What one eye showed in the frame most recently output by retro_run(): per column, the 224 tags and cells of that
+ * column (NULL if the column was blank), plus each 8-row band's key (which of its tags the pass drew) and the drawing
+ * pass's tile hashes / character memory (index by VBGO_TAG_CHAR). */
 typedef struct
 {
    const uint32_t *columns[VBGO_TT_WIDTH];
@@ -148,22 +121,21 @@ typedef struct
    /* For vbgo_tag_drawn on a pixel in band y / 8: VBGO_TT_BAND_REACHED, or 0 for a band the pass didn't
     * reach (its tags are an older pass's). */
    uint32_t band_key[VBGO_TT_HEIGHT / 8];
+   /* As the pass started, so a tag's tile is known by content even after the game streams in new graphics. */
    const uint32_t *hashes;   /* 2048 */
    const uint8_t *blank;     /* 2048: 1 = all 64 pixels transparent */
    const uint16_t *chr;      /* 2048 * 8 rows (2 bits per pixel, pixel 0 in the low bits) */
-   /* As the drawing pass started (NULL if the core didn't say): the 32 world
-    * attribute blocks (16 halfwords each, VIP 0x3D800 - which eyes draw a
-    * world, its type, parallax...) and the OBJ attribute memory (1024 x 4
-    * halfwords, VIP 0x3E000 - a sprite's JX, JP/JLON/JRON, JY, char). */
+   /* As the drawing pass started (NULL if the core didn't say): the 32 world attribute blocks (16 halfwords each, VIP
+    * 0x3D800 - which eyes draw a world, its type, parallax...) and the OBJ attribute memory (1024 x 4 halfwords, VIP
+    * 0x3E000 - a sprite's JX, JP/JLON/JRON, JY, char). */
    const uint16_t *worlds;
    const uint16_t *oam;
    /* 1 if the game's CPU wrote into this buffer since its drawing pass
     * (pixels no tile drew - see vbgo_tiletrack_cpu_fb_write), or what's in
     * it isn't known (a reset since) - 0: every pixel shown came from the pass. */
    int cpu_drawn;
-   /* Sprite palettes (bit per JPLT0-3) that showed every pixel value 1-3 in
-    * one shade as the pass started - a silhouette: games flash a hit enemy
-    * by switching it to such a palette. */
+   /* Sprite palettes (bit per JPLT0-3) that showed every pixel value 1-3 in one shade as the pass started: a
+    * silhouette, which games use to flash a hit enemy. */
    unsigned flat_obj_palettes;
    /* Per 8-row band (28 of 64 words): the characters the drawing used there
     * - every character a tag of the band can name (a bit each). */
@@ -214,10 +186,9 @@ extern uint32_t vbgo_tt_clut_serial;
 /* Sprites have no cell: their cell is which OBJ drew the pixel (the same in both eyes). */
 #define VBGO_TT_OBJ_CELL(obj) ((uint16_t)((obj) & 0x3FF))
 
-/* Background (map) drawing - DrawBG/DrawAffine - only ever draws pixels 0-383
- * of one row, so its tags are found once per call: pixel x of the row
- * row_target (that call's target) is tagged at row[x * VBGO_TT_COLUMN], its
- * cell at vbgo_tt_cell_row(row_target)[x * VBGO_TT_CELL_COLUMN]. NULL while tracking is off. */
+/* DrawBG/DrawAffine only ever draw pixels 0-383 of one row, so a call finds its tags once: pixel x of the row
+ * row_target (the call's target) is tagged at vbgo_tt_row(row_target)[x * VBGO_TT_COLUMN], its cell at
+ * vbgo_tt_cell_row(row_target)[x * VBGO_TT_CELL_COLUMN]. NULL while tracking is off. */
 static inline uint32_t *vbgo_tt_row(const void *row_target)
 {
    ptrdiff_t i;
@@ -260,11 +231,9 @@ static inline int vbgo_tt_fills_from(unsigned chr, unsigned cell)
           (vbgo_tt_fill == 2 || ((vbgo_tt_fill_cells[cell >> 3] >> (cell & 7)) & 1));
 }
 
-/* A whole character row drawn by DrawBG's 8-pixel path: its 8 screen pixels
- * are tagged at d, d + VBGO_TT_COLUMN, ... (cells at c, c + VBGO_TT_CELL_COLUMN, ...) pixels: the row as stored (tile
- * pixel n in bits 2n); flipped: drawn mirrored (screen pixel k shows tile
- * pixel 7 - k). bits: vbgo_tt_call_bits() | VBGO_TT_BG_BITS(chr, 0, sy, pal,
- * 0). Drawn pixels and fills as one at a time would tag them. */
+/* A whole character row drawn by DrawBG's 8-pixel path, tagged as one pixel at a time would be (pixel k: tag
+ * d[k * VBGO_TT_COLUMN], cell c[k * VBGO_TT_CELL_COLUMN]). pixels: the row as stored (tile pixel n in bits 2n);
+ * flipped: drawn mirrored (pixel k shows 7 - k). bits: vbgo_tt_call_bits() | VBGO_TT_BG_BITS(chr, 0, sy, pal, 0). */
 static inline int vbgo_tt_tag_row8(uint32_t *d, uint16_t *c, unsigned pixels, int flipped, uint32_t bits, unsigned chr,
                                    unsigned cell)
 {
@@ -318,24 +287,18 @@ void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *
                                 unsigned block_no, unsigned fb, const uint8_t *jplt);
 void vbgo_tiletrack_display_column(unsigned fb, unsigned lr, unsigned dest_lr, unsigned column, bool display_active);
 void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsigned bytes);
-/* A drawing pass that repeats the other buffer's last one (nothing it reads
- * changed since that pass started): whether src_fb's tags can stand for it,
- * sharing them for the pass into fb, and - if its inputs change partway -
- * fb's own tags from block_no on (the blocks before as src_fb's). */
-/* After vbgo_tiletrack_begin_block, for a block the VIP doesn't draw because
- * it would draw what this buffer's last pass did (the frame buffer still holds
- * it): keeps that pass's tags for it as this pass's. False if they're gone
- * (the block must be drawn after all). */
+/* After vbgo_tiletrack_begin_block, for a block the VIP doesn't draw because it would draw what this buffer's last pass
+ * did (the frame buffer still holds it): keeps that pass's tags for it as this pass's. False if they're gone (the block
+ * must be drawn after all). */
 bool vbgo_tiletrack_keep_block(void);
 /* The same for only some of its cells (bit per 8 columns), the rest drawn again. */
 bool vbgo_tiletrack_keep_cells(uint64_t cells);
 /* Before drawing the block begun last (rather than keeping it); compare: tell
  * the cells that came out the same by their tags (else only by unchanged). */
 void vbgo_tiletrack_block_drawing(bool compare);
-/* After drawing it: the characters it used (2048 bits), whether nothing it read
- * had changed since its pass started (else no versions - see cell_version), and
- * per cell (bit per 8 columns) whether its pixels came out as this buffer last
- * held them, and whether nothing it shows could have changed. */
+/* After drawing it: the characters it used (2048 bits), whether nothing it read had changed since its pass started
+ * (else no versions - see cell_version), and per cell (bit per 8 columns) whether its pixels came out as this buffer
+ * last held them, and whether nothing it shows could have changed. */
 void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same_pixels, uint64_t unchanged);
 /* After drawing some cells of the block: which of them may show something new
  * when only the changed worlds' attributes changed (a changed world shows
@@ -350,6 +313,9 @@ extern uint32_t vbgo_tt_wcells[48];
 extern uint8_t vbgo_tt_fillc[48];
 /* Cells of the block being drawn where a sprite may have been tagged (cleared by the tracker before drawing). */
 extern uint8_t vbgo_tt_ocells[48];
+/* A drawing pass that repeats the other buffer's last one (nothing it reads changed since that pass started): whether
+ * src_fb's tags can stand for it, sharing them for the pass into fb, and - if its inputs change partway - fb's own
+ * tags from block_no on (the blocks before as src_fb's). */
 bool vbgo_tiletrack_pass_reusable(unsigned src_fb);
 void vbgo_tiletrack_share_pass(unsigned fb, unsigned src_fb);
 void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no);

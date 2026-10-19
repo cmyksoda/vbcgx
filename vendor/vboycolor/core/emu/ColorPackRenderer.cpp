@@ -27,9 +27,8 @@ inline int CountSet(uint32_t x)
     return static_cast<int>((x * 0x01010101u) >> 24);
 }
 
-// A row of one shade's pixels as bits (pixel x at bit x % 32 of word x / 32), in 32-bit words (Broadway's own:
-// 64-bit shifts cost it long sequences), with two guard words before and three after, so a shift by up to 64
-// pixels either way stays inside.
+// A row of one shade's pixels as bits (pixel x at bit x % 32 of word x / 32), in 32-bit words because 64-bit shifts
+// are long sequences on Broadway; two guard words before and three after keep a shift by up to 64 pixels inside.
 constexpr int kRowWords = VBGO_TT_WIDTH / 32, kGuardWords = 2, kGuardedRow = kRowWords + kGuardWords + 3;
 
 // Word k of the row shifted so that bit x holds the row's bit x + d.
@@ -240,9 +239,8 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
         ++m_cellStart[cell.cell + 1u];
     for (size_t i = 1; i < m_cellStart.size(); ++i)
         m_cellStart[i] += m_cellStart[i - 1];
-    // Fills: a cell has some if any of its tile entries colors a pixel the
-    // tile leaves transparent - simplest to mark every cell with an entry
-    // (the tracker only uses this to decide where tagging fills is worth it).
+    // Fills: a cell has some if an entry colors a pixel its tile leaves transparent; marking every cell with an entry
+    // is simplest (the tracker only uses this to decide where tagging fills is worth it).
     if (!cells.empty())
     {
         m_fillCells.assign(8192, 0);
@@ -258,11 +256,9 @@ void ColorPackRenderer::SetFadeReference(unsigned level)
 {
     m_fadeReference = level;
     m_fadeLutValid = false;
-    // Same fade as the Multicolor palette (see ShadeColorizer): the brightest
-    // shade's level from the core's tag byte, through the core's gamma -
-    // relative to the brightness the paintings were made at (without a
-    // pack: the brightest the game has shown), so a game that normally runs
-    // below full brightness shows exactly the painted colors.
+    // Same fade as the Multicolor palette (see ShadeColorizer): the brightest shade's level from the core's tag byte,
+    // through the core's gamma, relative to the brightness the paintings were made at (without a pack: the brightest
+    // the game has shown), so a game that normally runs below full brightness shows exactly the painted colors.
     const float reference = std::pow(std::max(1u, std::min(63u, level)) / 63.0f, 1.0f / 2.2f);
     for (int i = 0; i < 64; ++i)
         m_fade[i] = static_cast<int>(
@@ -284,11 +280,8 @@ void ColorPackRenderer::UpdateFadeLut(const int bg[3])
 
 void ColorPackRenderer::UpdateAutoColors()
 {
-    // Each background layer's ramp by its depth in the game's drawing order
-    // (higher worlds are drawn first, farther back), over the layers drawn
-    // since the game started - so a layer keeps its colors. (A pair's right
-    // world takes its left partner's - see ClassifyWorlds.)
-    // (Figures - see m_figureWorlds - are colored like sprites instead.)
+    // Each background layer's ramp by its depth (higher worlds are drawn first, farther back) among all layers drawn
+    // since the game started, so a layer keeps its colors. (Figures, see m_figureWorlds, are colored like sprites.)
     if (m_autoWorlds == m_autoWorldsUsed && m_figureWorlds == m_figuresUsed)
         return;
     m_autoWorldsUsed = m_autoWorlds;
@@ -351,10 +344,8 @@ void ColorPackRenderer::ResolveSlots(const uint32_t *hashes)
 
 void ColorPackRenderer::ClassifyWorlds(const uint16_t *worlds)
 {
-    // Which eyes draw each world (LON/RON), its type, and the per-eye pairs:
-    // left-only worlds next to right-only ones of the same type, in the
-    // order the VIP draws them (Mario Clash's stage, Galactic Pinball's
-    // tables). A pair's right world takes its left partner's colors.
+    // Each world's eyes (LON/RON) and type, and the per-eye pairs: left-only worlds next to right-only ones of the same
+    // type, in VIP drawing order (Mario Clash, Galactic Pinball). A pair's right world takes its left partner's colors.
     std::array<World, 32> next{};
     for (unsigned w = 0; w < 32; ++w)
         next[w].colors = static_cast<uint8_t>(w);
@@ -383,13 +374,9 @@ void ColorPackRenderer::ClassifyWorlds(const uint16_t *worlds)
             if (world.eyes == 3 && world.type != 3)
                 m_rightShift[w] = static_cast<int16_t>(2 * (Sign9(a[2]) - (world.type == 2 ? 0 : Sign9(a[5]))));
         }
-        // A run of left-only worlds next to a run of right-only ones (same
-        // type) pair up in order, one by one: Mario Clash alternates them,
-        // Galactic Pinball's Cosmic table draws three left worlds, then
-        // their three right ones. A left run's extra worlds join its last
-        // pair - the right world draws what they do together (the Alien
-        // table: three left worlds, one right); a right run's extra worlds
-        // may pair with what follows.
+        // A run of left-only worlds next to a run of right-only ones (same type) pairs up in order (Mario Clash
+        // alternates; Galactic Pinball's Cosmic table draws 3 left worlds, then 3 right). A left run's extra worlds
+        // join its last pair (Alien table: 3 left, 1 right); a right run's extras may pair with what follows.
         auto addPair = [&](int left, int right, uint32_t leftWorlds) {
             next[right].colors = static_cast<uint8_t>(left);
             for (int w = 0; w < 32; ++w)
@@ -440,10 +427,8 @@ void ColorPackRenderer::ClassifyWorlds(const uint16_t *worlds)
             }
             k = !count ? e1 : secondCount > firstCount ? e1 + count : e2;
         }
-        // Sprites only one eye shows (JLON / JRON): Galactic Pinball draws
-        // much of a table as a left-eye and a right-eye set of sprites, with
-        // the depth drawn into their positions (and often their tiles) - a
-        // pair too, per sprite world.
+        // Sprites only one eye shows (JLON / JRON) are a pair too, per sprite world: Galactic Pinball draws much of a
+        // table as a left-eye and a right-eye set of sprites, with the depth drawn into their positions.
         for (int k = 0; k < n && pairCount < kMaxPairs; ++k)
         {
             const int w = listed[k];
@@ -613,10 +598,8 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, con
     if (c.pack)
     {
         const Slot &slot = m_slots[chr];
-        // A sprite drawn in a palette that shows all its shades alike is a
-        // silhouette - the game flashing a hit enemy (or boss), a blinking
-        // player - which painted colors alone would hide: they're washed
-        // toward that shade (see Paint), so the flash still shows.
+        // A sprite in a palette showing all its shades alike is a silhouette (a hit enemy flashing, a blinking player)
+        // that painted colors would hide: they're washed toward that shade (see Paint), so the flash still shows.
         run.flash = sprite && (c.flatObjPalettes >> palette & 1);
         run.slow = slot.ambiguous || (c.markers && m_slotHasMarkers[chr]) || (slot.contextCount && c.haveContexts);
         if (c.haveCells && VBGO_TAG_HAS_CELL(t))
@@ -898,12 +881,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         }
         m_markerCells[m_gridCurrent].clear();
 
-        // This frame's own markers, before anything is colored (the left
-        // picture's - markers count at their left-eye spot): a figure's
-        // colors are on from the first frame it shows its markers, rather
-        // than a frame later (each new pose of an animation would otherwise
-        // show its shared tiles' usual colors for a frame - a flash of Luigi's
-        // green on Mario's back in Mario's Tennis's intro).
+        // This frame's own markers (the left picture's), gathered before anything is colored so a figure's colors are
+        // on from the first frame it shows its markers (else each new pose flashes its shared tiles' usual colors).
         if (have[0])
         {
             const vbgo_tt_eye_view &v = view[0];
@@ -1009,10 +988,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             }
         }
 
-        // Sprites' groups: this frame's and the last two frames' markers
-        // within reach of each cell (Close: within one cell - see contextTile).
-        // Usually a few cells have any: those spread their bits; else rows,
-        // then columns, so a lookup is one read.
+        // Sprites' groups: markers of this frame and the last two within reach of each cell (Close: within one cell -
+        // see contextTile). Spread from the few cells that have any, else by rows then columns: a lookup is one read.
         ContextGroupBits *rows = m_gridRows.data(), *closeRows = m_gridCloseRows.data(), *here = m_gridHere.data();
         const ContextGroupBits *a = m_markerGrid[(m_gridCurrent + 1) % 3].data(),
                                *b = m_markerGrid[(m_gridCurrent + 2) % 3].data();
@@ -1070,7 +1047,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             for (size_t k = 0; k < m_windowNow.cells.size(); ++k)
                 m_windowNow.at[m_windowNow.cells[k].cell] = static_cast<uint16_t>(k + 1);
             {
-                // (the layer-bound marks by row, for Near: counted, then placed)
+                // (the layer-bound marks by row, for Near)
                 m_nearRow.fill(0);
                 size_t total = 0;
                 for (const WindowCell &cell : m_windowNow.cells)
@@ -1181,8 +1158,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         }
     }
 
-    // Pairs: the left pictures' colors per block and shade, the tiles they
-    // use, their pixels of tiles colored per map cell.
+    // Pairs: start this frame's table of the tiles their left pictures draw (see m_leftPairHashes).
     if (pairs)
     {
         if (m_leftPairHashes.size() != 4096)
@@ -1200,8 +1176,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     left.fill(VBGO_TT_WIDTH), right.fill(-1), top.fill(VBGO_TT_HEIGHT), bottom.fill(-1);
 
     UpdateFadeLut(bg);
-    // (at a faded level with a pack, while the level moves, painting keeps the colors before fading too - see m_unfaded;
-    // at a steady level the copies would cost every painted pixel and pay only at a fade's first step)
+    // (at a faded level with a pack, while the level moves, painting keeps the colors before fading too - see
+    // m_unfaded; at a steady level the copies would cost every painted pixel and pay only at a fade's first step)
     uint8_t *unfaded = nullptr;
     const bool levelMoved = leftLevel != m_lastLeftLevel;
     m_lastLeftLevel = leftLevel;
@@ -1256,9 +1232,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         const unsigned world = m_worlds[VBGO_TAG_WORLD(t)].colors;
         const Slot &slot = m_slots[chr];
         const TileColorPack::Tile *tile = nullptr;
-        // Context: a shared tile in an object whose marker is nearby (a
-        // sprite's colors only on sprites, a background figure's only on
-        // its layer) - nearby where the left eye shows this pixel.
+        // Context: a shared tile in an object whose marker is nearby, where the left eye shows this pixel (a sprite's
+        // colors only on sprites, a background figure's only on its layer).
         if (slot.contextCount && haveContexts)
         {
             const unsigned sprite = VBGO_TAG_IS_OBJ(t);
@@ -1282,8 +1257,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 else
                     nearBits = NearBits{};
             }
-            // A group with a marker right next to it (within a cell) first,
-            // then one within reach: of two characters side by side, each
+            // A group with a marker within a cell first, then one within reach: of two characters side by side, each
             // takes its own colors.
             for (int pass = 0; pass < 2 && !tile; ++pass)
             {
@@ -1754,8 +1728,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         // A kept cell's slow columns are painted again only if the markers their context goes by
         // moved (without layer-bound groups, only sprites' count; their marker writes are the pre-pass's).
         uint8_t contextSame[kBands][kGridW] = {};
-        // (layer-bound groups: slow columns stay if no marker within reach changed since the buffer's last Paint, or the cell
-        // has no context tile - and painting them moves no marker)
+        // (layer-bound groups: slow columns stay if no marker within reach changed since the buffer's last Paint, or
+        // the cell has no context tile - and painting them moves no marker)
         if (haveContexts && m_layerBound.Any())
         {
             uint64_t spread[kBands];
@@ -1989,9 +1963,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         }
                         if (newBand && markers && m_slotHasMarkers[chr])
                         {
-                            // Sprites' groups count sprite markers, background
-                            // figures' groups background ones (and remember the
-                            // layer).
+                            // Sprites' groups count sprite markers, background figures' groups background ones
+                            // (and remember the layer).
                             const bool sprite = VBGO_TAG_IS_OBJ(t) != 0;
                             const ContextGroupBits bits = m_slotMarkers[chr] & (sprite ? ~m_layerBound : m_layerBound);
                             if (bits.Any())
@@ -2081,9 +2054,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 automatic:
                     if (!rgb)
                     {
-                        // Unpainted: keeps the Multicolor palette's color - or,
-                        // in Auto mode, its layer's or sprite palette's (see
-                        // AutoColors.h); the black shade stays background.
+                        // Unpainted: keeps the Multicolor palette's color, or in Auto mode its layer's or sprite
+                        // palette's (see AutoColors.h); the black shade stays background.
                         if (!run.ramp || !pixel || !shade)
                             continue;
                         rgb = (*run.ramp)[shade - 1].data();
@@ -2154,9 +2126,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     // Automatic colors: the layers this game draws, its brightness (without
     // a pack, they fade relative to the brightest it has shown).
     m_autoWorlds |= worldsDrawn;
-    // Figures: layers that stay small (Mario's Tennis draws its players on
-    // layers of their own, Teleroboxer its opponent's parts) - the size of
-    // the largest the layer was lately (shrinking a pixel a frame).
+    // Figures: layers that stay small (Mario's Tennis draws its players on layers of their own, Teleroboxer its
+    // opponent's parts), judged by the largest the layer was lately (shrinking a pixel a frame).
     m_lastDrawn = 0;
     for (unsigned w = 0; w < 32; ++w)
         if (right[w] >= 0)
@@ -2177,9 +2148,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         SetFadeReference(brightest);
     }
 
-    // (depth colors stay as estimated while both pictures stay the same: another Paint colors them again alike; pairs' ages
-    // and markers are kept by Coast)
-    // (the layers' extents shrinking toward their sizes don't unsettle it: Coast lets them, as another Paint would)
+    // (depth colors stay as estimated while both pictures stay the same: another Paint colors them again alike; Coast
+    // keeps pairs' ages and markers, and lets the layers' extents shrink toward their sizes, as another Paint would)
     m_settled = !reestimated && m_autoWorlds == autoWorldsBefore && m_figureWorlds == figuresBefore &&
                 m_autoMaxLevel == maxLevelBefore;
     m_markersRead = haveContexts;
@@ -2493,10 +2463,9 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
 bool ColorPackRenderer::PairDue(const Pair &pair, const uint16_t *worlds, std::array<uint16_t, 32> &attributes,
                                 uint32_t &others, bool &scrolled) const
 {
-    // Kept while a pair's registers stay put (64 frames at most); while both
-    // its worlds scroll together, refined around the last estimate every few
-    // frames; anything else searches again. Only pairs that needed them
-    // lately (or never had any).
+    // Kept while a pair's registers stay put (64 frames at most); while both its worlds scroll together, refined around
+    // the last estimate every few frames; anything else searches again. Only pairs that needed them lately (or never
+    // had any) are due.
     if (pair.estimated && m_frame - pair.wantedAt > 64)
         return false;
     std::copy(&worlds[pair.left * 16], &worlds[pair.left * 16] + 16, attributes.begin());
@@ -2717,11 +2686,8 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
 
 void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const uint32_t *rightBits, bool scrolled)
 {
-    // Per 8-row band: the shift that lines up the most right-picture pixels
-    // with left-picture pixels of the same shade (within kMaxDisparity) -
-    // coarse (every other shift and row) then fine around it, or near the
-    // last estimate if the pair only scrolled. Only the words of a row the
-    // right picture covers in that band count.
+    // Per 8-row band: the shift lining up the most right-picture pixels with left-picture pixels of the same shade -
+    // coarse (every other shift and row) then fine around it, or near the last estimate if the pair only scrolled.
     std::array<int16_t, kBands> found;
     found.fill(kNoDisparity);
 
@@ -2759,9 +2725,8 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
         const int previous = pair.estimated ? pair.disparity[band] : kNoDisparity;
         const int around = previous != kNoDisparity ? previous : 0;
 
-        // The coarse search: every other shift, every other row, all shifts counted per word at once (shift d reads the
-        // left row's words 2 + floor(d / 32) and the next past the right's, so its 6 words around are loaded once).
-        // (ties: the one nearer the last estimate, else nearer 0)
+        // All shifts are counted per word at once (shift d reads the left row's words 2 + floor(d / 32) and the next
+        // past the right's, so 6 words around are loaded once). (ties: nearer the last estimate, else nearer 0)
         auto coarse = [&](int &bestD) {
             static_assert(kMaxDisparity == 64, "coarse's word groups");
             int n[kMaxDisparity + 1] = {}; // (shift 2k - kMaxDisparity)
@@ -2853,15 +2818,10 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
 void ColorPackRenderer::PaintAmbiguous(uint8_t *frame, uint32_t fbWidth, uint32_t eyeOffset,
                                        const vbgo_tt_eye_view &view)
 {
-    // A tile a character paints two ways in one frame (a plain filled tile:
-    // the shirt's white, the cap's green) takes, pixel by pixel, the color
-    // of the nearest pixel of the same shade on its layer that isn't such a
-    // tile - the shirt's or the cap's around it (within 8 pixels, straight
-    // up, down, left or right). Without one it keeps what the pack gave it.
-    // Only what both eyes show the same way around it counts: on a layer,
-    // its own layer; among sprites, sprites at the same depth (parallax) -
-    // their pixels sit the same way around it in both eyes.
-    // (a neighbour's tag must be drawn this frame and match in these: the pixel's value, its layer, sprite or not)
+    // A tile painted two ways in one frame (a plain filled tile: the shirt's white, the cap's green) takes, per pixel,
+    // the color of the nearest same-shade pixel not of such a tile within 8 pixels (up, down, left, right), else keeps
+    // the pack's. Only same-layer pixels count (sprites: same depth, via parallax): both eyes see them alike around it.
+    // (a neighbor's tag must be drawn this frame and match in these: the pixel's value, its layer, sprite or not)
     constexpr uint64_t kSame = (31ull << 22) | (3ull << 20) | (1ull << 19);
     static constexpr int kDirections[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
 

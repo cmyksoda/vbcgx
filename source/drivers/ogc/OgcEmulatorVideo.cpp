@@ -78,8 +78,7 @@ void OgcEmulatorVideo::presentFrame(const uint8_t *buffer, size_t pitch)
         logicalH *= EmuSettings.videoZoomVert;
     }
 
-    // Reduce with coverage averaging before GX samples the image. This keeps
-    // thin lines from disappearing in 240p, including top/bottom stereo.
+    // Reduce with coverage averaging before GX samples the image, so thin lines don't disappear in 240p.
     unsigned w = std::min(vbWidth, static_cast<unsigned>(std::max(4.0f, logicalW)));
     unsigned h = std::min(vbHeight, static_cast<unsigned>(std::max(4.0f, logicalH * mode->efbHeight / 480.0f)));
     w = (w + 3) & ~3u;

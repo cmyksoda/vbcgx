@@ -3050,8 +3050,7 @@ static void ScreenPositionWindow()
  * CustomTintWindow
  ***************************************************************************/
 //!The custom tint's Red, Green and Blue, as VBoy Color's rows: 0.00-1.00 in steps of 0.05,
-//!previewed as the Virtual Boy's 4 brightness levels. Up/Down picks a channel, Left/Right
-//!moves it (held: faster); the pointer clicks the arrows or a track.
+//!previewed as the Virtual Boy's 4 brightness levels.
 class TintSliders : public GuiWindow
 {
 	public:
@@ -3231,11 +3230,12 @@ static int MenuVBOptions(bool colors)
     enum { kColorsRow, kPacksRow, kMulticolorRow, kGradientRow, kTintColorRow, kCustomTintRow };
     const char *colorNames[] = {"Colors", "Color Packs", "Multicolor Palette", "Gradient", "Tint Color", "Custom Tint Color"};
     int rows[6], rowCount = 0;
-    // (a mode's own rows show only for it, right below the two every mode has)
+    // (a mode's own rows show only for it)
     auto layoutColorRows = [&]() {
         rowCount = 0;
         rows[rowCount++] = kColorsRow;
-        if (EmuSettings.colorMode < 3 && vboycolor_has_pack()) rows[rowCount++] = kPacksRow; // (Gradient and Tint don't use packs)
+        // (Gradient and Tint don't use packs)
+        if (EmuSettings.colorMode < 3 && vboycolor_has_pack()) rows[rowCount++] = kPacksRow;
         if (EmuSettings.colorMode == 2) rows[rowCount++] = kMulticolorRow;
         if (EmuSettings.colorMode == 3) rows[rowCount++] = kGradientRow;
         if (EmuSettings.colorMode == 4) {

@@ -68,7 +68,7 @@ constexpr int kStep = 30, kJump = 250;   // smoothing: a step of 1 in disparity 
 constexpr int16_t kWall = 16000;         // (beyond the disparities in the smoothing: never the cheapest)
 constexpr int kPlaneBonus = 60;          // the pull of the frame's main depths
 constexpr int kKeepNow = 154, kKeepLast = 102; // (out of 256: this frame's costs, the last frame's - 60 / 40 %)
-constexpr int kSwitch = 2;               // votes a pixel's neighbours' disparity needs over its own block's
+constexpr int kSwitch = 2;               // votes a pixel's neighbors' disparity needs over its own block's
 constexpr int kPrior = 6;                // cost per pixel of disparity (ties go to the screen's plane)
 
 // Far to near (indigo, violet, rose, orange, gold); per stop the shade 1, 2
@@ -115,9 +115,8 @@ void DepthColors::Reset()
 
 int DepthColors::Votes(unsigned s, const unsigned left[7], int x, int y, int d) const
 {
-    // How many of the left picture's pixels of this shade in the 7x7 window
-    // around (x, y) (left: its rows, see LeftWindow) the right picture shows
-    // in the same shade d to the right.
+    // How many of the left picture's pixels of this shade in the 7x7 window around (x, y) (left: its rows, see
+    // LeftWindow) the right picture shows in the same shade d to the right.
     const std::vector<Row> &r = m_bits[1][s];
     int votes = 0;
     for (int k = 0; k < 7; ++k)
@@ -156,7 +155,7 @@ void DepthColors::Update()
 {
     const size_t n = static_cast<size_t>(kWidth) * kHeight;
     if (m_haveLast && m_nextLit[0] == m_lastLit[0] && m_nextLit[1] == m_lastLit[1])
-        return; // both pictures as last time
+        return; // same pictures as last time (most 3D games draw a new picture every other frame or less)
 
     // Each eye's shade and want per pixel (only the pixels lit in either picture rewritten).
     const uint8_t *shades[2], *want[2];
@@ -211,15 +210,9 @@ void DepthColors::Update()
     if (wanted[0] || wanted[1] || wanted[2])
         Estimate(shades, want);
 
-    // Flat fills: inside an area of one shade (the whole 7x7 window around a
-    // pixel that shade) nothing says how far away it is - any shift lines up
-    // as well. Each connected area of such pixels takes one surface from the
-    // disparities around it (its own shade's pixels just outside it, where
-    // its edges or the lines drawn across it say how far away they are): a
-    // plane through them (a floor or a wall in perspective - one level if
-    // they don't spread), fitted leaving out the ones far off it, kept
-    // within the range they span. (Rows taking their own ends' disparities
-    // streaked: neighbouring rows meet different lines.)
+    // Flat fills: in an area of one shade (a whole 7x7 window of it) any shift lines up, so nothing says its depth.
+    // Each connected area takes one plane (a floor or wall in perspective, not per-row blends: those streak) through
+    // its shade's disparities just outside it, where edges and lines across it say.
     {
         auto flat = [&](int x, int y) {
             const unsigned s = shades[0][static_cast<size_t>(y) * kWidth + x];
@@ -281,7 +274,6 @@ void DepthColors::Update()
             if (m_samples.empty())
                 continue; // nothing says - their blocks' disparities stay
 
-            // A level: the samples' median; then a plane through the ones near it, twice.
             auto median = [&](std::vector<int> &v) {
                 std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
                 return v[v.size() / 2];
@@ -299,7 +291,7 @@ void DepthColors::Update()
             int lo = level, hi = level;
             for (int round = 0; round < 2; ++round)
             {
-                // (centred, in units of 64 pixels, the slopes held back a little: samples along one line say nothing
+                // (centered, in units of 64 pixels, the slopes held back a little: samples along one line say nothing
                 // across it)
                 double sw = 0, sx = 0, sy = 0;
                 for (const Sample &p : m_samples)
@@ -335,9 +327,8 @@ void DepthColors::Update()
             for (const int i : m_area)
                 left[i] = static_cast<int16_t>(surface(i % kWidth, i / kWidth));
 
-            // Its edge (the 3 pixels its own shade goes on past the flat part,
-            // where their windows see what's beside it): those off the surface
-            // join it (a band of another color around every fill otherwise).
+            // Its edge (the 3 pixels its shade goes on past the flat part, whose windows see what's beside it): those
+            // off the surface join it, or every fill gets a band of another color.
             size_t from = 0, to = m_area.size();
             for (int ring = 0; ring < 3; ++ring)
             {
@@ -759,9 +750,8 @@ void DepthColors::CostRow(const CostRowArgs &a)
 
     if (last >= 0)
     {
-        // (prefix sums of the matches along the row, from the first block with a pixel: nothing before it, and the same
-        // past the last. The 3x3 blocks' matches sum a block's, its neighbours' and the rows' above and below, the
-        // strip's its row's)
+        // (prefix sums of the matches along the row from the first block with a pixel, 0 before it and constant past
+        // the last; the 3x3 blocks sum three rows, the strip only its own)
         int16_t eq[kPad + kBlocksX + kPad], ep[kPad + kBlocksX + kPad];
         for (int i = 0; i < kPad + kBlocksX + kPad; ++i)
             eq[i] = ep[i] = 0;
@@ -879,11 +869,9 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
         return &v[(static_cast<size_t>(by % 3) * kDisparities + di) * kBlocksX];
     };
 
-    // 1. Per disparity and block: how many of the left picture's pixels
-    // the right one shows in the same shade (matches), and how many have
-    // their spot on screen at all (inside).
-    // (inside: all but the left edge's word for d < 0, the right edge's for d > 0; by 32-bit halves throughout, as
-    // the Wii's CPU works 64-bit words in pairs of instructions)
+    // Per disparity and block: how many of the left picture's pixels the right one shows in the same shade (matches),
+    // and how many have their spot on screen at all (inside: all but the left edge's word for d < 0, the right's for
+    // d > 0). By 32-bit halves throughout, as the Wii's CPU works 64-bit words in pairs of instructions.
     uint32_t edgeMask[kDisparities][2];
     for (int di = 0; di < kDisparities; ++di)
     {
@@ -892,11 +880,9 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
         edgeMask[di][0] = static_cast<uint32_t>(mask), edgeMask[di][1] = static_cast<uint32_t>(mask >> 32);
     }
 
-    // 2. Costs per block and disparity: how badly the two pictures line up
-    // in the 3x3 blocks around it and in the 11-block strip through it (as
-    // far as their pixels have their spot on screen - the rest counts
-    // kNeutral). Worked out a row of blocks at a time, as soon as the row
-    // below it is matched, straight into the smoothing's block-major order.
+    // Costs per block and disparity: how badly the two pictures line up in the 3x3 blocks around it and the 11-block
+    // strip through it (text and tile patterns repeat; the strip sees past a repetition). Pixels off screen count
+    // kNeutral. Worked out a row of blocks at a time once the row below is matched, straight into block-major order.
     static const std::vector<int32_t> kPerMille = [] { // 1000 * 65536 / n: n-ths without dividing
         std::vector<int32_t> t(1024, 0);
         for (int i = 1; i < 1024; ++i)
@@ -912,7 +898,7 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     m_blockPixels.assign(kBlocks, 0);
     int32_t *blockPixels = m_blockPixels.data();
     const int32_t *const perMille = kPerMille.data();
-    uint8_t cheapestAt[kBlocks]; // (each block's cheapest disparity, for step 4: found as its costs are written)
+    uint8_t cheapestAt[kBlocks]; // (each block's cheapest disparity, for the main depths: found as costs are written)
     static const uint8_t kNoCounts[kBlocksX] = {}; // (above the top row of blocks, below the bottom one)
 
     auto costRow = [&](int by) {
@@ -969,9 +955,8 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                         }
 
                     uint32_t *a = &acc[0][2 * k + h];
-                    // (a sparse half: each lit left pixel's same-shade right pixels within reach, added where they
-                    // meet - the same counts, as a left pixel has one shade; worth it while that's cheaper than all
-                    // 81 shifts)
+                    // (a sparse half: add each lit left pixel's same-shade right pixels within reach where they meet -
+                    // the same counts, a left pixel having one shade - while that's cheaper than all 81 shifts)
                     const int o = base & 31;
                     uint32_t work = 0;
                     for (int s = 0; s < n; ++s)
@@ -1056,9 +1041,8 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     state.estimated = true;
     static_assert(kSmallFull == 32 && kWideFull == 64, "(the shifts above)");
 
-    // 4. The frame's main depths: the most common cheapest disparities of
-    // blocks with something in them (weighted by how much), apart by 3 or
-    // more - each pulls the blocks near it a little.
+    // The frame's main depths (most things a game draws sit on a handful of planes): the most common cheapest
+    // disparities of blocks with something in them (weighted by how much), 3 or more apart; each pulls nearby blocks.
     bool pulled[kDisparities] = {};
     {
         int32_t histogram[kDisparities] = {};
@@ -1081,10 +1065,8 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
         }
     }
 
-    // 5. Smoothed over the block grid: along each row and column of blocks,
-    // both ways, a block's cost at a disparity plus the cheapest way to get
-    // there from its neighbour's (the same disparity free, one step kStep,
-    // any jump kJump) - summed over the four ways, the cheapest wins.
+    // Smoothed over the block grid (semi-global matching: neighboring blocks mostly lie at the same depth, but it may
+    // jump at an edge): each block's cost is summed over the four directions, and the cheapest disparity wins.
     m_sum.resize(state.cost.size());
     int16_t *const cost = state.cost.data();
     int pulledAt[kDisparities], pulledCount = 0;
@@ -1171,12 +1153,10 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
         }
     }
 
-    // 6. Per wanted left pixel: its block's disparity, unless a neighbour
-    // block's or a main depth lines up clearly better in the 7x7 window
-    // around it (its own shade's pixels); a pixel that hasn't changed (nor
-    // the right picture where it was shown) keeps its last disparity while
-    // that still lines up about as well.
-    // (the candidates depend only on the block: listed once per block - its own, its neighbours', the main depths)
+    // Per wanted left pixel: its block's disparity, unless a neighboring block's or a main depth lines up clearly
+    // better in the 7x7 window around it, own shade only (lines of different depths cross in a block; a score in one
+    // shade lies in front of a field in others). An unchanged pixel keeps its disparity while it fits well.
+    // (the candidates depend only on the block: listed once per block - its own, its neighbors', the main depths)
     m_candidates.resize(static_cast<size_t>(kBlocks) * kCandidates);
     m_candidateCount.resize(kBlocks);
     for (int by = 0; by < kBlocksY; ++by)

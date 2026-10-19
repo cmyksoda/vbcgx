@@ -24,8 +24,6 @@ inline uint32_t BytesInOrder(uint32_t a, uint32_t b, uint32_t c, uint32_t d)
 #endif
 }
 
-// Coverage reduction protects thin lines when the frame exceeds the output
-// resolution. GX receives RGBA8 tiles with explicit byte order.
 // One 4x4 tile of a picture shown 1:1, from its top left pixel: a line of alpha-red pairs and a line of
 // green-blue ones, two pixels a word.
 inline void ConvertTile(const uint8_t *bgrx, size_t pitch, uint8_t *tile)
@@ -57,6 +55,7 @@ inline void ConvertVBCells(const uint8_t *bgrx, size_t pitch, uint8_t *tiled, un
         }
 }
 
+// Coverage reduction protects thin lines when the frame exceeds the output resolution.
 // changed: if tiled already holds this picture's last showing, its cells changed since (see ConvertVBCells).
 inline void ReduceVBFrame(const uint8_t *bgrx, unsigned sourceW, unsigned sourceH, size_t pitch,
     uint8_t *tiled, unsigned w, unsigned h, const uint64_t *changed = nullptr)
