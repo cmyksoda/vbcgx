@@ -830,21 +830,23 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             {
                 Band &cache = bands[band];
                 const unsigned row = band * kGridW;
-                for (unsigned gx = 0; gx < static_cast<unsigned>(kGridW); ++gx)
+                // (only cells holding markers need anything: the rest are clear, kept or not)
+                for (uint64_t w = cache.marksAny & keep[band]; w; w &= w - 1)
                 {
-                    CellMarks &cell = cache.marks[gx];
-                    ContextGroupBits &cellMarkers = cell.markers;
-                    if (keep[band] >> gx & 1)
-                    {
-                        markers[row + gx] |= cellMarkers;
-                        if (markerLayers && cell.markerLayer != 0xFF)
-                            markerLayers[row + gx] = cell.markerLayer;
-                        if (cellMarkers.Any() || (markerLayers && cell.markerLayer != 0xFF))
-                            NoteMarkerCell(row + gx);
-                    }
-                    else
-                        cellMarkers = ContextGroupBits{}, cell.markerLayer = 0xFF;
+                    const unsigned gx = static_cast<unsigned>(__builtin_ctzll(w));
+                    const CellMarks &cell = cache.marks[gx];
+                    markers[row + gx] |= cell.markers;
+                    if (markerLayers && cell.markerLayer != 0xFF)
+                        markerLayers[row + gx] = cell.markerLayer;
+                    if (cell.markers.Any() || (markerLayers && cell.markerLayer != 0xFF))
+                        NoteMarkerCell(row + gx);
                 }
+                for (uint64_t w = cache.marksAny & ~keep[band]; w; w &= w - 1)
+                {
+                    CellMarks &cell = cache.marks[__builtin_ctzll(w)];
+                    cell.markers = ContextGroupBits{}, cell.markerLayer = 0xFF;
+                }
+                cache.marksAny &= keep[band];
                 if (!any || keep[band] == (1ull << kGridW) - 1)
                     continue;
                 if (v.band_chr)
@@ -893,7 +895,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             const unsigned cell = band * kGridW + gx;
                             markers[cell] |= bits;
                             NoteMarkerCell(cell);
-                            cache.marks[gx].markers |= bits;
+                            cache.marks[gx].markers |= bits, cache.marksAny |= 1ull << gx;
                             if (!sprite && markerLayers)
                                 markerLayers[cell] = cache.marks[gx].markerLayer = static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
                         }

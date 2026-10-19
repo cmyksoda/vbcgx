@@ -150,6 +150,7 @@ private:
         BandSums sums;
         CellSums cells;
         std::array<CellMarks, VBGO_TT_WIDTH / 8> marks{};
+        uint64_t marksAny = 0; // (a bit per cell whose marks hold a marker or a marker layer)
         uint64_t nearAny = 0; // (a bit per cell whose nearSprites or closeSprites are not clear)
         std::vector<uint64_t> pairSlots; // cell << 32 | left eye: chr | pairs << 11; right eye: chr | (pair + 1) << 11
     };
