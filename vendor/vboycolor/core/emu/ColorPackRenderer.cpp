@@ -94,6 +94,103 @@ inline uint32_t LowFirst32(const uint8_t *p)
 #endif
     return v;
 }
+
+// The tag shades of a column's 4 pixel values, 2 bits each (| 0x100: never 0 once made).
+inline unsigned ColumnShades(const uint32_t *clut)
+{
+    unsigned shades = 0x100;
+    for (unsigned i = 0; i < 4; ++i)
+        shades |= (EyeTaggedWord(clut[i]) >> 24 & 3) << (2 * i);
+    return shades;
+}
+
+// A grid cell's 8 pixels across are one byte of a bit row's word (its lane): a byte store needs neither a read of the
+// word nor a clear before it.
+constexpr int kShadeBytes = kGuardedRow * 4, kRowBytes = 3 * kShadeBytes;
+inline uint8_t *CellByte(uint32_t *word, unsigned cell)
+{
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    return reinterpret_cast<uint8_t *>(word) + (3 - (cell & 3));
+#else
+    return reinterpret_cast<uint8_t *>(word) + (cell & 3);
+#endif
+}
+
+// A cell's byte of each of one slot's 8 rows x 3 shades of bit rows (from the first row's), cleared.
+inline void ZeroCell(uint8_t *dst)
+{
+    for (int j = 0; j < 8; ++j, dst += kRowBytes)
+        dst[0] = dst[kShadeBytes] = dst[2 * kShadeBytes] = 0;
+}
+
+// How a tag counts in one slot's pass over a cell: kGatherHit, kGatherStray (a sprite's or another slot's: the cell
+// has to be gathered pixel by pixel) or 0. Hits mask a cell's shade bits; a stray's sign bit is no shade bit.
+constexpr uint32_t kGatherHit = 0xFFFFFFu, kGatherStray = 0x80000000u;
+
+// A cell's shade bits per column and pixel value: column + 8 * (shade - 1), none for shade 0.
+struct CellShades
+{
+    unsigned shades = 0; // (the column shades they are for)
+    uint32_t bit[8][4];
+    void Make(unsigned forShades)
+    {
+        shades = forShades;
+        for (unsigned i = 0; i < 32; ++i)
+        {
+            const unsigned shade = forShades >> (i % 4 * 2) & 3;
+            bit[i / 4][i % 4] = shade ? 1u << (i / 4 + 8 * (shade - 1)) : 0;
+        }
+    }
+};
+
+// One slot's pass over a grid cell of a band whose key is all ones (a drawn tag is nonzero, and kinds[0] counts for
+// nothing): its byte of each of the slot's bit rows (row j's shades 1-3 in rows[j]'s bytes 0-2), or false with
+// nothing written if a stray tag is there.
+template <bool kStrays>
+__attribute__((noinline)) bool GatherCell(uint8_t *dst, const uint32_t *const columns[8], const uint8_t *packed,
+                                          const uint32_t *clut, uint16_t shadePack[8], const uint32_t *kinds,
+                                          CellShades &cellShades, unsigned firstRow)
+{
+    uint32_t rows[8] = {}, stray = 0;
+    unsigned made = cellShades.shades;
+    for (unsigned x = 0; x < 8; ++x)
+    {
+        const uint32_t *column = columns[x];
+        if (!column)
+            continue;
+        const uint8_t *pixels = packed + x * 56;
+        const unsigned values = pixels[0] | pixels[1] << 8;
+        unsigned shades = shadePack[x];
+        if (!shades)
+            shadePack[x] = static_cast<uint16_t>(shades = ColumnShades(clut + x * 4));
+        if (!values && !(shades & 3))
+            continue;
+        if (shades != made)
+            cellShades.Make(made = shades);
+        const uint32_t *tags = column + firstRow, *bit = cellShades.bit[x];
+#if defined(__PPC__) || defined(__powerpc__)
+        __asm__("" : "+r"(tags)); // (else the compiler keeps 8 row offsets in registers and runs out of them)
+#endif
+#pragma GCC unroll 8
+        for (unsigned j = 0; j < 8; ++j)
+        {
+            const uint32_t kind = kinds[tags[j] >> 19 & 0xFF];
+            rows[j] |= bit[values >> (2 * j) & 3] & kind;
+            if (kStrays)
+                stray |= kind;
+        }
+    }
+    if (kStrays && (stray & kGatherStray))
+        return false;
+#pragma GCC unroll 8
+    for (unsigned j = 0; j < 8; ++j, dst += kRowBytes)
+    {
+        dst[0] = static_cast<uint8_t>(rows[j]);
+        dst[kShadeBytes] = static_cast<uint8_t>(rows[j] >> 8);
+        dst[2 * kShadeBytes] = static_cast<uint8_t>(rows[j] >> 16);
+    }
+    return true;
+}
 } // namespace
 
 // The worlds with tags drawn in a grid cell, a bit each.
@@ -2740,6 +2837,8 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
     std::array<int8_t, 32> layerSlot[2], spriteSlot;
     layerSlot[0].fill(-1), layerSlot[1].fill(-1), spriteSlot.fill(-1);
     uint32_t wanted[2] = {0, 0}; // (the worlds a cell must show to count; ~0: every cell, sprites can't be told)
+    uint32_t layered[2] = {0, 0}; // (the worlds with a layer slot)
+    bool spritePairs = false;
     for (int k = 0; k < count; ++k)
     {
         const Pair &pair = m_pairs[todo[k]];
@@ -2747,6 +2846,7 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
         {
             spriteSlot[pair.left] = static_cast<int8_t>(k);
             wanted[0] = wanted[1] = ~0u;
+            spritePairs = true;
         }
         else
         {
@@ -2756,6 +2856,8 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
             layerSlot[1][pair.right] = static_cast<int8_t>(k);
             wanted[0] |= pair.leftWorlds;
             wanted[1] |= 1u << pair.right;
+            layered[0] |= pair.leftWorlds;
+            layered[1] |= 1u << pair.right;
         }
     }
 
@@ -2808,6 +2910,23 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
             slotSprite[i] = (i & 1) && k >= 0;
         }
 
+        // (per slot once used: how its pass counts each kind of tag - by its sprite, pixel and world bits)
+        m_gatherKinds.resize(static_cast<size_t>(count) * 256);
+        uint32_t kindsMade = 0;
+        const auto kindsOf = [&](int k) {
+            uint32_t *kinds = &m_gatherKinds[static_cast<size_t>(k) * 256];
+            if (!(kindsMade >> k & 1))
+            {
+                kindsMade |= 1u << k;
+                const int32_t base = static_cast<int32_t>(k * 2 * eyeRows);
+                for (unsigned i = 0; i < 256; ++i)
+                    kinds[i] = slotBase[i] < 0 ? 0 : slotBase[i] == base && !slotSprite[i] ? kGatherHit : kGatherStray;
+            }
+            return kinds;
+        };
+        CellShades cellShades;
+        const auto gatherCell = count > 1 || spritePairs ? GatherCell<true> : GatherCell<false>;
+
         // (per column once used: the clut's tag shade by pixel value, 2 bits each, | 0x100)
         uint16_t shadePack[VBGO_TT_WIDTH] = {};
         const uint32_t *worldsHere = view[eye].cell_worlds;
@@ -2828,6 +2947,44 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
                 if (same)
                     continue;
 
+                // (the cell's byte of every slot's bit rows: the first slot's from the first row's word)
+                uint32_t *const cellWord = bits + static_cast<size_t>(eye) * eyeRows + kGuardWords + (c >> 2) +
+                                           static_cast<size_t>(b) * 8 * 3 * kGuardedRow;
+                const size_t slotWords = 2 * eyeRows;
+                const auto zeroSlots = [&](int except) {
+                    for (int k = 0; k < count; ++k)
+                        if (k != except)
+                            ZeroCell(CellByte(cellWord + k * slotWords, c));
+                };
+                const uint32_t here = worldsHere ? worldsHere[b * kGridW + c] : 0;
+
+                // (a band the pass didn't reach, or a cell none of the wanted worlds show in, draws nothing: its
+                // bits just start clear)
+                if (!bandKey || (worldsHere && !(here & wanted[eye])))
+                {
+                    if (keep)
+                        zeroSlots(-1);
+                    continue;
+                }
+
+                // (a pass handles one slot: tried where no more than one slot's layers may show in the cell)
+                uint32_t slotsHere = 0;
+                if (count > 1)
+                    for (uint32_t u = here & layered[eye]; u; u &= u - 1)
+                        slotsHere |= 1u << layerSlot[eye][__builtin_ctz(u)];
+                if (bandKey == VBGO_TT_BAND_REACHED && !(slotsHere & (slotsHere - 1)))
+                {
+                    const int first = slotsHere ? __builtin_ctz(slotsHere) : 0;
+                    if (gatherCell(CellByte(cellWord + first * slotWords, c), view[eye].columns + c * 8,
+                                   eyeBits + c * 8 * 56 + b * 2, eyeClut + c * 8 * 4, shadePack + c * 8,
+                                   kindsOf(first), cellShades, b * 8))
+                    {
+                        if (keep)
+                            zeroSlots(first);
+                        continue;
+                    }
+                }
+
                 if (keep)
                 {
                     // (the cell's 8 bits in every slot, shade and row of this eye start clear)
@@ -2842,9 +2999,6 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
                     }
                 }
 
-                if (worldsHere && !(worldsHere[b * kGridW + c] & wanted[eye]))
-                    continue;
-
                 for (int x = c * 8; x < c * 8 + 8; ++x)
                 {
                     const uint32_t *column = view[eye].columns[x];
@@ -2856,12 +3010,7 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
                     unsigned values = packed[0] | packed[1] << 8;
                     unsigned shades = shadePack[x];
                     if (!shades)
-                    {
-                        shades = 0x100;
-                        for (unsigned i = 0; i < 4; ++i)
-                            shades |= (EyeTaggedWord(eyeClut[x * 4 + i]) >> 24 & 3) << (2 * i);
-                        shadePack[x] = static_cast<uint16_t>(shades);
-                    }
+                        shadePack[x] = static_cast<uint16_t>(shades = ColumnShades(eyeClut + x * 4));
                     if (!values && !(shades & 3))
                         continue;
 
@@ -2911,20 +3060,20 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
     std::array<int16_t, kBands> found;
     found.fill(kNoDisparity);
 
-    // How many right-picture pixels line up with the left's at shift d, over all of the band's rows and shades.
-    auto score = [&](int by, int from, int to, int d) {
-        int n = 0;
+    // How many right-picture pixels line up with the left's at each shift lo to hi (n[d + kMaxDisparity]), over all of
+    // the band's rows and shades.
+    auto scores = [&](int by, int from, int to, int lo, int hi, int *n) {
         for (int y = by * 8; y < by * 8 + 8; ++y)
             for (int s = 0; s < 3; ++s)
             {
                 const uint32_t *r = &rightBits[(y * 3 + s) * kGuardedRow];
                 const uint32_t *l = &leftBits[(y * 3 + s) * kGuardedRow];
                 for (int w = from; w <= to; ++w)
-                    if (r[kGuardWords + w])
-                        if (const uint32_t both = r[kGuardWords + w] & Shifted(l, w, d))
-                            n += CountSet(both);
+                    if (const uint32_t right = r[kGuardWords + w])
+                        for (int d = lo; d <= hi; ++d)
+                            if (const uint32_t both = right & Shifted(l, w, d))
+                                n[d + kMaxDisparity] += CountSet(both);
             }
-        return n;
     };
 
     for (int band = 0; band < kBands; ++band)
@@ -2989,13 +3138,13 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
         // (like the coarse search, at step 1)
         auto fine = [&](int lo, int hi, int &bestD) {
             lo = std::max(-kMaxDisparity, lo), hi = std::min(kMaxDisparity, hi);
+            int n[2 * kMaxDisparity + 1] = {};
+            scores(band, from, to, lo, hi, n);
             int best = -1;
             for (int d = lo; d <= hi; ++d)
-            {
-                const int n = score(band, from, to, d);
-                if (n > best || (n == best && std::abs(d - around) < std::abs(bestD - around)))
-                    best = n, bestD = d;
-            }
+                if (n[d + kMaxDisparity] > best ||
+                    (n[d + kMaxDisparity] == best && std::abs(d - around) < std::abs(bestD - around)))
+                    best = n[d + kMaxDisparity], bestD = d;
             return best;
         };
 

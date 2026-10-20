@@ -285,6 +285,7 @@ private:
         std::vector<uint32_t> version[2];
     };
     std::array<GatherCache, 2> m_gatherCache;
+    std::vector<uint32_t> m_gatherKinds; // (EstimatePairs' scratch: per slot, how its pass counts 256 kinds of tag)
     // Tiles the left pictures of pairs draw this frame (by hash, with the pairs drawing them - bit per pair): a
     // right-picture pixel of such a tile is colored by tile, the right picture's own tiles by map cell or disparity.
     std::vector<uint32_t> m_leftPairHashes; // open addressing, 0 = empty (hash 0 kept apart)
