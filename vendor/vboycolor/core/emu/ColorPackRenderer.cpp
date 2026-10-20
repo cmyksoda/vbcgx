@@ -1171,7 +1171,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         m_leftPairHashZero = 0;
     }
 
-    std::array<uint32_t, 2048> leftPairSlot{}; // slots the left pictures drew this frame (bit per pair)
+    std::array<uint32_t, 2048> &leftPairSlot = m_leftPairSlot; // slots the left pictures drew this frame (bit per pair)
+    leftPairSlot.fill(0);
     uint32_t worldsDrawn = 0; // background layers drawn this frame (by the world whose colors they take)
     unsigned brightest = 0;
     std::array<int16_t, 32> left, right, top, bottom; // (each layer's extent this frame, both eyes)

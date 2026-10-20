@@ -289,6 +289,8 @@ private:
     std::vector<uint16_t> m_leftPairUsed; // (the slots filled: the next frame clears just those)
     uint32_t m_leftPairHashZero = 0;
     std::array<uint32_t, 2048> m_slotSharedAt{}, m_slotShared{}; // per slot: the frame last checked, and the pairs then
+    // (Paint's scratch: off its stack, where a PowerPC reaches only 32 KB in one instruction)
+    std::array<uint32_t, 2048> m_leftPairSlot{};
     bool SharedWithLeftPicture(unsigned chr, uint32_t hash, int pair);
     int EyeOnly(uint64_t tag) const; // a sprite only the left (1) or right (2) eye shows, else 0
     const TileColorPack::CellTile *FindCell(unsigned cell, unsigned palette, uint32_t hash) const;
