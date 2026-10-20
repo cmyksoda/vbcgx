@@ -14,6 +14,8 @@ app.mkdir(parents=True)
 for name in ['meta.xml', 'icon.png']:
     shutil.copyfile(root / 'hbc' / name, app / name)
 shutil.copyfile(root / 'executables/vbcgx-wii.dol', app / 'boot.dol')
+# (WiiFlow Lite's plugin: it lists vbcgx/roms and starts a game with its folder and name, as for FCE Ultra GX)
+shutil.copytree(root / 'hbc/wiiflow', out / 'wiiflow')
 for folder in ['roms', 'saves', 'covers', 'artwork', 'screenshots', 'vboycolor']:
     (out / 'vbcgx' / folder).mkdir(parents=True)
 # (many unzippers drop empty folders, which would leave out vbcgx/ entirely)
