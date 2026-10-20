@@ -238,18 +238,35 @@ static inline int vbgo_tt_tag_row8(uint32_t *d, uint16_t *c, unsigned pixels, in
                                    unsigned cell)
 {
    /* (a row with every pixel drawn leaves no fills) */
-   const int fills = ((pixels | (pixels >> 1)) & 0x5555) != 0x5555 && vbgo_tt_fills_from(chr, cell);
+   const int opaque = ((pixels | (pixels >> 1)) & 0x5555) == 0x5555;
+   const int fills = !opaque && vbgo_tt_fills_from(chr, cell);
    const unsigned x7 = flipped ? 7 : 0;
    unsigned k;
    if (!fills)
    {
       /* (unrolled: screen pixel k is d[k * VBGO_TT_COLUMN], tile pixel n = k, or 7 - k flipped) */
-#define VBGO_TT_PUT(k, n)                                                                          \
-   if ((pixels >> (2 * (n))) & 3)                                                                   \
+#define VBGO_TT_SET(k, n)                                                                          \
       d[(k) * VBGO_TT_COLUMN] = bits | ((n) << 11) | (((pixels >> (2 * (n))) & 3) << 20), \
       c[(k) * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
+#define VBGO_TT_PUT(k, n)                                                                          \
+   if ((pixels >> (2 * (n))) & 3)                                                                   \
+      VBGO_TT_SET(k, n)
       if (!pixels)
          return 0;
+      if (opaque) /* (every pixel drawn: none needs its own test) */
+      {
+         if (flipped)
+         {
+            VBGO_TT_SET(0, 7) VBGO_TT_SET(1, 6) VBGO_TT_SET(2, 5) VBGO_TT_SET(3, 4)
+            VBGO_TT_SET(4, 3) VBGO_TT_SET(5, 2) VBGO_TT_SET(6, 1) VBGO_TT_SET(7, 0)
+         }
+         else
+         {
+            VBGO_TT_SET(0, 0) VBGO_TT_SET(1, 1) VBGO_TT_SET(2, 2) VBGO_TT_SET(3, 3)
+            VBGO_TT_SET(4, 4) VBGO_TT_SET(5, 5) VBGO_TT_SET(6, 6) VBGO_TT_SET(7, 7)
+         }
+         return 1;
+      }
       if (flipped)
       {
          VBGO_TT_PUT(0, 7) VBGO_TT_PUT(1, 6) VBGO_TT_PUT(2, 5) VBGO_TT_PUT(3, 4)
@@ -261,6 +278,7 @@ static inline int vbgo_tt_tag_row8(uint32_t *d, uint16_t *c, unsigned pixels, in
          VBGO_TT_PUT(4, 4) VBGO_TT_PUT(5, 5) VBGO_TT_PUT(6, 6) VBGO_TT_PUT(7, 7)
       }
 #undef VBGO_TT_PUT
+#undef VBGO_TT_SET
       return 1;
    }
    if (flipped) /* screen order: reverse the 8 2-bit fields */
