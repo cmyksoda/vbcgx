@@ -61,6 +61,7 @@ uint16 VIP_Read16(v810_timestamp_t timestamp, uint32 A);
 void VIP_Write8(v810_timestamp_t timestamp, uint32 A, uint8 V);
 void VIP_Write16(v810_timestamp_t timestamp, uint32 A, uint16 V);
 bool VIP_ReadFBWord(uint32 A, uint32 *V);
+const uint8 *VIP_FBBase(void);
 bool VIP_WriteFBWord(uint32 A, uint32 V);
 
 int VIP_StateAction(StateMem *sm, int load, int data_only);

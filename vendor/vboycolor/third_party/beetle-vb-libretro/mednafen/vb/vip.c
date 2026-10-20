@@ -1239,6 +1239,11 @@ uint8 VIP_Read8(int32 timestamp, uint32 A)
    return 0;
 }
 
+const uint8 *VIP_FBBase(void)
+{
+   return &FB[0][0][0];
+}
+
 /* The CPU's word read from a frame buffer, as its two halfword reads (false: A isn't one). */
 bool VIP_ReadFBWord(uint32 A, uint32 *V)
 {

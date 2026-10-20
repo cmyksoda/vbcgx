@@ -43,6 +43,8 @@ public:
    void Xori(unsigned ra, unsigned rs, uint32 v) { D(26, rs, ra, v); }
    void AndiDot(unsigned ra, unsigned rs, uint32 v) { D(28, rs, ra, v); }
    void Cmpwi(unsigned ra, int32 v) { D(11, 0, ra, v); }
+   void Cmplwi(unsigned ra, uint32 v) { D(10, 0, ra, (int32)v); }
+   void Mulli(unsigned rt, unsigned ra, int32 v) { D(7, rt, ra, v); }
    void Lwz(unsigned rt, int32 d, unsigned ra) { D(32, rt, ra, d); }
    void Stw(unsigned rs, int32 d, unsigned ra) { D(36, rs, ra, d); }
    void Lbz(unsigned rt, int32 d, unsigned ra) { D(34, rt, ra, d); }
@@ -71,6 +73,7 @@ public:
    void Sthbrx(unsigned rs, unsigned ra, unsigned rb) { X(rs, ra, rb, 918); }
    void Stwbrx(unsigned rs, unsigned ra, unsigned rb) { X(rs, ra, rb, 662); }
 
+   void Add(unsigned rt, unsigned ra, unsigned rb) { XO(rt, ra, rb, 0, 266, 0); }
    void Subf(unsigned rt, unsigned ra, unsigned rb, unsigned rc = 0) { XO(rt, ra, rb, 0, 40, rc); } /* (rb - ra) */
    void AddcoDot(unsigned rt, unsigned ra, unsigned rb) { XO(rt, ra, rb, 1, 10, 1); }
    void SubfcoDot(unsigned rt, unsigned ra, unsigned rb) { XO(rt, ra, rb, 1, 8, 1); }
@@ -292,9 +295,47 @@ void *V810::CompileBlock(Block *block)
        * them. */
       const void *const fns[6] = {(const void *)&::MemRead8, (const void *)&::MemRead16, (const void *)&::VBReadWord,
                                   (const void *)&::MemWrite8, (const void *)&::MemWrite16, (const void *)&::VBWriteWord};
+      /* Branches to miss[] unless r4 is a frame buffer address (region 0, below 0x20000, under 0x6000 of its 0x8000;
+       * word: 4-aligned), as VIP_ReadFBWord and VIP_WriteFBWord check one; A & 0x7FFF left in rOffset. */
+      auto CheckFrameBuffer = [&](uint32 *miss[4], unsigned rOffset, bool word) {
+         w.Rlwinm(0, 4, 8, 29, 31, 1);
+         miss[0] = w.Bc(BO_FALSE, CR_EQ);
+         w.Rlwinm(rOffset, 4, 0, 5, 14, 1);
+         miss[1] = w.Bc(BO_FALSE, CR_EQ);
+         w.Rlwinm(rOffset, 4, 0, 17, 31);
+         w.Cmplwi(rOffset, 0x6000);
+         miss[2] = w.Bc(BO_FALSE, CR_LT);
+         if(word)
+         {
+            w.AndiDot(0, 4, 3);
+            miss[3] = w.Bc(BO_FALSE, CR_EQ);
+         }
+      };
       for(unsigned k = 0; k < 6; ++k)
       {
          JitStub[JIT_STUB_READ8 + k] = w.at;
+         if(k < 3)
+         {
+            /* A frame buffer read has no side effects: its bytes straight from FB, no call. */
+            uint32 *miss[4] = {};
+            CheckFrameBuffer(miss, 5, k == 2);
+            /* (FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF], as VIP_Read8 indexes it) */
+            w.Rlwinm(0, 4, 16, 31, 31);
+            w.Rlwinm(6, 4, 18, 30, 30);
+            w.Or(0, 0, 6);
+            w.Mulli(0, 0, 0x6000);
+            w.Add(5, 5, 0);
+            w.Imm32(6, (uint32)(uintptr_t)VIP_FBBase());
+            if(k == 0)
+               w.Lbzx(3, 5, 6);
+            else if(k == 1)
+               w.Lhbrx(3, 5, 6);
+            else
+               w.Lwbrx(3, 5, 6);
+            w.Blr();
+            for(uint32 *m : miss)
+               w.Patch(m, w.at);
+         }
          w.Stwu(1, -16, 1);
          w.Mflr(0);
          w.Stw(0, 20, 1);

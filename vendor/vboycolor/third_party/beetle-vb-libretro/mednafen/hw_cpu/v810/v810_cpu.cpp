@@ -65,6 +65,7 @@ void MDFN_FASTCALL VBWriteWord(v810_timestamp_t &, uint32, uint32);
 
 uint32 vb_idle_unsteady;
 extern "C" v810_timestamp_t vbgo_vip_steady_until(v810_timestamp_t timestamp);
+extern "C" const uint8 *VIP_FBBase(void);
 
 /* Register, immediate, load and IN instructions: the ones that store nothing and can't jump or trap. */
 static const uint64 kStoreFreeOps = 0x3F | 1ull << 7 | 0xFull << 12 | 0x3Full << 16 | 1ull << 23 | 3ull << 40 |
