@@ -497,25 +497,46 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb[2], VbgoCover *cover, int y, ui
 
 /* Front to back costs a little more for each group it draws and saves each one covered, but DrawBG draws an overplane
  * world a row at a time. A block without one that had under 2 in 5 of its groups covered is drawn the usual way for
- * its next 8 passes of its buffer, then tried again. */
-static uint8 VbgoFrontWait[2][28];
+ * its next 32 passes, unless it gains a background world or a neighbor skipped a lot (what covers spans blocks). */
+#define VBGO_FRONT_BIG 1024 /* (the groups skipped that suggest the neighbors will cover too) */
 
-static INLINE bool VbgoFrontTry(unsigned block_no, bool overplane)
+typedef struct
 {
- uint8 *const wait = &VbgoFrontWait[DrawingFB][block_no];
- if(*wait && !overplane)
- {
-  --*wait;
+ uint32 retry; /* the pass it is tried again at */
+ uint32 big;   /* the last pass it covered 2 in 5 or more and skipped VBGO_FRONT_BIG groups or more */
+ uint8 worlds; /* the background worlds it had then */
+} VbgoFrontMemo;
+static VbgoFrontMemo VbgoFrontMemos[2][28];
+
+static INLINE bool VbgoFrontBigNear(const VbgoFrontMemo *memo, unsigned block_no)
+{
+ return (block_no > 0 && PassNo - memo[-1].big <= 2) || (block_no < 27 && PassNo - memo[1].big <= 2);
+}
+
+static INLINE bool VbgoFrontTry(unsigned block_no, bool overplane, unsigned bg_worlds)
+{
+ const VbgoFrontMemo *const memo = &VbgoFrontMemos[DrawingFB][block_no];
+ if(!overplane && (int32)(PassNo - memo->retry) < 0 && bg_worlds <= memo->worlds &&
+    !VbgoFrontBigNear(memo, block_no))
   return false;
- }
  VbgoFrontSkipped = VbgoFrontRead = 0;
  return true;
 }
 
-static INLINE void VbgoFrontDone(unsigned block_no, bool overplane)
+static INLINE void VbgoFrontDone(unsigned block_no, bool overplane, unsigned bg_worlds)
 {
- if(!overplane && VbgoFrontSkipped * 3 < VbgoFrontRead * 2)
-  VbgoFrontWait[DrawingFB][block_no] = 8;
+ VbgoFrontMemo *const memo = &VbgoFrontMemos[DrawingFB][block_no];
+ if(overplane)
+  return;
+ if(VbgoFrontSkipped * 3 >= VbgoFrontRead * 2)
+ {
+  memo->retry = 0;
+  if(VbgoFrontSkipped >= VBGO_FRONT_BIG)
+   memo->big = PassNo;
+ }
+ else
+  memo->retry = PassNo + 32;
+ memo->worlds = bg_worlds;
 }
 
 /* A block's worlds front to back (none that can draw in it is affine: DrawAffine draws every pixel of its line). */

@@ -397,6 +397,7 @@ static bool PassTouched[2];  /* the CPU wrote into the buffer during its pass */
 static bool PassRepeats;     /* the pass in progress copies the other buffer's */
 static bool PassAlreadyCopied; /* ... whose blocks this buffer already holds */
 static uint32 PassStartedAt; /* DrawSerial as the pass in progress started */
+static uint32 PassNo;        /* the passes begun (what the front to back waits count in) */
 /* A block whose inputs haven't changed since this buffer last drew it still
  * holds that drawing, so it's kept instead of drawn again. Drawing notes what
  * a block reads (vip_draw.inc); writes note when, in DrawSerial terms. */
@@ -857,6 +858,7 @@ static bool BlockSettled(const BlockInputs *block)
 static void BeginPass(void)
 {
    const int src = !DrawingFB;
+   PassNo++;
    if(DrawSerial >= 0xF0000000u)
       RestartSerials();
    PassStartedAt = DrawSerial;
