@@ -1840,6 +1840,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 summaryAt = 0;
 
             const EyeColumn eyeColumn(eyeBits, eyeClut, x);
+            // (all of the column's shades at full brightness: painting is plain stores - see write)
+            const bool fullFade = m_fade[eyeColumn.words[0] >> 26] == 256 && m_fade[eyeColumn.words[1] >> 26] == 256 &&
+                                  m_fade[eyeColumn.words[2] >> 26] == 256 && m_fade[eyeColumn.words[3] >> 26] == 256;
             const size_t columnBase = (static_cast<size_t>(eyeOffset[0]) + x) * 4;
             uint64_t runKey = ~0ull;
             uint32_t runHi = 0, runLo = ~0u;
@@ -2002,34 +2005,28 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         const uint16_t *nextCell = columnCells + vbgo_tt_cell_at(y + 1);
                         for (;;)
                         {
-                            if (pixel)
+                            // (a shade the game switched off stays background, and so does a fill nobody painted)
+                            if (pixel && (rawPixel & 0xFFFFFFu))
                             {
                                 const unsigned shade = (rawPixel >> 24) & 3, index = VBGO_TAG_INDEX(t);
                                 const bool own = tile->mask >> index & 1;
                                 const uint8_t *rgb =
                                     own ? tile->rgb[index] : ramp && shade ? (*ramp)[shade - 1].data() : nullptr;
                                 rampUsed |= rgb && !own;
-                                if (rgb)
+                                if (rgb && fullFade)
+                                    frame[i] = rgb[2], frame[i + 1] = rgb[1], frame[i + 2] = rgb[0];
+                                else if (rgb)
                                     write(i, rgb, rawPixel >> 26);
                             }
-                            bool more = false;
-                            while (y + 1 < end)
-                            {
-                                const uint32_t next = *nextTag;
-                                if ((next & kRunMaskLo) != runLo || *nextCell != runHi)
-                                    break;
-                                ++y, i += rowBytes, t = vbgo_tag_compose(next, *nextCell);
-                                ++nextTag, nextCell += VBGO_TT_CELL_ROW;
-                                rawPixel = eyeColumn.at(eyeBand, y);
-                                pixel = VBGO_TAG_PIXEL(t);
-                                if (!pixel || (rawPixel & 0xFFFFFFu))
-                                {
-                                    more = true;
-                                    break;
-                                }
-                            }
-                            if (!more)
+                            if (y + 1 >= end)
                                 break;
+                            const uint32_t next = *nextTag;
+                            if ((next & kRunMaskLo) != runLo || *nextCell != runHi)
+                                break;
+                            ++y, i += rowBytes, t = vbgo_tag_compose(next, *nextCell);
+                            ++nextTag, nextCell += VBGO_TT_CELL_ROW;
+                            rawPixel = eyeColumn.at(eyeBand, y);
+                            pixel = VBGO_TAG_PIXEL(t);
                         }
                         if (rampUsed)
                             band.autoCells |= 1ull << (x >> 3);
