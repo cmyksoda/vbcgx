@@ -1460,15 +1460,16 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             --m_endsRest;
             return false;
         }
-        // (only worth it where the walk would read most of the picture: kept cells cost it little)
-        int tagged = 0, toWalk = 0;
+        // (only worth it where most of a sizable picture changed: the walk costs little where cells are kept - those
+        // skipped before, walked once more - and this costs the same however little changed)
+        int tagged = 0, changed = 0;
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
         {
             const uint64_t cells = v.tagged ? v.tagged[b] : kAllCells;
             tagged += __builtin_popcountll(cells);
-            toWalk += __builtin_popcountll(cells & ~(keepRight[b] & ~rightBands[b].skipped));
+            changed += __builtin_popcountll(cells & ~keepRight[b]);
         }
-        if (toWalk * 2 < tagged)
+        if (changed * 2 < tagged || changed < kBands * kGridW / 8)
             return false;
         for (int p = 0; pairs && p < m_pairCount; ++p)
             if (!m_pairs[p].sprites && !m_pairs[p].estimated)
