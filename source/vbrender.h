@@ -33,8 +33,23 @@ inline void ConvertTile(const uint8_t *bgrx, size_t pitch, uint8_t *tile)
     for (unsigned y = 0; y < 4; ++y) {
         const uint8_t *src = bgrx + y * pitch;
         for (unsigned x = 0; x < 4; x += 2, src += 8) {
-            const uint32_t ar = BytesInOrder(255, src[2], 255, src[6]),
-                           gb = BytesInOrder(src[1], src[0], src[5], src[4]);
+            // (each pixel read as one word, its bytes moved into place: on the Wii a rotate and insert apiece)
+            uint32_t p0, p1;
+            std::memcpy(&p0, src, 4);
+            std::memcpy(&p1, src + 4, 4);
+#if defined(__PPC__) || defined(__powerpc__)
+            // (GCC builds each insert from a rotate and an or: these are the same bit fields, one instruction each)
+            uint32_t ar = 0xFF00FF00u, gb;
+            __asm__("rlwimi %0,%1,8,8,15\n\trlwimi %0,%2,24,24,31" : "+r"(ar) : "r"(p0), "r"(p1));
+            __asm__("rlwinm %0,%1,8,0,7\n\trlwimi %0,%1,24,8,15\n\trlwimi %0,%2,24,16,23\n\trlwimi %0,%2,8,24,31"
+                    : "=&r"(gb) : "r"(p0), "r"(p1));
+#elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+            const uint32_t ar = 0xFF00FF00u | (p0 << 8 & 0x00FF0000u) | (p1 >> 8 & 0x000000FFu),
+                           gb = (p0 << 8 & 0xFF000000u) | (p0 >> 8 & 0x00FF0000u) | (p1 >> 8 & 0x0000FF00u) | p1 >> 24;
+#else
+            const uint32_t ar = 0x00FF00FFu | (p0 >> 8 & 0x0000FF00u) | (p1 << 8 & 0xFF000000u),
+                           gb = (p0 >> 8 & 0x000000FFu) | (p0 << 8 & 0x0000FF00u) | (p1 << 8 & 0x00FF0000u) | p1 << 24;
+#endif
             std::memcpy(tile + y * 8 + x * 2, &ar, 4);
             std::memcpy(tile + 32 + y * 8 + x * 2, &gb, 4);
         }
