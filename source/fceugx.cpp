@@ -41,7 +41,8 @@ void ExitApp()
     CloseVBGame();
     retro_deinit();
     Thread::JoinAll();
-    platform->requestExit(EmuSettings.exitAction, autoboot);
+    // (a game a loader started leaves through the loader's return stub, as in FCE Ultra GX 3.5: back to WiiFlow)
+    platform->requestExit(EmuSettings.exitAction, EmuSettings.autoloadGame);
 }
 int main(int argc, char **argv)
 {
