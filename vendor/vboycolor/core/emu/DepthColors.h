@@ -41,7 +41,7 @@ public:
 
 private:
     static constexpr int kDisparities = 2 * kMaxDisparity + 1;
-    static constexpr int kStride = kDisparities + 1; // (per block in State::cost and m_sum)
+    static constexpr int kStride = kDisparities + 1; // (per block in State::cost)
     static constexpr int kBlocksX = kWidth / 8, kBlocksY = kHeight / 8, kBlocks = kBlocksX * kBlocksY;
     // A row of one shade's pixels as bits (pixel x at bit x + 64): a guard
     // word before and two after, so a shift by up to 64 either way stays inside.
@@ -57,33 +57,58 @@ private:
         bool estimated = false;
     };
     void Estimate(const uint8_t *const shades[2], const uint8_t *const want[2]);
-    // (the Wii's smoothing pass, paired singles - see Estimate)
-    static void SmoothPass(const int16_t *cost, int16_t *sum, int first, int step, int count, int lines, int lineStep,
-                           bool add);
+    uint64_t CountBand(int by, uint32_t halves);
+    // (a chain record: 2 walls, the 81 costs, 3 more walls - the last pair reads them - and the lowest)
+    static constexpr int kRecord = 88, kLowAt = 86;
+    // (the smoothing along a line of blocks, paired singles on the Wii: chain records for count blocks from `first`,
+    // each from the one before; `before` is the record of the block before the first, or null at the line's start)
+    static void SmoothChain(const int16_t *cost, int16_t *records, int first, int step, int count,
+                            const int16_t *before);
     int Votes(unsigned s, const unsigned left[7], int x, int y, int d) const;
     void LeftWindow(unsigned s, int x, int y, unsigned left[7]) const;
     static int WindowPixels(const unsigned left[7]);
     // (Estimate's matching costs for a row of blocks - see CostRow)
     struct CostRowArgs;
     static void CostRow(const CostRowArgs &a);
-    template <bool kLast, bool kSmallTable, bool kWideTable>
-    static void CostRun(const uint8_t *__restrict list, int from, int to, const int16_t *__restrict eq,
-                        const int16_t *__restrict ep, const int *__restrict sBase, const int *__restrict wBase,
-                        int16_t *const *__restrict cols, int16_t *__restrict cheapest, uint8_t *__restrict cheapestAt,
-                        int di, int prior, const int16_t *__restrict smallTab, const int16_t *__restrict wideTab);
 
-    std::vector<Row> m_bits[2][3]; // per eye and shade 1-3: kHeight rows
+    std::vector<Row> m_bits[2][3]; // per eye and shade 1-3: kHeight rows (only what changed is rewritten)
+    bool m_bitsValid = false;
+    // Last Estimate's counts [band][disparity][block]; per eye the blocks changed since (a bit each, per band); per
+    // block whether its costs came out as they were (kept while the counts around it hold) and its cheapest disparity.
+    std::vector<uint8_t> m_matchesAll, m_insideAll, m_stable, m_cheapestAt;
+    std::array<uint64_t, kBlocksY> m_dirtyLeft{}, m_dirtyRight{};
+    bool m_countsValid = false;
+    // To skip a wanted pixel's pick when its surroundings are as at the last pick, per pixel: what it chose (before the
+    // flat fills), the update that picked it (m_pickGen counts them), and two bits: its keep rule held (bit 0), its
+    // end result matched the update before's (bit 1).
+    std::vector<int16_t> m_pickPrev;
+    std::vector<uint32_t> m_pickAt;
+    std::vector<uint8_t> m_pickBits;
+    // The last pick's view of the smoothing: per block its best (where it had one), and the main depths.
+    std::vector<int16_t> m_prevBest;
+    std::vector<uint8_t> m_prevBestValid;
+    std::array<int, 4> m_prevPlanes{};
+    uint32_t m_pickGen = 1;
     State m_state;
-    PictureBuffer m_lastShades[2], m_lastWant[2];
-    PictureBuffer m_nextShades[2], m_nextWant[2]; // zero but for m_staleLit's pixels
+    PictureBuffer m_shade[2], m_want[2]; // per pixel, each eye's shade (0: off) and whether it needs a depth color
+    std::vector<uint8_t> m_was[2];       // per pixel that changed in the last update, its shade before (else 0xFF)
+    std::vector<uint32_t> m_changed[2];  // ... the pixels m_was holds
+    int m_wantedCount[2][3] = {};        // per eye and shade 1-3, the lit pixels that need a depth color
     std::vector<uint32_t> m_nextLit[2], m_lastLit[2], m_staleLit[2];
+    unsigned LastShade(unsigned eye, size_t i) const { return m_was[eye][i] != 0xFF ? m_was[eye][i] : m_shade[eye][i]; }
     std::vector<int16_t> m_disparity;      // the left eye's, per pixel, while Update works them out (kUnknown: none)
     std::vector<int16_t> m_lastDisparity;  // ... as last worked out (Disparity's; a pixel that hasn't changed keeps it)
     bool m_haveLast = false;
 
+    // The four smoothing chains (left to right, right to left, top down, bottom up) of every block as last worked out,
+    // and per line how many blocks from its start still match the costs.
+    std::vector<int16_t, LineAligned<int16_t>> m_chains; // [direction][block][kRecord]
+    std::array<std::array<int, kBlocksY>, 2> m_validRow{};
+    std::array<std::array<int, kBlocksX>, 2> m_validCol{};
+    std::array<bool, kDisparities> m_chainPulled{}; // (the main depths' pull the chains were worked out with)
+    bool m_chainsValid = false;
+
     // Scratch (kept to avoid reallocating every frame).
-    std::vector<uint8_t> m_matches, m_inside;   // the last 3 rows of blocks, per disparity: matching / countable pixels
-    std::vector<int16_t> m_sum;          // the smoothed costs per block and disparity
     static constexpr int kCandidates = 13;  // (a block's own disparity, its 8 neighbors', 4 main depths)
     std::vector<uint8_t> m_candidates, m_candidateCount; // per block: Estimate's candidate disparities
     std::vector<int32_t> m_blockPixels;                   // per block: pixels in the 3x3 blocks around it
