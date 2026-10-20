@@ -207,6 +207,7 @@ private:
         const TileColorPack::Tile *palette[4] = {};  // per palette: its own colors, else base
         uint32_t contextFirst = 0, contextCount = 0; // its context variants in the pack's ContextTiles()
         bool ambiguous = false;                      // painted two ways in a frame: takes its surroundings' colors
+        uint8_t flatPalettes = 0;                    // (bit per palette: its colors are one, on every pixel)
     };
     struct SlotLayer // (a layered slot's last layer looked up, and its colors - see LayerTile)
     {
@@ -312,6 +313,7 @@ private:
         bool flash = false;                            // a sprite in a palette showing all its shades alike
         // none of the above and no map cell colors: just the tile's or automatic colors
         bool plain = false;
+        bool flat = false; // (the tile is one color on every pixel - see Slot::flatPalettes)
         int band = -1;                                 // (slow: the row of grid cells its markers and tile are for)
         uint32_t pairSlot = 0;                         // (as Band::pairSlots keeps it, 0: none)
     };

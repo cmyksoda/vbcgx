@@ -319,6 +319,15 @@ void ColorPackRenderer::ResolveSlots(const uint32_t *hashes)
                 m_pack->HasPaletteColors() ? m_pack->FindPalette(slot.hash, p) : nullptr;
             slot.palette[p] = variant ? variant : slot.base;
         }
+        slot.flatPalettes = 0;
+        for (unsigned p = 0; p < 4; ++p)
+        {
+            const TileColorPack::Tile *tile = slot.palette[p];
+            bool flat = tile && tile->mask == ~0ull;
+            for (unsigned i = 1; flat && i < 64; ++i)
+                flat = std::memcmp(tile->rgb[i], tile->rgb[0], 3) == 0;
+            slot.flatPalettes |= static_cast<uint8_t>(flat << p);
+        }
         slot.layered = !m_layered.empty() && m_layered.count(slot.hash) != 0;
         m_slotLayer[c].world = 0xFF;
         slot.ambiguous = m_pack->IsAmbiguous(slot.hash);
@@ -613,6 +622,7 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, con
             if (slot.layered && run.tile == slot.base)
                 if (const TileColorPack::Tile *layer = LayerTile(chr, colors))
                     run.tile = layer;
+            run.flat = run.tile == slot.palette[palette] && (slot.flatPalettes >> palette & 1);
         }
         if (c.pairs && sprite && m_spritePairOf[world] >= 0)
         {
@@ -2188,16 +2198,22 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         // after pixel while the tags stay in the run.
                         const TileColorPack::Tile *tile = run.tile;
                         const AutoColors::Ramp *ramp = run.ramp;
+                        // (most tiles need no per-pixel look at which pixels are painted: one color, all or none)
+                        const bool oneColor = run.flat && fullFade, allOwn = tile->mask == ~0ull,
+                                   noneOwn = tile->mask == 0;
+                        const uint8_t oneB = tile->rgb[0][2], oneG = tile->rgb[0][1], oneR = tile->rgb[0][0];
                         bool rampUsed = false;
                         const uint32_t *nextTag = column + y + 1;
                         const uint16_t *nextCell = columnCells + vbgo_tt_cell_at(y + 1);
                         for (;;)
                         {
                             // (a shade the game switched off stays background, and so does a fill nobody painted)
-                            if (pixel && (rawPixel & 0xFFFFFFu))
+                            if (pixel && (rawPixel & 0xFFFFFFu) && oneColor)
+                                frame[i] = oneB, frame[i + 1] = oneG, frame[i + 2] = oneR;
+                            else if (pixel && (rawPixel & 0xFFFFFFu))
                             {
                                 const unsigned shade = (rawPixel >> 24) & 3, index = VBGO_TAG_INDEX(t);
-                                const bool own = tile->mask >> index & 1;
+                                const bool own = allOwn || (!noneOwn && (tile->mask >> index & 1));
                                 const uint8_t *rgb =
                                     own ? tile->rgb[index] : ramp && shade ? (*ramp)[shade - 1].data() : nullptr;
                                 rampUsed |= rgb && !own;
