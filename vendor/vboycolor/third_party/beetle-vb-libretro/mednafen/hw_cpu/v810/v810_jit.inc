@@ -9,6 +9,21 @@ namespace
  * lives, the PSW, and work RAM. */
 enum { JR_RAM = 27, JR_PSW = 28, JR_TSP = 29, JR_TS = 30, JR_REGS = 31 };
 enum { BO_TRUE = 12, BO_FALSE = 4, CR_LT = 0, CR_GT = 1, CR_EQ = 2 };
+/* The PSW flags an op sets, by group (S and Z always go together). */
+enum { FLAG_SZ = 1, FLAG_OV = 2, FLAG_CY = 4 };
+/* The flags an op sets when it does nothing else (the ALU ops); 0 for the rest, whose flags are always worked out. */
+unsigned FlagsSetBy(int kind)
+{
+   switch(kind)
+   {
+   case BK_ADD: case BK_SUB: case BK_CMP: case BK_ADD_I: case BK_CMP_I: case BK_ADDI:
+   case BK_SHL: case BK_SHR: case BK_SAR: case BK_SHL_I: case BK_SHR_I: case BK_SAR_I:
+      return FLAG_SZ | FLAG_OV | FLAG_CY;
+   case BK_OR: case BK_AND: case BK_XOR: case BK_NOT: case BK_ORI: case BK_XORI: case BK_ANDI:
+      return FLAG_SZ | FLAG_OV;
+   }
+   return 0;
+}
 enum { JIT_BYTES = 2 * 1024 * 1024 };
 /* (in the DOL's own memory: MEM1, the faster to fetch code from) */
 uint32 JitCode[JIT_BYTES / 4] __attribute__((aligned(32)));
@@ -359,7 +374,12 @@ void *V810::CompileBlock(Block *block)
    }
 
    uint32 *const start = w.at;
-   struct Exit { uint32 offset; int32 lastop; uint32 stub; std::vector<uint32 *> from; };
+   /* flagsOf: the op before, whose flags in flagsLeft are still to work out (from CR0 and XER as it left them) */
+   struct Exit
+   {
+      uint32 offset; int32 lastop; uint32 stub; std::vector<uint32 *> from;
+      const BlockOp *flagsOf; unsigned flagsLeft;
+   };
    std::vector<Exit> exits;
    std::vector<std::pair<uint32, uint32 *>> opAt; /* (each op's offset and code) */
    /* A branch to the exit before the op at offset (lastop as the op before left it). */
@@ -370,7 +390,7 @@ void *V810::CompileBlock(Block *block)
             e.from.push_back(from);
             return;
          }
-      exits.push_back(Exit{offset, lastopNow, stub, {from}});
+      exits.push_back(Exit{offset, lastopNow, stub, {from}, NULL, 0});
    };
    auto Get = [&](unsigned host, unsigned vreg) {
       if(vreg)
@@ -382,21 +402,84 @@ void *V810::CompileBlock(Block *block)
       if(vreg) /* (what the interpreter writes to r0 is never seen: it zeroes r0 before every op) */
          w.Stw(host, 4 * vreg, JR_REGS);
    };
+   /* The flags of the op being compiled that are left for its exit to work out (its next op sets them again); the
+    * lambdas below leave those out. */
+   unsigned skip = 0;
    /* PSW Z and S from CR0; OV and CY from XER. */
    auto FlagsSZ = [&]() {
+      if(skip & FLAG_SZ)
+         return;
       w.Mfcr(12);
       w.Rlwimi(JR_PSW, 12, 3, 31, 31);
       w.Rlwimi(JR_PSW, 12, 2, 30, 30);
    };
    auto FlagsOVCY = [&](bool borrow) {
+      const unsigned groups = ~skip & (FLAG_OV | FLAG_CY);
+      if(!groups)
+         return;
       w.Mfxer(11);
-      w.Rlwimi(JR_PSW, 11, 4, 29, 29);
-      w.Rlwimi(JR_PSW, 11, 6, 28, 28);
-      if(borrow) /* (PowerPC's carry from a subtraction means no borrow) */
-         w.Xori(JR_PSW, JR_PSW, PSW_CY);
+      if(groups & FLAG_OV)
+         w.Rlwimi(JR_PSW, 11, 4, 29, 29);
+      if(groups & FLAG_CY)
+      {
+         w.Rlwimi(JR_PSW, 11, 6, 28, 28);
+         if(borrow) /* (PowerPC's carry from a subtraction means no borrow) */
+            w.Xori(JR_PSW, JR_PSW, PSW_CY);
+      }
    };
-   auto ClearOV = [&]() { w.Rlwinm(JR_PSW, JR_PSW, 0, 30, 28); };
-   auto ClearCY = [&]() { w.Rlwinm(JR_PSW, JR_PSW, 0, 29, 27); };
+   auto ClearOV = [&]() {
+      if(!(skip & FLAG_OV))
+         w.Rlwinm(JR_PSW, JR_PSW, 0, 30, 28);
+   };
+   /* A shift's CY: the last bit shifted out (a shift by 0 clears it); r4 the value, r3 a register shift's count */
+   auto ShiftCY = [&](const BlockOp &o) {
+      if(skip & FLAG_CY)
+         return;
+      if(o.kind == BK_SHL_I || o.kind == BK_SHR_I || o.kind == BK_SAR_I)
+      {
+         if(!o.r1)
+            w.Rlwinm(JR_PSW, JR_PSW, 0, 29, 27);
+         else
+         {
+            w.Rlwinm(6, 4, o.kind == BK_SHL_I ? o.r1 : (33 - o.r1) & 31, 31, 31);
+            w.Rlwimi(JR_PSW, 6, 3, 28, 28);
+         }
+         return;
+      }
+      /* (srw by 32 or more gives 0, as a shift by 0 must) */
+      if(o.kind == BK_SHL)
+         w.Subfic(6, 3, 32);
+      else
+         w.Addi(6, 3, -1);
+      w.Srw(6, 4, 6);
+      w.Rlwimi(JR_PSW, 6, 3, 28, 28);
+   };
+   auto FlagsOf = [&](const BlockOp &o) {
+      switch(o.kind)
+      {
+      case BK_ADD: case BK_SUB: case BK_CMP:
+         FlagsSZ();
+         FlagsOVCY(o.kind != BK_ADD);
+         break;
+      case BK_ADD_I: case BK_CMP_I:
+         FlagsSZ();
+         FlagsOVCY(o.kind == BK_CMP_I);
+         break;
+      case BK_ADDI:
+         FlagsSZ();
+         FlagsOVCY(false);
+         break;
+      case BK_SHL: case BK_SHR: case BK_SAR: case BK_SHL_I: case BK_SHR_I: case BK_SAR_I:
+         ShiftCY(o);
+         FlagsSZ();
+         ClearOV();
+         break;
+      default:
+         FlagsSZ();
+         ClearOV();
+         break;
+      }
+   };
    /* An op's last cycles, then the check before the op at next: out there if the event is due. One cycle needs
     * just a bdz, as CTR is at least 1 when an op starts; after the C side ran (signedOnly) it may not be. */
    auto Spend = [&](int32 cycles, uint32 next, int32 lastopNext, bool signedOnly = false) {
@@ -555,6 +638,8 @@ void *V810::CompileBlock(Block *block)
       const BlockOp &op = block->ops[i];
       const unsigned arg1 = op.r1, arg2 = op.r2;
       const uint32 pc = block->pc + offset;
+      /* (flags the next op sets again: only this op's exit could see them, and it works them out) */
+      skip = i + 1 < n ? FlagsSetBy(op.kind) & FlagsSetBy(block->ops[i + 1].kind) : 0;
       switch(op.kind)
       {
       case BK_MOV:
@@ -611,17 +696,14 @@ void *V810::CompileBlock(Block *block)
          break;
       case BK_SHL_I: case BK_SHR_I: case BK_SAR_I:
          Get(4, arg2);
+         ShiftCY(op);
          if(!arg1)
          {
             w.Mr(5, 4);
             w.Cmpwi(5, 0);
-            ClearCY();
          }
          else
          {
-            /* (CY: the last bit shifted out) */
-            w.Rlwinm(6, 4, op.kind == BK_SHL_I ? arg1 : (33 - arg1) & 31, 31, 31);
-            w.Rlwimi(JR_PSW, 6, 3, 28, 28);
             if(op.kind == BK_SHL_I)
                w.Rlwinm(5, 4, arg1, 0, 31 - arg1, 1);
             else if(op.kind == BK_SHR_I)
@@ -637,13 +719,7 @@ void *V810::CompileBlock(Block *block)
          Get(3, arg1);
          w.Rlwinm(3, 3, 0, 27, 31);
          Get(4, arg2);
-         /* CY: the last bit shifted out (srw by 32 or more gives 0, as a shift by 0 must) */
-         if(op.kind == BK_SHL)
-            w.Subfic(6, 3, 32);
-         else
-            w.Addi(6, 3, -1);
-         w.Srw(6, 4, 6);
-         w.Rlwimi(JR_PSW, 6, 3, 28, 28);
+         ShiftCY(op);
          if(op.kind == BK_SHL)
             w.Slw(5, 4, 3, 1);
          else if(op.kind == BK_SHR)
@@ -968,13 +1044,24 @@ void *V810::CompileBlock(Block *block)
       lastopNow = op.opcode;
       offset += BlockOpLength(op.kind);
       Spend(1, offset, lastopNow);
+      if(skip)
+         for(Exit &e : exits)
+            if(e.offset == offset && e.stub == JIT_STUB_EVENTS)
+               e.flagsOf = &op, e.flagsLeft = skip;
    }
+   skip = 0;
    if(!ended)
       ExitBefore(w.B(), offset, lastopNow, JIT_STUB_INTERPRET);
    for(const Exit &e : exits)
    {
       for(uint32 *from : e.from)
          w.Patch(from, w.at);
+      if(e.flagsLeft)
+      {
+         skip = ~e.flagsLeft & (FLAG_SZ | FLAG_OV | FLAG_CY);
+         FlagsOf(*e.flagsOf);
+         skip = 0;
+      }
       w.BTo(JitStub[e.stub], 1);
       w.Word(block->pc + e.offset);
       if(e.stub != JIT_STUB_INTERPRET_FIRST)
