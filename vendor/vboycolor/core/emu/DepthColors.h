@@ -43,10 +43,11 @@ private:
     static constexpr int kDisparities = 2 * kMaxDisparity + 1;
     static constexpr int kStride = kDisparities + 1; // (per block in State::cost)
     static constexpr int kBlocksX = kWidth / 8, kBlocksY = kHeight / 8, kBlocks = kBlocksX * kBlocksY;
-    // A row of one shade's pixels as bits (pixel x at bit x + 64): a guard
-    // word before and two after, so a shift by up to 64 either way stays inside.
-    static constexpr int kRowWords = kWidth / 64, kGuarded = kRowWords + 3;
-    using Row = std::array<uint64_t, kGuarded>;
+    // A row of one shade's pixels as bits, byte by byte, a byte's lowest bit first (pixel x at bit x + 64): a guard
+    // word before and two after, so a shift by up to 64 either way stays inside. Three empty rows above and below the
+    // picture let a 7x7 window reach past its edge.
+    static constexpr int kRowWords = kWidth / 64, kGuarded = kRowWords + 3, kRowPad = 3;
+    using Row = std::array<uint8_t, 8 * kGuarded>;
 
     struct State
     {
