@@ -1350,14 +1350,15 @@ bool VIP_WriteFBWord(uint32 A, uint32 V)
    PassClean[fb] = false;
    PassTouched[fb] = true;
    NewContents(fb);
-   for(int half = 0; half < 2; half++)
+   if((A & 63) < 56) /* (a word's two halfwords are in the blocks (A & 63) >> 1 and the next, and in the same cell) */
    {
-      const uint32 a = A + 2 * half;
-      if((a & 63) < 56)
-         Blocks[fb][(a & 63) >> 1].valid = false, CellContent[fb][(a & 63) >> 1][((a & 0x7FFF) >> 9) % 48] = 0,
-         CellClean[fb][((a & 0x7FFF) >> 9) % 48] = 0;
-      StoreU16_LE((uint16 *)&FB[fb][lr][a & 0x7FFF], half ? V >> 16 : V & 0xFFFF);
+      const uint32 b = (A & 63) >> 1, cell = ((A & 0x7FFF) >> 9) % 48;
+      Blocks[fb][b].valid = false, CellContent[fb][b][cell] = 0;
+      Blocks[fb][b + 1].valid = false, CellContent[fb][b + 1][cell] = 0;
+      CellClean[fb][cell] = 0;
    }
+   StoreU16_LE((uint16 *)&FB[fb][lr][A & 0x7FFF], V & 0xFFFF);
+   StoreU16_LE((uint16 *)&FB[fb][lr][(A & 0x7FFF) + 2], V >> 16);
    vbgo_tiletrack_cpu_fb_write(fb, lr, A & 0x7FFF, 4); /* VirtualBoyGo */
    return true;
 }

@@ -351,6 +351,31 @@ void *V810::CompileBlock(Block *block)
             for(uint32 *m : miss)
                w.Patch(m, w.at);
          }
+         if(k == 5)
+         {
+            /* A frame buffer word write: VIP_WriteFBWord does it, and nothing it does looks at the cycle count or the
+             * PSW, so neither is synced. */
+            uint32 *miss[4] = {};
+            CheckFrameBuffer(miss, 6, true);
+            w.Stwu(1, -16, 1);
+            w.Mflr(0);
+            w.Stw(0, 20, 1);
+            w.Mfctr(0); /* (CTR holds the cycles left, and C code may change it) */
+            w.Stw(0, 8, 1);
+            w.Rlwinm(3, 4, 0, 5, 31);
+            w.Mr(4, 5);
+            w.Imm32(12, (uint32)(uintptr_t)&::VIP_WriteFBWord);
+            w.Mtlr(12);
+            w.Blrl();
+            w.Lwz(0, 8, 1);
+            w.Mtctr(0);
+            w.Lwz(0, 20, 1);
+            w.Mtlr(0);
+            w.Addi(1, 1, 16);
+            w.Blr();
+            for(uint32 *m : miss)
+               w.Patch(m, w.at);
+         }
          w.Stwu(1, -16, 1);
          w.Mflr(0);
          w.Stw(0, 20, 1);
