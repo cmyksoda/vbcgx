@@ -2205,7 +2205,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         const AutoColors::Ramp *ramp = cur->ramp;
                         // (most tiles need no per-pixel look at which pixels are painted: one color, all or none)
                         const bool oneColor = cur->flat && fullFade, allOwn = tile->mask == ~0ull,
-                                   noneOwn = tile->mask == 0;
+                                   noneOwn = tile->mask == 0, rampOnly = noneOwn && fullFade && ramp;
                         const uint8_t oneB = tile->rgb[0][2], oneG = tile->rgb[0][1], oneR = tile->rgb[0][0];
                         bool rampUsed = false;
                         const uint32_t *nextTag = column + y + 1;
@@ -2215,6 +2215,15 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             // (a shade the game switched off stays background, and so does a fill nobody painted)
                             if (pixel && (rawPixel & 0xFFFFFFu) && oneColor)
                                 frame[i] = oneB, frame[i + 1] = oneG, frame[i + 2] = oneR;
+                            else if (pixel && (rawPixel & 0xFFFFFFu) && rampOnly)
+                            {
+                                if (const unsigned shade = (rawPixel >> 24) & 3)
+                                {
+                                    const uint8_t *rgb = (*ramp)[shade - 1].data();
+                                    frame[i] = rgb[2], frame[i + 1] = rgb[1], frame[i + 2] = rgb[0];
+                                    rampUsed = true;
+                                }
+                            }
                             else if (pixel && (rawPixel & 0xFFFFFFu))
                             {
                                 const unsigned shade = (rawPixel >> 24) & 3, index = VBGO_TAG_INDEX(t);
