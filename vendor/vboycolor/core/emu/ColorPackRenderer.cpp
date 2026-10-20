@@ -1671,6 +1671,13 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         }
         const uint32_t runAt = m_runCacheAt;
 
+        // (a band's pair slots are only read as a set; runs down a column often take turns between two tiles)
+        auto notePairSlot = [](std::vector<uint64_t> &slots, uint64_t entry) {
+            const size_t n = slots.size();
+            if ((!n || slots[n - 1] != entry) && (n < 2 || slots[n - 2] != entry))
+                slots.push_back(entry);
+        };
+
         // (as the last run with this key in this eye, if any)
         auto setUpRun = [&](uint64_t t, uint64_t key) -> const Run & {
             const uint32_t runHash = (static_cast<uint32_t>(key) ^ static_cast<uint32_t>(key >> 32)) * 2654435761u;
@@ -1846,9 +1853,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                             countRun(runKey, x, y, rawPixel >> 26, firstHere ? nullptr : &sums, sumsAt);
                             run = setUpRun(t, runKey);
                             runSetUp = true;
-                            if (run.pairSlot && !kept &&
-                                (band.pairSlots.empty() || band.pairSlots.back() != (cellBits | run.pairSlot)))
-                                band.pairSlots.push_back(cellBits | run.pairSlot);
+                            if (run.pairSlot && !kept)
+                                notePairSlot(band.pairSlots, cellBits | run.pairSlot);
                         }
                         else
                         {
@@ -1857,9 +1863,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                                 run = setUpRun(t, runKey);
                                 runSetUp = true;
                             }
-                            if (firstHere && run.pairSlot && !kept &&
-                                (band.pairSlots.empty() || band.pairSlots.back() != (cellBits | run.pairSlot)))
-                                band.pairSlots.push_back(cellBits | run.pairSlot);
+                            if (firstHere && run.pairSlot && !kept)
+                                notePairSlot(band.pairSlots, cellBits | run.pairSlot);
                         }
 
                         slowHere |= run.slow;
@@ -2130,9 +2135,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         if (cur->slow)
                             run = *cur, cur = &run;
                         runSetUp = true;
-                        if (cur->pairSlot && !kept &&
-                            (band.pairSlots.empty() || band.pairSlots.back() != (cellBits | cur->pairSlot)))
-                            band.pairSlots.push_back(cellBits | cur->pairSlot);
+                        if (cur->pairSlot && !kept)
+                            notePairSlot(band.pairSlots, cellBits | cur->pairSlot);
                     }
                     else
                     {
@@ -2143,9 +2147,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                                 run = *cur, cur = &run;
                             runSetUp = true;
                         }
-                        if (firstHere && cur->pairSlot && !kept &&
-                            (band.pairSlots.empty() || band.pairSlots.back() != (cellBits | cur->pairSlot)))
-                            band.pairSlots.push_back(cellBits | cur->pairSlot);
+                        if (firstHere && cur->pairSlot && !kept)
+                            notePairSlot(band.pairSlots, cellBits | cur->pairSlot);
                     }
 
                     slowHere |= cur->slow;
