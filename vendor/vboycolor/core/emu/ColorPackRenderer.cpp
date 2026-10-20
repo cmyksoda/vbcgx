@@ -1449,8 +1449,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     };
 
     // The right eye's run starts, if they're all it adds (true): with a pack, no drawn tile there carrying markers for
-    // its kind, every layer pair estimated, no right-only sprite, and what it keeps walked with its band reached as
-    // now, a start only moves the layers' extents and wants its pair. Only bands where one still could are read.
+    // its kind, every layer pair estimated and what it keeps walked with its band reached as now, a start only moves
+    // the layers' extents and wants its pair. Only bands where one still could are read.
     constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
     auto rightFromEnds = [&](const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut) -> bool {
         if (!m_pack || !v.cell_worlds || (markers && !v.band_chr))
@@ -1472,9 +1472,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             return false;
         for (int p = 0; pairs && p < m_pairCount; ++p)
             if (!m_pairs[p].sprites && !m_pairs[p].estimated)
-                return false;
-        for (unsigned i = 0; pairs && m_oam && i < 1024; ++i)
-            if ((m_oam[i * 4 + 1] & 0xC000) == 0x4000)
                 return false;
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
             if (keepRight[b] & (v.band_key[b] ? rightBands[b].unreached : ~rightBands[b].unreached))
@@ -1500,6 +1497,30 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         }
 
         uint32_t wanted = 0; // (bit per pair a start wants)
+        // Sprite pairs: wanted by any counted pixel of a right-only sprite (its run's start is one), as SetUpRun would
+        // - its own estimate if the left picture doesn't share its tile, else the left's once there is one.
+        bool rightOnly = false;
+        for (unsigned i = 0; pairs && m_oam && !rightOnly && i < 1024; ++i)
+            rightOnly = (m_oam[i * 4 + 1] & 0xC000) == 0x4000;
+        uint32_t spritePairs = 0;
+        for (int p = 0; p < m_pairCount; ++p)
+            spritePairs |= static_cast<uint32_t>(m_pairs[p].sprites) << p;
+        for (unsigned x = 0; rightOnly && (spritePairs & ~wanted) && x < VBGO_TT_WIDTH; ++x)
+            if (const uint32_t *column = v.columns[x])
+                for (unsigned y = 0; y < VBGO_TT_HEIGHT; ++y)
+                {
+                    const uint32_t lo = column[y];
+                    if (!VBGO_TAG_IS_OBJ(lo) || !vbgo_tag_drawn(lo, v.band_key[y >> 3]))
+                        continue;
+                    const uint64_t t = vbgo_tag_compose(lo, v.cells[x][vbgo_tt_cell_at(y)]);
+                    const int p = m_spritePairOf[VBGO_TAG_WORLD(t)];
+                    if (p < 0 || EyeOnly(t) != 2 || (wanted >> p & 1) ||
+                        (VBGO_TAG_PIXEL(lo) && !(EyeTaggedPixel(eyeBits, eyeClut, x, y) & 0xFFFFFFu)))
+                        continue;
+                    const unsigned chr = VBGO_TAG_CHAR(t);
+                    if (!SharedWithLeftPicture(chr, m_slots[chr].hash, p) || m_pairs[p].estimated)
+                        wanted |= 1u << p;
+                }
         // (no world that may draw in band b at columns x0 - x1 - both eyes', a superset without sprites - could start
         // a run there that moves an extent or wants a pair)
         auto settled = [&](int b, int x0, int x1) {
