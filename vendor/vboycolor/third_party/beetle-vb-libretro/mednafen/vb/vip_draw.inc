@@ -142,14 +142,22 @@ static void DrawBG(uint8 *target, uint16 RealY, bool lr, uint8 bgmap_base_raw, b
     }
     memcpy(&shades[0], GPLT_Quad[palette_selector][p & 0xFF], 4);
     memcpy(&shades[1], GPLT_Quad[palette_selector][p >> 8], 4);
-    memcpy(&drawn[0], OpaqueQuad[p & 0xFF], 4);
-    memcpy(&drawn[1], OpaqueQuad[p >> 8], 4);
-    memcpy(&row[0], target + x, 4);
-    memcpy(&row[1], target + x + 4, 4);
-    row[0] = (row[0] & ~drawn[0]) | (shades[0] & drawn[0]);
-    row[1] = (row[1] & ~drawn[1]) | (shades[1] & drawn[1]);
-    memcpy(target + x, &row[0], 4);
-    memcpy(target + x + 4, &row[1], 4);
+    if(((pixels | (pixels >> 1)) & 0x5555) == 0x5555) /* (every pixel drawn: the row is just the shades) */
+    {
+     memcpy(target + x, &shades[0], 4);
+     memcpy(target + x + 4, &shades[1], 4);
+    }
+    else
+    {
+     memcpy(&drawn[0], OpaqueQuad[p & 0xFF], 4);
+     memcpy(&drawn[1], OpaqueQuad[p >> 8], 4);
+     memcpy(&row[0], target + x, 4);
+     memcpy(&row[1], target + x + 4, 4);
+     row[0] = (row[0] & ~drawn[0]) | (shades[0] & drawn[0]);
+     row[1] = (row[1] & ~drawn[1]) | (shades[1] & drawn[1]);
+     memcpy(target + x, &row[0], 4);
+     memcpy(target + x + 4, &row[1], 4);
+    }
    }
 
    x += 7;
@@ -692,14 +700,22 @@ static void DrawBGBlock(uint8 *fb_eye, unsigned block_no, bool lr, const VbgoWor
       }
       memcpy(&shades[0], GPLT_Quad[palette_selector][p & 0xFF], 4);
       memcpy(&shades[1], GPLT_Quad[palette_selector][p >> 8], 4);
-      memcpy(&drawn[0], OpaqueQuad[p & 0xFF], 4);
-      memcpy(&drawn[1], OpaqueQuad[p >> 8], 4);
-      memcpy(&row[0], tgt[i] + x, 4);
-      memcpy(&row[1], tgt[i] + x + 4, 4);
-      row[0] = (row[0] & ~drawn[0]) | (shades[0] & drawn[0]);
-      row[1] = (row[1] & ~drawn[1]) | (shades[1] & drawn[1]);
-      memcpy(tgt[i] + x, &row[0], 4);
-      memcpy(tgt[i] + x + 4, &row[1], 4);
+      if(((pixels | (pixels >> 1)) & 0x5555) == 0x5555) /* (every pixel drawn: the row is just the shades) */
+      {
+       memcpy(tgt[i] + x, &shades[0], 4);
+       memcpy(tgt[i] + x + 4, &shades[1], 4);
+      }
+      else
+      {
+       memcpy(&drawn[0], OpaqueQuad[p & 0xFF], 4);
+       memcpy(&drawn[1], OpaqueQuad[p >> 8], 4);
+       memcpy(&row[0], tgt[i] + x, 4);
+       memcpy(&row[1], tgt[i] + x + 4, 4);
+       row[0] = (row[0] & ~drawn[0]) | (shades[0] & drawn[0]);
+       row[1] = (row[1] & ~drawn[1]) | (shades[1] & drawn[1]);
+       memcpy(tgt[i] + x, &row[0], 4);
+       memcpy(tgt[i] + x + 4, &row[1], 4);
+      }
      }
      if(trow[i] && (pixels || fills_here))
      {
