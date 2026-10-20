@@ -121,9 +121,11 @@ void DepthColors::Reset()
         m_want[e].clear();
         m_was[e].clear();
         m_changed[e].clear();
-        m_lastLit[e].clear();
-        m_staleLit[e].clear();
+        m_lastLit[e].size = 0;
+        m_lastLit[e].count.fill(0);
     }
+    m_lastWanted.size = 0;
+    m_staleWanted.size = 0;
     m_disparity.clear();
     m_lastDisparity.clear();
     m_haveLast = false;
@@ -172,25 +174,34 @@ int DepthColors::WindowPixels(const unsigned left[7])
            kSetIn7.n[left[5]] + kSetIn7.n[left[6]];
 }
 
-std::vector<uint32_t> &DepthColors::NextLit(unsigned eye)
+DepthColors::LitColumns &DepthColors::NextLit(unsigned eye)
 {
-    m_nextLit[eye].clear();
-    return m_nextLit[eye];
+    LitColumns &lit = m_nextLit[eye];
+    lit.size = 0;
+    lit.count.fill(0);
+    if (!eye)
+        m_nextWanted.size = 0;
+    return lit;
+}
+
+static bool SameLit(const DepthColors::LitColumns &a, const DepthColors::LitColumns &b)
+{
+    return a.size == b.size && a.count == b.count &&
+           (!a.size || std::memcmp(a.pixels.data(), b.pixels.data(), a.size * sizeof(uint16_t)) == 0);
 }
 
 void DepthColors::Update()
 {
     const size_t n = static_cast<size_t>(kWidth) * kHeight;
-    if (m_haveLast && m_nextLit[0] == m_lastLit[0] && m_nextLit[1] == m_lastLit[1])
+    if (m_haveLast && SameLit(m_nextLit[0], m_lastLit[0]) && SameLit(m_nextLit[1], m_lastLit[1]))
         return; // same pictures as last time (most 3D games draw a new picture every other frame or less)
 
     const bool rebuild = !m_haveLast || !m_bitsValid;
     if (m_disparity.size() != n)
         m_disparity.assign(n, kUnknown);
     else
-        for (const uint32_t p : m_staleLit[0]) // (the only pixels it was given: those wanted then)
-            if (LitWanted(p))
-                m_disparity[static_cast<size_t>(LitY(p)) * kWidth + LitX(p)] = kUnknown;
+        for (const uint32_t p : m_staleWanted) // (the only pixels it was given: those wanted then)
+            m_disparity[static_cast<size_t>(LitY(p)) * kWidth + LitX(p)] = kUnknown;
 
     // Each eye's picture: only changed pixels are rewritten (shades, bit rows, wanted flags) and their blocks marked.
     if (rebuild)
@@ -262,31 +273,39 @@ void DepthColors::Update()
             wants[i] = 0;
         };
 
-        const std::vector<uint32_t> &last = m_lastLit[e], &next = m_nextLit[e];
-        if (rebuild)
-            for (const uint32_t p : next)
-                put(p);
-        else
+        const LitColumns &last = m_lastLit[e], &next = m_nextLit[e];
+        const uint16_t *lastAt = last.pixels.data(), *nextAt = next.pixels.data();
+        // (a column's pixel as the lit pixel it stands for)
+        const auto lit = [](uint32_t x, uint32_t p) { return Lit(x, p & 255, p >> 8 & 3, (p & 1 << 10) != 0); };
+        for (uint32_t x = 0; x < kWidth; ++x)
         {
-            // (both lists run column by column, top down: what's in both the same is skipped at a glance)
-            const auto key = [](uint32_t p) { return LitX(p) << 8 | LitY(p); };
-            size_t i = 0, j = 0;
-            while (i < last.size() && j < next.size())
+            const unsigned lastCount = rebuild ? 0 : last.count[x], nextCount = next.count[x];
+            const unsigned lastRoom = (lastCount + 1) & ~1u, nextRoom = (nextCount + 1) & ~1u;
+            // (both columns run top down: what's the same in both is skipped at a glance)
+            if (lastCount == nextCount && (!nextCount || !std::memcmp(lastAt, nextAt, nextRoom * sizeof(uint16_t))))
             {
-                if (last[i] == next[j])
-                    ++i, ++j;
-                else if (key(last[i]) == key(next[j]))
-                    put(next[j++]), ++i;
-                else if (key(last[i]) < key(next[j]))
-                    take(last[i++]);
-                else
-                    put(next[j++]);
+                lastAt += lastRoom, nextAt += nextRoom;
+                continue;
             }
 
-            for (; i < last.size(); ++i)
-                take(last[i]);
-            for (; j < next.size(); ++j)
-                put(next[j]);
+            unsigned i = 0, j = 0;
+            while (i < lastCount && j < nextCount)
+            {
+                if (lastAt[i] == nextAt[j])
+                    ++i, ++j;
+                else if ((lastAt[i] & 255) == (nextAt[j] & 255))
+                    put(lit(x, nextAt[j++])), ++i;
+                else if ((lastAt[i] & 255) < (nextAt[j] & 255))
+                    take(lit(x, lastAt[i++]));
+                else
+                    put(lit(x, nextAt[j++]));
+            }
+
+            for (; i < lastCount; ++i)
+                take(lit(x, lastAt[i]));
+            for (; j < nextCount; ++j)
+                put(lit(x, nextAt[j]));
+            lastAt += lastRoom, nextAt += nextRoom;
         }
     }
 
@@ -324,8 +343,8 @@ void DepthColors::Update()
         for (const int32_t i : m_flatSeeds)
             m_flatLabel[i] = -1;
         m_flatSeeds.clear();
-        for (const uint32_t p : m_nextLit[0])
-            if (LitWanted(p) && flat(static_cast<int>(LitX(p)), static_cast<int>(LitY(p))))
+        for (const uint32_t p : m_nextWanted)
+            if (flat(static_cast<int>(LitX(p)), static_cast<int>(LitY(p))))
                 m_flatSeeds.push_back(static_cast<int32_t>(LitY(p) * kWidth + LitX(p)));
         std::sort(m_flatSeeds.begin(), m_flatSeeds.end()); // (row by row: the order the areas are found in matters)
         for (const int32_t i : m_flatSeeds)
@@ -450,21 +469,19 @@ void DepthColors::Update()
         }
     }
 
-    for (int e = 0; e < 2; ++e)
-    {
-        m_staleLit[e].swap(m_lastLit[e]); // (the pixels m_disparity holds after the swap below)
-        m_lastLit[e].swap(m_nextLit[e]);
-    }
+    std::swap(m_lastLit[0], m_nextLit[0]);
+    std::swap(m_lastLit[1], m_nextLit[1]);
+    std::swap(m_staleWanted, m_lastWanted); // (the pixels m_disparity holds after the swap below)
+    std::swap(m_lastWanted, m_nextWanted);
 
     // (for the next pick: which wanted pixels ended the same as in the update before)
     if (m_haveLast && m_lastDisparity.size() == n)
-        for (const uint32_t p : m_lastLit[0]) // (the lists have swapped: this update's)
-            if (LitWanted(p))
-            {
-                const size_t i = static_cast<size_t>(LitY(p)) * kWidth + LitX(p);
-                if (m_pickAt[i] == m_pickGen + 1 && m_disparity[i] == m_lastDisparity[i])
-                    m_pickBits[i] |= 2;
-            }
+        for (const uint32_t p : m_lastWanted) // (the lists have swapped: this update's)
+        {
+            const size_t i = static_cast<size_t>(LitY(p)) * kWidth + LitX(p);
+            if (m_pickAt[i] == m_pickGen + 1 && m_disparity[i] == m_lastDisparity[i])
+                m_pickBits[i] |= 2;
+        }
     if (++m_pickGen == 0)
     {
         std::fill(m_pickAt.begin(), m_pickAt.end(), 0);
@@ -495,6 +512,8 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
             const int b = first + k * step;
             const int16_t *c = cost + static_cast<size_t>(b) * kS;
             int16_t *rec = records + static_cast<size_t>(b) * kRecord, *out = rec + 2;
+            for (int line = 0; line < kRecord / 16; ++line)
+                ClearLine32(reinterpret_cast<uint8_t *>(rec) + 32 * line);
             // (prev[-2]: the walls left of disparity 0, and past disparity 80 for the last pair's loads)
             const int16_t *prev = (k ? rec - static_cast<ptrdiff_t>(step) * kRecord : before ? before : rec) + 2;
             rec[0] = rec[1] = kWall;
@@ -614,6 +633,7 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
             }
 
             rec[2 + kD] = kWall; // (the pair at disparity 80 wrote the wall after it)
+            rec[2 + kD + 1] = rec[2 + kD + 2] = kWall; // (and the walls past it, which the last pair's loads read)
             rec[kLowAt] = low[0];
         }
     }
@@ -629,6 +649,8 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
         const int b = first + k * step;
         const int16_t *c = &cost[static_cast<size_t>(b) * kStride];
         int16_t *const rec = records + static_cast<size_t>(b) * kRecord, *const out = rec + 2;
+        for (int line = 0; line < kRecord / 16; ++line)
+            ClearLine32(reinterpret_cast<uint8_t *>(rec) + 32 * line);
         const int16_t *const prev = (k ? rec - static_cast<ptrdiff_t>(step) * kRecord : before) + (k || before ? 2 : 0);
         // (each block's lowest is found while it's written, for the next)
         int nextLow = kWall;
@@ -655,7 +677,7 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
                 beforeCost = here, here = after;
             }
         }
-        out[kDisparities] = kWall;
+        out[kDisparities] = out[kDisparities + 1] = out[kDisparities + 2] = kWall;
         rec[kLowAt] = static_cast<int16_t>(nextLow);
         low = nextLow;
     }
@@ -1284,9 +1306,8 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     // The blocks with a wanted pixel, and with them the 3x3 blocks the pick looks at: only their smoothed costs are
     // used, so only the stretches of lines that reach them are smoothed.
     uint64_t wanted[kBlocksY] = {}, needed[kBlocksY] = {};
-    for (const uint32_t p : m_nextLit[0])
-        if (LitWanted(p))
-            wanted[LitY(p) >> 3] |= 1ull << (LitX(p) >> 3);
+    for (const uint32_t p : m_nextWanted)
+        wanted[LitY(p) >> 3] |= 1ull << (LitX(p) >> 3);
     for (int by = 0; by < kBlocksY; ++by)
         needed[by] = spread((by > 0 ? wanted[by - 1] : 0) | wanted[by] | (by + 1 < kBlocksY ? wanted[by + 1] : 0), 1);
 
@@ -1301,13 +1322,13 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
         if (pulled[di])
             pulledAt[pulledCount++] = di;
     }
-    // (the main depths' pull, on the blocks with something in them: taken off their costs before the smoothing and put
-    // back after - the costs kept for the next frame are without it)
+    // (the main depths' pull, on the blocks with something in them that the smoothing reads: taken off their costs
+    // just before and put back after - the costs kept for the next frame are without it)
+    uint8_t taken[kBlocks] = {};
     auto pull = [&](int b, int by) {
-        if (blockPixels[b])
-            for (int k = 0; k < pulledCount; ++k)
-                cost[static_cast<size_t>(b) * kStride + pulledAt[k]] =
-                    static_cast<int16_t>(cost[static_cast<size_t>(b) * kStride + pulledAt[k]] - by);
+        for (int k = 0; k < pulledCount; ++k)
+            cost[static_cast<size_t>(b) * kStride + pulledAt[k]] =
+                static_cast<int16_t>(cost[static_cast<size_t>(b) * kStride + pulledAt[k]] - by);
     };
 
     constexpr size_t kChainSize = static_cast<size_t>(kBlocks) * kRecord;
@@ -1345,12 +1366,13 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
                                   : (dir & 1 ? (kBlocksY - 1) * kBlocksX + line : line);
         const int16_t *before =
             *valid ? chain[dir] + static_cast<size_t>(start + (*valid - 1) * step) * kRecord : nullptr;
+        for (int k = *valid, b = start + k * step; k <= to; ++k, b += step)
+            if (blockPixels[b] && !taken[b])
+                taken[b] = 1, pull(b, kPlaneBonus);
         SmoothChain(cost, chain[dir], start + *valid * step, step, to + 1 - *valid, before);
         *valid = to + 1;
     };
 
-    for (int b = 0; b < kBlocks; ++b)
-        pull(b, kPlaneBonus);
     for (int by = 0; by < kBlocksY; ++by)
         if (needed[by])
         {
@@ -1386,7 +1408,8 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
             }
     }
     for (int b = 0; b < kBlocks; ++b)
-        pull(b, -kPlaneBonus);
+        if (taken[b])
+            pull(b, -kPlaneBonus);
 
     // Per wanted left pixel: its block's disparity, unless a neighboring block's or a main depth lines up clearly
     // better in the 7x7 window around it, own shade only (lines of different depths cross in a block; a score in one
@@ -1463,11 +1486,8 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
             }
     }
 
-    for (const uint32_t lit : m_nextLit[0])
+    for (const uint32_t lit : m_nextWanted)
     {
-        if (!LitWanted(lit))
-            continue;
-
         const int x = static_cast<int>(LitX(lit)), y = static_cast<int>(LitY(lit));
         {
             const size_t i = static_cast<size_t>(y) * kWidth + x;

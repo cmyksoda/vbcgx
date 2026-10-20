@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <new>
 #include <vector>
 
@@ -21,3 +22,13 @@ struct LineAligned
     bool operator!=(const LineAligned<U> &) const { return false; }
 };
 using PictureBuffer = std::vector<uint8_t, LineAligned<uint8_t>>;
+
+// A 32-byte line cleared (on the Wii claimed in the cache without reading memory first).
+inline void ClearLine32(uint8_t *line)
+{
+#if defined(__PPC__) || defined(__powerpc__)
+    __asm__ volatile("dcbz 0,%0" : : "r"(line) : "memory");
+#else
+    std::memset(line, 0, 32);
+#endif
+}

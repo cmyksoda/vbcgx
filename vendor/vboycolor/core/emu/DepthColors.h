@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -25,13 +26,45 @@ public:
     static uint32_t LitY(uint32_t lit) { return lit >> 12; }
     static unsigned LitShade(uint32_t lit) { return lit & 3; }
     static bool LitWanted(uint32_t lit) { return (lit & 4) != 0; }
-    // The next Update's lit pixels of an eye, emptied: every one, always in the same order (so the same
-    // pixels in the same order are the same picture, and comparing pictures takes no full-frame buffers).
-    std::vector<uint32_t> &NextLit(unsigned eye);
+    // An eye's lit pixels column by column: each column's top down as y | shade << 8 | wanted << 10, padded with a 0
+    // to an even number (so equal columns are equal memory), and how many it has. Always in this one order, so the
+    // same pixels are the same picture and comparing pictures takes no full-frame buffers.
+    struct LitColumns
+    {
+        std::vector<uint16_t> pixels; // (room, written up to size)
+        uint32_t size = 0;
+        std::array<uint8_t, kWidth> count{};
+        // Where the next column goes after `used` pixels, with room for all of it.
+        uint16_t *Room(size_t used)
+        {
+            if (pixels.size() < used + kHeight)
+                pixels.resize(std::max<size_t>(2 * pixels.size(), used + kHeight));
+            return pixels.data() + used;
+        }
+    };
+    // Lit pixels (as Lit) one after the other: room made for more before they are written, up to size.
+    struct PixelList
+    {
+        std::vector<uint32_t> room;
+        size_t size = 0;
+        const uint32_t *begin() const { return room.data(); }
+        const uint32_t *end() const { return room.data() + size; }
+        uint32_t *Room(size_t more)
+        {
+            if (room.size() < size + more)
+                room.resize(std::max(2 * room.size(), size + more));
+            return room.data() + size;
+        }
+    };
+    // The next Update's lit pixels of an eye, emptied for the caller to write.
+    LitColumns &NextLit(unsigned eye);
+    // The wanted pixels among NextLit(0)'s, in its order, filled by the caller too (most lit pixels are a tile's:
+    // the passes over the left eye's wanted pixels would walk them all).
+    PixelList &NextWanted() { return m_nextWanted; }
     // Works out the left eye's pixels' disparities from both eyes' lit pixels (only the left eye is shown).
     void Update();
-    // The lit pixels of the picture last worked out (the last Update's, whether or not it changed).
-    const std::vector<uint32_t> &LastLit(unsigned eye) const { return m_lastLit[eye]; }
+    // The left eye's wanted pixels of the picture last worked out (the last Update's, whether or not it changed).
+    const PixelList &LastWanted() const { return m_lastWanted; }
     // A wanted left-eye pixel's disparity as last worked out (kUnknown: none).
     int Disparity(unsigned x, unsigned y) const { return m_lastDisparity[y * kWidth + x]; }
     // The color (R, G, B) for a disparity and shade 1-3.
@@ -59,8 +92,10 @@ private:
     };
     void Estimate(const uint8_t *const shades[2], const uint8_t *const want[2]);
     uint64_t CountBand(int by, uint32_t halves);
-    // (a chain record: 2 walls, the 81 costs, 3 more walls - the last pair reads them - and the lowest)
-    static constexpr int kRecord = 88, kLowAt = 86;
+    // (a chain record: 2 walls, the 81 costs, 3 more walls - the last pair reads them - and the lowest; whole cache
+    // lines, so a record is claimed in the cache without reading its memory)
+    static constexpr int kRecord = 96, kLowAt = 86;
+    static_assert(kRecord * sizeof(int16_t) % 32 == 0, "(whole cache lines)");
     // (the smoothing along a line of blocks, paired singles on the Wii: chain records for count blocks from `first`,
     // each from the one before; `before` is the record of the block before the first, or null at the line's start)
     static void SmoothChain(const int16_t *cost, int16_t *records, int first, int step, int count,
@@ -95,7 +130,8 @@ private:
     std::vector<uint8_t> m_was[2];       // per pixel that changed in the last update, its shade before (else 0xFF)
     std::vector<uint32_t> m_changed[2];  // ... the pixels m_was holds
     int m_wantedCount[2][3] = {};        // per eye and shade 1-3, the lit pixels that need a depth color
-    std::vector<uint32_t> m_nextLit[2], m_lastLit[2], m_staleLit[2];
+    LitColumns m_nextLit[2], m_lastLit[2];
+    PixelList m_nextWanted, m_lastWanted, m_staleWanted; // (the left eye's wanted pixels among those)
     unsigned LastShade(unsigned eye, size_t i) const { return m_was[eye][i] != 0xFF ? m_was[eye][i] : m_shade[eye][i]; }
     std::vector<int16_t> m_disparity;      // the left eye's, per pixel, while Update works them out (kUnknown: none)
     std::vector<int16_t> m_lastDisparity;  // ... as last worked out (Disparity's; a pixel that hasn't changed keeps it)

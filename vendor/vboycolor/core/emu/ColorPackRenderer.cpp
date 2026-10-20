@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 #if defined(_MSC_VER) && defined(_M_X64)
 #include <intrin.h>
 #endif
@@ -73,16 +74,6 @@ struct EyeColumn
 };
 
 const TileColorPack::Tile kNoTile{}; // (no tile colors: nothing painted)
-
-// A 32-byte line cleared (on the Wii claimed in the cache without reading memory first).
-inline void ClearLine32(uint8_t *line)
-{
-#if defined(__PPC__) || defined(__powerpc__)
-    __asm__ volatile("dcbz 0,%0" : : "r"(line) : "memory");
-#else
-    std::memset(line, 0, 32);
-#endif
-}
 
 // Bits 0-31 of x: 16 pixels' 2-bit values from bytes stored lowest pixel first, whichever the byte order.
 inline uint32_t LowFirst32(const uint8_t *p)
@@ -2672,6 +2663,114 @@ bool ColorPackRenderer::MarkersSettled() const
     return m_markerGrid[0].empty() || (SameMarkers(1, 0) && SameMarkers(2, 0));
 }
 
+// An eye's lit pixels for DepthColors a column at a time (the left eye's wanted ones into `wanted` too): those no tile
+// drew need a color, and `any` says some do and `brightest` how bright the brightest is.
+template <bool kLeft>
+static void GatherLit(const uint8_t *eyeBits, const uint32_t *eyeClut, const vbgo_tt_eye_view &view, bool have,
+                      DepthColors::LitColumns &columns, DepthColors::PixelList &wanted, bool &any,
+                      unsigned &brightest)
+{
+    size_t used = 0; // (pixels in the list so far)
+    // (bit per band whose 8x8 cell here may hold tags: elsewhere every tag is 0, never drawn)
+    uint32_t taggedBands = 0;
+    for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
+    {
+        const uint32_t *column = have ? view.columns[x] : nullptr;
+        if (have && !(x & 7))
+        {
+            taggedBands = 0;
+            for (unsigned band = 0; band < VBGO_TT_HEIGHT / 8; ++band)
+                taggedBands |= static_cast<uint32_t>(view.tagged[band] >> (x >> 3) & 1) << band;
+        }
+
+        const EyeColumn eyeColumn(eyeBits, eyeClut, x);
+        unsigned lit = 0; // (the pixel values this column shows in a shade that's on)
+        // (per pixel value shown: its shade in a column's pixel, the wanted pixel but for the row, and its brightness)
+        uint32_t shade[4], wantedBase[4], level[4];
+        for (unsigned v = 0; v < 4; ++v)
+        {
+            const uint32_t word = eyeColumn.words[v];
+            if (((word >> 24) & 3) && (word & 0xFFFFFFu))
+            {
+                lit |= 1u << v;
+                shade[v] = (word >> 24 & 3) << 8;
+                wantedBase[v] = DepthColors::Lit(x, 0, (word >> 24) & 3, true);
+                level[v] = word >> 26;
+            }
+        }
+
+        if (!lit)
+            continue;
+
+        uint16_t *out = columns.Room(used);
+        uint16_t *const columnStart = out;
+        uint32_t *wantedAt = kLeft ? wanted.Room(VBGO_TT_HEIGHT) : nullptr;
+        uint32_t *const wantedStart = wantedAt;
+        unsigned seen = 0; // (bit per pixel value that has a pixel needing a color)
+        // (rows' pixels top down: those a tile drew only where its cell may hold tags)
+        const auto emit = [&](uint32_t rows, uint32_t y0, uint32_t w, uint32_t key, auto tagged) {
+            for (; rows; rows &= rows - 1)
+            {
+                const unsigned bit = static_cast<unsigned>(__builtin_ctz(rows)), value = w >> bit & 3;
+                const uint32_t y = y0 + bit / 2;
+                if constexpr (decltype(tagged)::value)
+                {
+                    const uint32_t tag = column[y];
+                    if (vbgo_tag_drawn(tag, key) && VBGO_TAG_PIXEL(tag))
+                    {
+                        *out++ = static_cast<uint16_t>(y | shade[value]); // a tile drew it
+                        continue;
+                    }
+                }
+
+                *out++ = static_cast<uint16_t>(y | shade[value] | 1 << 10);
+                if constexpr (kLeft)
+                    *wantedAt++ = wantedBase[value] | y << 12;
+                seen |= 1u << value;
+            }
+        };
+
+        // (16 pixels at a time: a bit per pixel whose value is one of the lit ones, then each of those, top down)
+        for (uint32_t y0 = 0; y0 < VBGO_TT_HEIGHT; y0 += 16)
+        {
+            const uint32_t w = LowFirst32(eyeColumn.bits + y0 / 4), hi = w >> 1 & 0x55555555u, lo = w & 0x55555555u;
+            if (!w && !(lit & 1))
+                continue; // (16 pixels of value 0, which is off here)
+            const uint32_t on = ((lit & 1) ? ~(hi | lo) & 0x55555555u : 0) | ((lit & 2) ? ~hi & lo : 0) |
+                                ((lit & 4) ? hi & ~lo : 0) | ((lit & 8) ? hi & lo : 0);
+            if (!column || !(taggedBands >> (y0 / 8) & 3))
+            {
+                emit(on, y0, w, 0, std::false_type{});
+                continue;
+            }
+
+            for (unsigned half = 0; half < 2; ++half) // (the two bands these rows are in)
+            {
+                const uint32_t rows = on & (half ? 0xFFFF0000u : 0xFFFFu);
+                const unsigned band = y0 / 8 + half;
+                if (taggedBands >> band & 1)
+                    emit(rows, y0, w, view.band_key[band], std::true_type{});
+                else
+                    emit(rows, y0, w, 0, std::false_type{});
+            }
+        }
+
+        columns.count[x] = static_cast<uint8_t>(out - columnStart);
+        if ((out - columnStart) & 1)
+            *out++ = 0;
+        used = static_cast<size_t>(out - columns.pixels.data());
+        if constexpr (kLeft)
+            wanted.size += static_cast<size_t>(wantedAt - wantedStart);
+        for (; seen; seen &= seen - 1)
+        {
+            any = true;
+            brightest = std::max<unsigned>(brightest, level[__builtin_ctz(seen)]);
+        }
+    }
+
+    columns.size = static_cast<uint32_t>(used);
+}
+
 unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const uint32_t eyeOffset[2],
                                        const vbgo_tt_eye_view view[2], const bool have[2], const int bg[3])
 {
@@ -2684,50 +2783,11 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
     {
         const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
         const uint32_t *const eyeClut = vbgo_vip_eye_clut(static_cast<int>(eye));
-        std::vector<uint32_t> &pixels = m_depth.NextLit(eye);
-        // (bit per band whose 8x8 cell here may hold tags: elsewhere every tag is 0, never drawn)
-        uint32_t taggedBands = 0;
-        for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
-        {
-            const uint32_t *column = have[eye] ? view[eye].columns[x] : nullptr;
-            if (have[eye] && !(x & 7))
-            {
-                taggedBands = 0;
-                for (unsigned band = 0; band < VBGO_TT_HEIGHT / 8; ++band)
-                    taggedBands |= static_cast<uint32_t>(view[eye].tagged[band] >> (x >> 3) & 1) << band;
-            }
-
-            const EyeColumn eyeColumn(eyeBits, eyeClut, x);
-            unsigned lit = 0; // (the pixel values this column shows in a shade that's on)
-            for (unsigned v = 0; v < 4; ++v)
-                if (((eyeColumn.words[v] >> 24) & 3) && (eyeColumn.words[v] & 0xFFFFFFu))
-                    lit |= 1u << v;
-
-            // (16 pixels at a time: a bit per pixel whose value is one of the lit ones, then each of those, top down)
-            for (uint32_t y0 = 0; y0 < VBGO_TT_HEIGHT && lit; y0 += 16)
-            {
-                const uint32_t w = LowFirst32(eyeColumn.bits + y0 / 4), hi = w >> 1 & 0x55555555u, lo = w & 0x55555555u;
-                if (!w && !(lit & 1))
-                    continue; // (16 pixels of value 0, which is off here)
-                uint32_t on = ((lit & 1) ? ~(hi | lo) & 0x55555555u : 0) | ((lit & 2) ? ~hi & lo : 0) |
-                              ((lit & 4) ? hi & ~lo : 0) | ((lit & 8) ? hi & lo : 0);
-                for (; on; on &= on - 1)
-                {
-                    const unsigned bit = static_cast<unsigned>(__builtin_ctz(on));
-                    const uint32_t y = y0 + bit / 2, rawPixel = eyeColumn.words[w >> bit & 3];
-                    const unsigned shade = (rawPixel >> 24) & 3;
-                    if (column && (taggedBands >> (y >> 3) & 1) &&
-                        vbgo_tag_drawn(column[y], view[eye].band_key[y >> 3]) && VBGO_TAG_PIXEL(column[y]))
-                    {
-                        pixels.push_back(DepthColors::Lit(x, y, shade, false)); // a tile drew it
-                        continue;
-                    }
-                    pixels.push_back(DepthColors::Lit(x, y, shade, true));
-                    any = true;
-                    brightest = std::max<unsigned>(brightest, rawPixel >> 26);
-                }
-            }
-        }
+        DepthColors::LitColumns &columns = m_depth.NextLit(eye);
+        if (eye == 0)
+            GatherLit<true>(eyeBits, eyeClut, view[eye], have[eye], columns, m_depth.NextWanted(), any, brightest);
+        else
+            GatherLit<false>(eyeBits, eyeClut, view[eye], have[eye], columns, m_depth.NextWanted(), any, brightest);
     }
 
     if (!any)
@@ -2752,10 +2812,8 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
         return table;
     }();
 
-    for (const uint32_t p : m_depth.LastLit(0)) // (only the left eye is shown)
+    for (const uint32_t p : m_depth.LastWanted()) // (only the left eye is shown)
     {
-        if (!DepthColors::LitWanted(p))
-            continue;
         const uint32_t x = DepthColors::LitX(p), y = DepthColors::LitY(p);
         m_depthCells[y >> 3] |= 1ull << (x >> 3);
         const size_t i = (static_cast<size_t>(y) * fbWidth + eyeOffset[0] + x) * 4;
