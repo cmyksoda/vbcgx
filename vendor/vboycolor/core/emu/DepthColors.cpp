@@ -954,7 +954,7 @@ void DepthColors::CostRow(const CostRowArgs &a)
         }
     }
 
-    // (a block with nothing around it costs only the pull towards the screen's plane)
+    // (a block with nothing around it costs only the pull toward the screen's plane)
     for (int i = 0; i < emptyCount; ++i)
     {
         int16_t *const out = cols[empty[i]];
