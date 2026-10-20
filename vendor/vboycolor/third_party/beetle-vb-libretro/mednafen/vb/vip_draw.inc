@@ -745,6 +745,8 @@ static void DrawBGBlock(uint8 *fb_eye, unsigned block_no, bool lr, const VbgoWor
  }
 }
 
+#include "vip_front.inc"
+
 void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
 {
  /* World by world, back to front, each through its 8 rows: each pixel gets the same writes in the same order (rows don't touch
@@ -752,7 +754,8 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
  static uint16 obj_lists[32][1024];
  const uint16 *drawn[32];
  VbgoWorldAttr attrs[32];
- int counts[32], drawn_count = 0, obj_lists_used = 0, obj_index = 0;
+ int counts[32], drawn_count = 0, obj_lists_used = 0, obj_index = 0, active = 0;
+ bool front_ok = vbgo_tt_on != 0, overplane = false;
  int y, world, lr, k;
  for( y = 0; y < 8; y++)
  {
@@ -802,8 +805,25 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
    a->param_base = (world_ptr[9] & 0xFFF0);
    a->overplane_char = world_ptr[10];
    a->tt_world = (int)((world_ptr - &DRAM[0x1D800 >> 1]) / 16);
+   /* (can it draw in this block: front to back needs more than one, and no affine one) */
+   if((a->lron[0] || a->lron[1]) &&
+      (bgm == BGM_OBJ ? counts[drawn_count] > 0 : (uint16)((uint16)(block_no * 8 - a->gy) + 7) <= a->window_height + 7))
+   {
+    active++;
+    if(bgm == BGM_AFFINE)
+     front_ok = false;
+    if(bgm != BGM_OBJ && a->over)
+     overplane = true;
+   }
   }
   drawn[drawn_count++] = world_ptr;
+ }
+
+ if(front_ok && active > 1 && VbgoFrontTry(block_no, overplane))
+ {
+  VbgoDrawFront(block_no, fb_l, fb_r, attrs, drawn_count, obj_lists, obj_lists_used, counts);
+  VbgoFrontDone(block_no, overplane);
+  return;
  }
 
  for(k = 0; k < drawn_count; k++)
