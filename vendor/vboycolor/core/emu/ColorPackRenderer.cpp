@@ -1449,8 +1449,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
     };
 
     // The right eye's run starts, if they're all it adds (true): with a pack, no drawn tile there carrying markers for
-    // its kind, every layer pair estimated and what it keeps walked with its band reached as now, a start only moves
-    // the layers' extents and wants its pair. Only bands where one still could are read.
+    // its kind, every layer pair estimated and what it keeps walked with its band reached as now, a start only sizes
+    // its layer (by the extent - see the figures below) and wants its pair. Only bands where that can change are read.
     constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
     auto rightFromEnds = [&](const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut) -> bool {
         if (!m_pack || !v.cell_worlds || (markers && !v.band_chr))
@@ -1523,14 +1523,16 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         wanted |= 1u << p;
                 }
         // (no world that may draw in band b at columns x0 - x1 - both eyes', a superset without sprites - could start
-        // a run there that moves an extent or wants a pair)
+        // a run there that resizes its layer or wants a pair; a layer this wide is sized by its width alone)
+        constexpr int kSizedByWidth = VBGO_TT_HEIGHT - 1 + 7;
         auto settled = [&](int b, int x0, int x1) {
             for (uint32_t worlds = v.cell_worlds[b * kGridW + (x0 >> 3)]; worlds; worlds &= worlds - 1)
             {
                 const unsigned w = static_cast<unsigned>(__builtin_ctz(worlds)), k = m_worlds[w].colors;
                 const int p = pairs ? m_pairOfRight[w] : -1;
-                if (!(worldsDrawn >> k & 1) || left[k] > x0 || right[k] < x1 || top[k] > b * 8 ||
-                    bottom[k] < b * 8 + 7 || (p >= 0 && !(wanted >> p & 1)))
+                if (!(worldsDrawn >> k & 1) || left[k] > x0 || right[k] < x1 ||
+                    ((top[k] > b * 8 || bottom[k] < b * 8 + 7) && right[k] - left[k] < kSizedByWidth) ||
+                    (p >= 0 && !(wanted >> p & 1)))
                     return false;
             }
             return true;
