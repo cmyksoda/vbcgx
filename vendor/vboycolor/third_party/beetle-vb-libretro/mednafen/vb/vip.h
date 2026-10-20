@@ -51,6 +51,8 @@ void VIP_SetDefaultColor(uint32 default_color);
 void VIP_SetAnaglyphColors(uint32 lcolor, uint32 rcolor);	/* R << 16, G << 8, B << 0 */
 
 v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp);
+void VIP_ColumnStateAt(int32 **lastTs, int32 **columnCounter, int32 **column, int32 **displayRegion,
+                       int32 **drawingCounter, bool **instantHack);
 void VIP_ResetTS(void);
 
 void VIP_StartFrame(EmulateSpecStruct *espec);

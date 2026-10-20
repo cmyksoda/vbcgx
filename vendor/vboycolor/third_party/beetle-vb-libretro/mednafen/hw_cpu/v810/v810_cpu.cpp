@@ -67,6 +67,9 @@ uint32 vb_idle_unsteady;
 extern "C" v810_timestamp_t vbgo_vip_steady_until(v810_timestamp_t timestamp);
 extern "C" const uint8 *VIP_FBBase(void);
 extern "C" bool VIP_WriteFBWord(uint32 A, uint32 V);
+extern "C" void VIP_ColumnStateAt(int32 **lastTs, int32 **columnCounter, int32 **column, int32 **displayRegion,
+                                  int32 **drawingCounter, bool **instantHack);
+extern "C" void VB_EventTimesAt(int32 **vip, int32 **timer, int32 **input);
 
 /* Register, immediate, load and IN instructions: the ones that store nothing and can't jump or trap. */
 static const uint64 kStoreFreeOps = 0x3F | 1ull << 7 | 0xFull << 12 | 0x3Full << 16 | 1ull << 23 | 3ull << 40 |

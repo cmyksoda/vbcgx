@@ -376,6 +376,12 @@ static void EventReset(void)
    next_input_ts = VB_EVENT_NONONO;
 }
 
+/* (for the recompiler's event stub, which works out a column that only counts itself) */
+extern "C" void VB_EventTimesAt(int32 **vip, int32 **timer, int32 **input)
+{
+   *vip = &next_vip_ts, *timer = &next_timer_ts, *input = &next_input_ts;
+}
+
 static INLINE int32 CalcNextTS(void)
 {
    int32 next_timestamp = next_vip_ts;

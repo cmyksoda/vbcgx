@@ -248,6 +248,79 @@ void *V810::CompileBlock(Block *block)
       w.Lwz(0, offNext, JR_REGS);
       w.Cmpw(JR_TS, 0);
       uint32 *const noEvent = w.Bc(BO_TRUE, CR_LT);
+      {
+         /* A column boundary that only counts (instant display hack: no column table read, no region end, no drawing
+          * step in reach) gets VIP_Update's and the handler's bookkeeping here, without the calls; all else calls. */
+         int32 *lastTs, *columnCounter, *column, *displayRegion, *drawingCounter, *nextVip, *nextTimer, *nextInput;
+         bool *instantHack;
+         VIP_ColumnStateAt(&lastTs, &columnCounter, &column, &displayRegion, &drawingCounter, &instantHack);
+         VB_EventTimesAt(&nextVip, &nextTimer, &nextInput);
+         std::vector<uint32 *> slow;
+         auto Load = [&](unsigned rt, unsigned base, const void *at) {
+            w.Imm32(base, (uint32)(uintptr_t)at);
+            w.Lwz(rt, 0, base);
+         };
+         Load(3, 10, nextVip);
+         w.Cmpw(JR_TS, 3);
+         slow.push_back(w.Bc(BO_TRUE, CR_LT));
+         Load(3, 10, nextTimer);
+         w.Cmpw(JR_TS, 3);
+         slow.push_back(w.Bc(BO_FALSE, CR_LT));
+         Load(3, 10, nextInput);
+         w.Cmpw(JR_TS, 3);
+         slow.push_back(w.Bc(BO_FALSE, CR_LT));
+         w.Imm32(7, (uint32)(uintptr_t)instantHack);
+         w.Lbz(7, 0, 7);
+         w.Cmpwi(7, 0);
+         slow.push_back(w.Bc(BO_TRUE, CR_EQ));
+         Load(8, 7, lastTs);
+         w.Subf(8, 8, JR_TS); /* (clocks since VIP_Update last ran) */
+         Load(3, 9, columnCounter);
+         w.Cmpw(8, 3);
+         slow.push_back(w.Bc(BO_TRUE, CR_LT));
+         w.Addi(4, 3, 259);
+         w.Cmpw(8, 4);
+         slow.push_back(w.Bc(BO_FALSE, CR_LT)); /* (a second boundary passed too) */
+         Load(4, 10, column);
+         w.Cmpwi(4, 383);
+         slow.push_back(w.Bc(BO_TRUE, CR_EQ));
+         Load(6, 11, displayRegion);
+         w.AndiDot(6, 6, 1);
+         uint32 *const hidden = w.Bc(BO_TRUE, CR_EQ);
+         w.AndiDot(6, 4, 3);
+         slow.push_back(w.Bc(BO_TRUE, CR_EQ));
+         w.Patch(hidden, w.at);
+         Load(6, 12, drawingCounter);
+         w.Cmpwi(6, 0);
+         uint32 *const notDrawing = w.Bc(BO_FALSE, CR_GT);
+         w.Cmpw(6, 8);
+         slow.push_back(w.Bc(BO_FALSE, CR_GT));
+         w.Subf(6, 8, 6);
+         w.Stw(6, 0, 12);
+         w.Patch(notDrawing, w.at);
+         w.Subf(6, 3, 8);
+         w.Subfic(6, 6, 259);
+         w.Stw(6, 0, 9);
+         w.Addi(4, 4, 1);
+         w.Stw(4, 0, 10);
+         w.Stw(JR_TS, 0, 7);
+         w.Add(6, JR_TS, 6);
+         w.Imm32(10, (uint32)(uintptr_t)nextVip);
+         w.Stw(6, 0, 10);
+         /* (the handler's CalcNextTS: the earliest of the three) */
+         for(int32 *other : {nextTimer, nextInput})
+         {
+            Load(3, 10, other);
+            w.Cmpw(6, 3);
+            uint32 *const earlier = w.Bc(BO_TRUE, CR_LT);
+            w.Mr(6, 3);
+            w.Patch(earlier, w.at);
+         }
+         w.Stw(6, offNext, JR_REGS);
+         w.Patch(w.B(), loop);
+         for(uint32 *at : slow)
+            w.Patch(at, w.at);
+      }
       w.Mr(3, JR_TS);
       w.Lwz(12, offHandler, JR_REGS);
       w.Mtlr(12);

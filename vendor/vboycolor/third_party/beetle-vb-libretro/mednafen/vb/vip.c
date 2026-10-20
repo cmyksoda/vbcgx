@@ -2119,6 +2119,14 @@ static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1, uint8 *differs)
    }
 }
 
+/* Where the recompiler's event stub finds the state it advances itself at a column that only counts. */
+void VIP_ColumnStateAt(int32 **lastTs, int32 **columnCounter, int32 **column, int32 **displayRegion,
+                       int32 **drawingCounter, bool **instantHack)
+{
+   *lastTs = &last_ts, *columnCounter = &ColumnCounter, *column = &Column, *displayRegion = &DisplayRegion;
+   *drawingCounter = &DrawingCounter, *instantHack = &InstantDisplayHack;
+}
+
 v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
 {
    int32 clocks = timestamp - last_ts;
