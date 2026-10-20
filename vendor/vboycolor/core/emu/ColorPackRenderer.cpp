@@ -1672,7 +1672,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         const uint32_t runAt = m_runCacheAt;
 
         // (as the last run with this key in this eye, if any)
-        auto setUpRun = [&](uint64_t t, uint64_t key) -> Run {
+        auto setUpRun = [&](uint64_t t, uint64_t key) -> const Run & {
             const uint32_t runHash = (static_cast<uint32_t>(key) ^ static_cast<uint32_t>(key >> 32)) * 2654435761u;
             CachedRun &cached = m_runCache[runHash >> (32 - kRunCacheBits)];
             if (cached.at != runAt || cached.key != key)
@@ -2044,8 +2044,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             const size_t columnBase = (static_cast<size_t>(eyeOffset[0]) + x) * 4;
             uint64_t runKey = ~0ull;
             uint32_t runHi = 0, runLo = ~0u;
-            Run run;
-            bool runSetUp = true; // (false: a kept band's last run - run isn't it)
+            Run run; // (a slow run's own copy: its tile and band go by where it is - else cur is the cached run)
+            const Run *cur = &run;
+            bool runSetUp = true; // (false: a kept band's last run - cur isn't it)
             int nearCell = -1; // (context: the last pixel's markers nearby, by cell and layer)
             NearBits nearBits{};
             const uint32_t tagged = taggedBands[x >> 3];
@@ -2125,31 +2126,35 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                         runKey = t & kRunMask;
                         runHi = vbgo_tag_hi(t), runLo = vbgo_tag_lo(t) & kRunMaskLo;
                         countRun(runKey, x, y, rawPixel >> 26, firstHere ? nullptr : &sums, sumsAt);
-                        run = setUpRun(t, runKey);
+                        cur = &setUpRun(t, runKey);
+                        if (cur->slow)
+                            run = *cur, cur = &run;
                         runSetUp = true;
-                        if (run.pairSlot && !kept &&
-                            (band.pairSlots.empty() || band.pairSlots.back() != (cellBits | run.pairSlot)))
-                            band.pairSlots.push_back(cellBits | run.pairSlot);
+                        if (cur->pairSlot && !kept &&
+                            (band.pairSlots.empty() || band.pairSlots.back() != (cellBits | cur->pairSlot)))
+                            band.pairSlots.push_back(cellBits | cur->pairSlot);
                     }
                     else
                     {
                         if (!runSetUp)
                         {
-                            run = setUpRun(t, runKey);
+                            cur = &setUpRun(t, runKey);
+                            if (cur->slow)
+                                run = *cur, cur = &run;
                             runSetUp = true;
                         }
-                        if (firstHere && run.pairSlot && !kept &&
-                            (band.pairSlots.empty() || band.pairSlots.back() != (cellBits | run.pairSlot)))
-                            band.pairSlots.push_back(cellBits | run.pairSlot);
+                        if (firstHere && cur->pairSlot && !kept &&
+                            (band.pairSlots.empty() || band.pairSlots.back() != (cellBits | cur->pairSlot)))
+                            band.pairSlots.push_back(cellBits | cur->pairSlot);
                     }
 
-                    slowHere |= run.slow;
+                    slowHere |= cur->slow;
                     const unsigned shade = (rawPixel >> 24) & 3, index = VBGO_TAG_INDEX(t);
                     const uint8_t *rgb = nullptr;
                     // (the run's pixels from here to the band's end take only the tile's colors)
-                    bool plainRest = run.plain;
+                    bool plainRest = cur->plain;
 
-                    if (run.slow && pixel)
+                    if (cur->slow && pixel)
                     {
                         const unsigned chr = VBGO_TAG_CHAR(t);
                         if (m_slots[chr].ambiguous)
@@ -2189,17 +2194,17 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                                 }
                             }
                         }
-                        plainRest = !m_slots[chr].ambiguous && !run.cell && !run.flash;
+                        plainRest = !m_slots[chr].ambiguous && !cur->cell && !cur->flash;
                     }
 
                     if (plainRest)
                     {
                         // Most runs: the tile's colors, else the automatic ones - pixel
                         // after pixel while the tags stay in the run.
-                        const TileColorPack::Tile *tile = run.tile;
-                        const AutoColors::Ramp *ramp = run.ramp;
+                        const TileColorPack::Tile *tile = cur->tile;
+                        const AutoColors::Ramp *ramp = cur->ramp;
                         // (most tiles need no per-pixel look at which pixels are painted: one color, all or none)
-                        const bool oneColor = run.flat && fullFade, allOwn = tile->mask == ~0ull,
+                        const bool oneColor = cur->flat && fullFade, allOwn = tile->mask == ~0ull,
                                    noneOwn = tile->mask == 0;
                         const uint8_t oneB = tile->rgb[0][2], oneG = tile->rgb[0][1], oneR = tile->rgb[0][0];
                         bool rampUsed = false;
@@ -2238,20 +2243,20 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     }
 
                     // 1. The map cell's own colors for this tile (and fills).
-                    if (run.cell)
+                    if (cur->cell)
                     {
-                        if (run.cell->keep >> index & 1)
+                        if (cur->cell->keep >> index & 1)
                             goto automatic; // left uncolored here on purpose: the mode's own colors
-                        if (run.cell->mask >> index & 1)
-                            rgb = run.cell->rgb[index];
+                        if (cur->cell->mask >> index & 1)
+                            rgb = cur->cell->rgb[index];
                     }
                     if (!rgb)
                     {
                         if (!pixel)
                             continue; // a fill nobody painted
                         // 2-4. Context (slow runs' tiles), the palette's, the layer's, or the tile's own colors.
-                        if (run.tile->mask >> index & 1)
-                            rgb = run.tile->rgb[index];
+                        if (cur->tile->mask >> index & 1)
+                            rgb = cur->tile->rgb[index];
                     }
 
                 automatic:
@@ -2259,12 +2264,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     {
                         // Unpainted: keeps the Multicolor palette's color, or in Auto mode its layer's or sprite
                         // palette's (see AutoColors.h); the black shade stays background.
-                        if (!run.ramp || !pixel || !shade)
+                        if (!cur->ramp || !pixel || !shade)
                             continue;
-                        rgb = (*run.ramp)[shade - 1].data();
+                        rgb = (*cur->ramp)[shade - 1].data();
                         band.autoCells |= 1ull << (x >> 3);
                     }
-                    if (run.flash && shade && (!run.ramp || rgb != (*run.ramp)[shade - 1].data()))
+                    if (cur->flash && shade && (!cur->ramp || rgb != (*cur->ramp)[shade - 1].data()))
                     {
                         // (painted, in a flash: 60% of the way to the shade's white, gray or black)
                         static constexpr int kTarget[4] = {0, 0, 128, 255};
