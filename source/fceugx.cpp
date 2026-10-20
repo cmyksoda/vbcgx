@@ -28,6 +28,7 @@ Platform *platform = &platformInstance;
 AppRequest appRequest = AppRequest::NONE;
 char appPath[MAXPATHLEN] = {};
 unsigned char *nesrom = nullptr;
+static bool autoboot = false;
 static void SaveAppData()
 {
     SavePrefsAndWait();
@@ -40,7 +41,7 @@ void ExitApp()
     CloseVBGame();
     retro_deinit();
     Thread::JoinAll();
-    platform->requestExit(EmuSettings.exitAction, false);
+    platform->requestExit(EmuSettings.exitAction, autoboot);
 }
 int main(int argc, char **argv)
 {
@@ -71,13 +72,30 @@ int main(int argc, char **argv)
     }
     InitGUIThreads();
     InitVBCore();
+    // (a loader such as WiiFlow passes the game's folder and file name, as FCE Ultra GX takes them: it starts at once)
+    if (argc > 2 && argv[1] && argv[2]) {
+        LoadPrefs();
+        if (strncmp(argv[1], "sd", 2) == 0) {
+            EmuSettings.saveDevice = DEVICE_SD;
+            EmuSettings.loadDevice = DEVICE_SD;
+        } else if (strncmp(argv[1], "usb", 3) == 0) {
+            EmuSettings.saveDevice = DEVICE_USB;
+            EmuSettings.loadDevice = DEVICE_USB;
+        }
+        SavePrefs();
+        EmuSettings.autoloadGame = AutoloadGame(argv[1], argv[2]);
+        autoboot = EmuSettings.autoloadGame;
+    }
     while (!platform->shouldExit()) {
         appRequest = AppRequest::MENU;
-        platform->getAudio()->startMenuAudio();
-        MainMenu(romLoaded ? MENU_GAME : MENU_GAMESELECTION);
+        if (!autoboot) {
+            platform->getAudio()->startMenuAudio();
+            MainMenu(romLoaded ? MENU_GAME : MENU_GAMESELECTION);
+        }
         platform->getAudio()->stopMenuAudio();
         if (platform->shouldExit()) break;
         WaitForBackgroundTasks(15000);
+        autoboot = false;
         appRequest = AppRequest::NONE;
         SetControllers();
         SetPalette();
