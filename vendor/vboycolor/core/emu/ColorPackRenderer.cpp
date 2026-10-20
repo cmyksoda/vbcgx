@@ -601,7 +601,9 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, con
         // A sprite in a palette showing all its shades alike is a silhouette (a hit enemy flashing, a blinking player)
         // that painted colors would hide: they're washed toward that shade (see Paint), so the flash still shows.
         run.flash = sprite && (c.flatObjPalettes >> palette & 1);
-        run.slow = slot.ambiguous || (c.markers && m_slotHasMarkers[chr]) || (slot.contextCount && c.haveContexts);
+        // (a background pixel goes by context and markers only through layer-bound groups, which only some packs have)
+        const bool contextual = (c.markers && m_slotHasMarkers[chr]) || (slot.contextCount && c.haveContexts);
+        run.slow = slot.ambiguous || (contextual && (sprite || m_layerBound.Any()));
         if (c.haveCells && VBGO_TAG_HAS_CELL(t))
             run.cell = FindCell(VBGO_TAG_CELL(t), palette, slot.hash);
         if (!run.slow)
