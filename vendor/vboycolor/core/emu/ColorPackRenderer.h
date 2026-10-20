@@ -140,6 +140,8 @@ private:
         // (right eye: a bit per cell whose runs add markers; a kept cell's other slow columns aren't scanned)
         uint64_t markCells = 0;
         uint64_t autoCells = 0;    // (left eye: a bit per cell with a pixel in an automatic ramp's color)
+        // (right eye: a bit per cell whose walk a Paint skipped, and per cell whether its band was unreached as walked)
+        uint64_t skipped = 0, unreached = 0;
     };
     std::array<std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2>, 2> m_bands; // [eye][buffer]
     std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_painted{};
@@ -330,6 +332,7 @@ private:
     static constexpr int kRunCacheBits = 10, kRunCacheSize = 1 << kRunCacheBits;
     std::vector<CachedRun> m_runCache;
     uint32_t m_runCacheAt = 0; // (one more each eye painted)
+    uint8_t m_endsRest = 0; // (Paints the right eye's ends aren't tried after markers stopped them - see Paint)
 
     // Pixels of ambiguous tiles (see TileColorPack::IsAmbiguous) painted this
     // eye, (x, y) - they take the color the same shade has next to them.

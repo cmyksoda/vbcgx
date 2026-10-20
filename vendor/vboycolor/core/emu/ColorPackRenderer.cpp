@@ -174,6 +174,7 @@ void ColorPackRenderer::ForgetBands()
 void ColorPackRenderer::SetPack(const TileColorPack *pack)
 {
     ForgetBands();
+    m_endsRest = 0;
     m_depth.Reset();
     m_pack = pack && !pack->Empty() ? pack : nullptr;
     m_cellStart.clear();
@@ -1447,6 +1448,132 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
         }
     };
 
+    // The right eye's run starts, if they're all it adds (true): with a pack, no drawn tile there carrying markers for
+    // its kind, every layer pair estimated, no right-only sprite, and what it keeps walked with its band reached as
+    // now, a start only moves the layers' extents and wants its pair. Only bands where one still could are read.
+    constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
+    auto rightFromEnds = [&](const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut) -> bool {
+        if (!m_pack || !v.cell_worlds || (markers && !v.band_chr))
+            return false;
+        if (m_endsRest)
+        {
+            --m_endsRest;
+            return false;
+        }
+        // (only worth it where the walk would read most of the picture: kept cells cost it little)
+        int tagged = 0, toWalk = 0;
+        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+        {
+            const uint64_t cells = v.tagged ? v.tagged[b] : kAllCells;
+            tagged += __builtin_popcountll(cells);
+            toWalk += __builtin_popcountll(cells & ~(keepRight[b] & ~rightBands[b].skipped));
+        }
+        if (toWalk * 2 < tagged)
+            return false;
+        for (int p = 0; pairs && p < m_pairCount; ++p)
+            if (!m_pairs[p].sprites && !m_pairs[p].estimated)
+                return false;
+        for (unsigned i = 0; pairs && m_oam && i < 1024; ++i)
+            if ((m_oam[i * 4 + 1] & 0xC000) == 0x4000)
+                return false;
+        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+            if (keepRight[b] & (v.band_key[b] ? rightBands[b].unreached : ~rightBands[b].unreached))
+                return false;
+        for (unsigned b = 0; markers && b < static_cast<unsigned>(kBands); ++b)
+        {
+            uint32_t used = 0;
+            for (unsigned i = 0; i < 2048 / 32; ++i)
+                used |= v.band_chr[b * (2048 / 32) + i] & m_markerSlots[i];
+            for (unsigned x = 0; used && x < VBGO_TT_WIDTH; ++x)
+                if (const uint32_t *column = v.columns[x])
+                    for (unsigned y = b * 8; y < b * 8 + 8; ++y)
+                    {
+                        const uint32_t lo = column[y];
+                        const unsigned chr = VBGO_TAG_CHAR(lo);
+                        if (vbgo_tag_drawn(lo, v.band_key[b]) && m_slotHasMarkers[chr] &&
+                            (m_slotMarkers[chr] & (VBGO_TAG_IS_OBJ(lo) ? ~m_layerBound : m_layerBound)).Any())
+                        {
+                            m_endsRest = 16; // (markers usually stay a while: not looked for again soon)
+                            return false;
+                        }
+                    }
+        }
+
+        uint32_t wanted = 0; // (bit per pair a start wants)
+        // (no world that may draw in band b at columns x0 - x1 - both eyes', a superset without sprites - could start
+        // a run there that moves an extent or wants a pair)
+        auto settled = [&](int b, int x0, int x1) {
+            for (uint32_t worlds = v.cell_worlds[b * kGridW + (x0 >> 3)]; worlds; worlds &= worlds - 1)
+            {
+                const unsigned w = static_cast<unsigned>(__builtin_ctz(worlds)), k = m_worlds[w].colors;
+                const int p = pairs ? m_pairOfRight[w] : -1;
+                if (!(worldsDrawn >> k & 1) || left[k] > x0 || right[k] < x1 || top[k] > b * 8 ||
+                    bottom[k] < b * 8 + 7 || (p >= 0 && !(wanted >> p & 1)))
+                    return false;
+            }
+            return true;
+        };
+        for (int c = 0; c < kGridW; ++c)
+        {
+            // (bands settled for all 8 columns at once - starts only widen the extents - the rest asked per column)
+            uint32_t open = 0;
+            for (int b = 0; b < kBands; ++b)
+                if (!settled(b, c * 8, c * 8 + 7))
+                    open |= 1u << b;
+            for (int x = c * 8; open && x < c * 8 + 8; ++x)
+            {
+                const uint32_t *column = v.columns[x];
+                if (!column)
+                    continue;
+                const uint16_t *cells = v.cells[x];
+                const EyeColumn eyeColumn(eyeBits, eyeClut, static_cast<uint32_t>(x));
+                // (as the walk counts a pixel: drawn by the pass, and lit unless it's a fill)
+                auto counted = [&](int y) {
+                    const uint32_t lo = column[y];
+                    return vbgo_tag_drawn(lo, v.band_key[y >> 3]) &&
+                           (!VBGO_TAG_PIXEL(lo) || (eyeColumn[static_cast<uint32_t>(y)] & 0xFFFFFFu));
+                };
+                uint32_t runLo = ~0u, runHi = VBGO_TAG_NO_HI; // (the last counted pixel's key: a start has another)
+                int walked = -1;
+                for (uint32_t todo = open; todo; todo &= todo - 1)
+                {
+                    const int b = __builtin_ctz(todo);
+                    if (settled(b, x, x))
+                        continue;
+                    if (walked != b - 1)
+                    {
+                        // (below bands not walked, the run in progress is the last counted pixel's above)
+                        runLo = ~0u, runHi = VBGO_TAG_NO_HI;
+                        for (int u = b * 8 - 1; u >= 0; --u)
+                            if (counted(u))
+                            {
+                                runLo = column[u] & kRunMaskLo, runHi = cells[vbgo_tt_cell_at(u)];
+                                break;
+                            }
+                    }
+                    for (int y = b * 8; y < b * 8 + 8; ++y)
+                    {
+                        if (!counted(y))
+                            continue;
+                        const uint32_t lo = column[y] & kRunMaskLo, hi = cells[vbgo_tt_cell_at(y)];
+                        if (lo == runLo && hi == runHi)
+                            continue;
+                        runLo = lo, runHi = hi;
+                        const uint64_t t = vbgo_tag_compose(column[y], cells[vbgo_tt_cell_at(y)]);
+                        countRun(t & kRunMask, x, y, eyeColumn[static_cast<uint32_t>(y)] >> 26, nullptr, 0);
+                        if (pairs && !VBGO_TAG_IS_OBJ(t) && m_pairOfRight[VBGO_TAG_WORLD(t)] >= 0)
+                            wanted |= 1u << m_pairOfRight[VBGO_TAG_WORLD(t)];
+                    }
+                    walked = b;
+                }
+            }
+        }
+        for (int p = 0; p < m_pairCount; ++p)
+            if (wanted >> p & 1)
+                m_pairs[p].wantedAt = m_frame;
+        return true;
+    };
+
     // (without Auto colors, contexts or pairs, nothing the right eye's runs add reaches a picture: only the layers'
     // extents, which then go by the left eye alone)
     const bool rightNeeded = m_auto || haveContexts || pairs || !m_pack;
@@ -1528,11 +1655,44 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
             // The right eye isn't shown, but later frames go by what it draws: the layers'
             // extents and brightness where its runs start, and slow runs' markers.
             static const uint32_t kNoVersions[kGridW] = {};
+            if (rightFromEnds(v, eyeBits, eyeClut))
+            {
+                // (the bookkeeping as the walk leaves it, but for the cells it would have walked: they're walked when
+                // next kept, as they would have been now - see below)
+                for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+                {
+                    Band &band = rightBands[b];
+                    startCells(band, keepRight[b], v.cell_version ? &v.cell_version[b * kGridW] : kNoVersions, v.clut,
+                               m_paintStateRight);
+                    band.onShades = static_cast<uint8_t>(rightOnShades);
+                    const uint64_t walked = ~keepRight[b] & kAllCells;
+                    band.skipped |= walked;
+                    band.unreached = (band.unreached & ~walked) | (v.band_key[b] ? 0 : walked);
+                }
+                continue;
+            }
+            // (cells whose walk a Paint skipped count as not kept; the kept ones are walked as they would have been
+            // then, their band reached or not)
+            uint32_t skippedBands[kGridW] = {}, replayBands[kGridW] = {}; // (per 8 columns, a bit per band)
             for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
             {
-                startCells(rightBands[b], keepRight[b], v.cell_version ? &v.cell_version[b * kGridW] : kNoVersions,
-                           v.clut, m_paintStateRight);
-                rightBands[b].onShades = static_cast<uint8_t>(rightOnShades);
+                Band &band = rightBands[b];
+                const uint64_t replay = keepRight[b] & band.skipped;
+                keepRight[b] &= ~band.skipped;
+                for (uint64_t w = band.skipped; w; w &= w - 1)
+                {
+                    const unsigned c = static_cast<unsigned>(__builtin_ctzll(w));
+                    keptRightCell[b][c] = 0;
+                    keptRightBands[c] &= ~(1u << b);
+                    skippedBands[c] |= 1u << b;
+                    replayBands[c] |= static_cast<uint32_t>(replay >> c & 1) << b;
+                }
+                band.skipped = 0;
+                startCells(band, keepRight[b], v.cell_version ? &v.cell_version[b * kGridW] : kNoVersions, v.clut,
+                           m_paintStateRight);
+                band.onShades = static_cast<uint8_t>(rightOnShades);
+                const uint64_t walked = ~(keepRight[b] | replay) & kAllCells;
+                band.unreached = (band.unreached & ~walked) | (v.band_key[b] ? 0 : walked);
             }
 
             CellSums unkept;
@@ -1544,7 +1704,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                     continue;
 
                 uint8_t &summaryAt = rightSummaryState[x];
-                if (!((rightActive[x] | taggedBands[x >> 3]) & ~keptRightBands[x >> 3]))
+                const uint32_t skippedHere = skippedBands[x >> 3], replayHere = replayBands[x >> 3];
+                if (!((rightActive[x] | taggedBands[x >> 3] | skippedHere) & ~keptRightBands[x >> 3]))
                 {
                     ColumnSummary &summary = rightSummaries[x];
                     if (!summaryAt)
@@ -1566,14 +1727,17 @@ void ColorPackRenderer::Paint(uint8_t *frame, uint32_t fbWidth, const uint32_t e
                 uint32_t runHi = 0, runLo = ~0u;
                 Run run;
                 bool runSetUp = true;
-                const uint32_t tagged = taggedBands[x >> 3];
+                const uint32_t tagged = taggedBands[x >> 3] | replayHere; // (a replayed cell's tags are as then)
                 uint32_t &active = rightActive[x];
 
                 // (only these bands do anything: the others are kept with nothing, or untagged with nothing to clear)
-                for (uint32_t todo = active | (tagged & ~keptRightBands[x >> 3]); todo; todo &= todo - 1)
+                const uint32_t walk = (tagged | skippedHere) & ~keptRightBands[x >> 3];
+                for (uint32_t todo = active | walk; todo; todo &= todo - 1)
                 {
                     const uint32_t b = static_cast<uint32_t>(__builtin_ctz(todo));
-                    const uint32_t bandKey = v.band_key[b];
+                    uint32_t bandKey = v.band_key[b];
+                    if (replayHere >> b & 1) // (walked as then: its band reached or not)
+                        bandKey = rightBands[b].unreached >> (x >> 3) & 1 ? 0 : VBGO_TT_BAND_REACHED;
                     BandColumn &here = rightColumns[x * kBands + b];
                     const bool kept = keptRightCell[b][x >> 3];
 
