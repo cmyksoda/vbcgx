@@ -8,10 +8,11 @@ VBoy Color GX is a Wii port of [VBoy Color](https://github.com/yuk27/VBoyColor),
 
 ## Features
 
-- **Full-speed gameplay** in every official Virtual Boy release.[^1]
+- **Full speed** almost everywhere in every official Virtual Boy release.[^1]
 - **Lots of color options:** each game's own color pack, automatic colors, multicolor palettes, gradients, and tints (presets or your own).
 - **240p** for crisp pixels on CRT televisions, plus 480p and 480i.
 - **Save states, screenshots, and cover art** through the GX frontend.
+- **WiiFlow Lite plugin** for starting games straight from WiiFlow.
 - **Controllers:** Wii Remote + Nunchuk, Classic Controller, Wii U Pro Controller, GameCube controller, and the Wii U GamePad (in vWii).
 
 ## Building
@@ -29,6 +30,8 @@ The first build also downloads and builds libsmb2. The result is `executables/vb
 ## Installing
 
 Copy the `apps/vbcgx/` and `vbcgx/` folders to the root of your SD card or USB device, then put your games in `vbcgx/roms/`.
+
+For WiiFlow Lite, also copy the `wiiflow/` folder to the root of your SD card and turn on the "Virtual Boy" plugin in WiiFlow's settings. The plugin finds your games in `sd:/vbcgx/roms/`.
 
 ## Credits
 
