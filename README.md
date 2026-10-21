@@ -54,4 +54,4 @@ VBoy Color GX doesn't include any games. Virtual Boy is a trademark of Nintendo,
 
 *This project was made with AI assistance. For more information, see [my AI usage statement](https://github.com/cmyksoda/cmyksoda/blob/main/AI_USAGE.md).*
 
-[^1]: Measured on a Wii and on a Wii U in Wii mode. Two scenes outside gameplay still slow down: Mario Clash's opening movie, only slightly (at its slowest about 50 frames per second on a Wii and 48 on a Wii U, against the Virtual Boy's 50.27), and the house picture at the start of Innsmouth no Yakata.
+[^1]: Speeds were measured on a Wii and on a Wii U in Wii mode, over the first minute of each game (its title screen, opening and demo). Some spots in real play can still slow down, like parts of Virtual Boy Wario Land after the first room, and so can two scenes outside gameplay: Mario Clash's opening movie, only slightly (at its slowest about 50 frames per second on a Wii and 48 on a Wii U, against the Virtual Boy's 50.27), and the house picture at the start of Innsmouth no Yakata. Reports of other slow spots are welcome.
