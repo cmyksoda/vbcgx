@@ -48,7 +48,7 @@ LDFLAGS		+=	-L../buildtools
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
 LIBS	:=	../build-core/libvboycolor.a ../build-core/libbeetle_vb.a -ldi -liso9660 -lpng -lmxml $(FREETYPE_LIBS) \
-			-lfat -lwiiuse -lz -lbte -lasnd -logc -lvorbisidec -logg -lsmb2
+			-lfat -lwiiuse -lz -lbte -lasnd libogc64.a -lvorbisidec -logg -lsmb2
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
@@ -146,9 +146,17 @@ DEPENDS	:=	$(OFILES:.o=.d)
 # main targets
 #---------------------------------------------------------------------------------
 $(OUTPUT).dol: $(OUTPUT).elf
-$(OUTPUT).elf: $(OFILES) ../build-core/libvboycolor.a ../build-core/libbeetle_vb.a
+$(OUTPUT).elf: $(OFILES) ../build-core/libvboycolor.a ../build-core/libbeetle_vb.a | libogc64.a
 
 $(OFILES_SOURCES) : $(HFILES)
+
+# (this libogc2 aligns the SD card's 64-byte DMA buffer to 32 only: across a 4 KB line, IOS never answers)
+libogc64.a: $(LIBOGC_LIB)/libogc.a
+	cp $< $@
+	$(AR) p $@ wiisd.o > wiisd.o
+	$(OBJCOPY) --set-section-alignment .bss.__sd0_functions=64 wiisd.o
+	$(AR) r $@ wiisd.o
+	@rm -f wiisd.o
 
 #---------------------------------------------------------------------------------
 # This rule links in binary data with these extensions: ttf lang png ogg pcm
