@@ -7,7 +7,7 @@
   <short_description>Virtual Boy emulator, in color!</short_description>
   <long_description>VBoy Color GX is a port of VBoy Color to the Wii, using Tantric's GX frontend.
 
-Optimized for steady performance during gameplay in every official release. Includes many different color options.
+Optimized for steady performance during gameplay. Includes many different color options.
 
 Supports Wii Remote + Nunchuk, Classic Controller, Wii U Pro Controller, GameCube controller, and the Wii U GamePad in vWii.</long_description>
   <ahb_access />
