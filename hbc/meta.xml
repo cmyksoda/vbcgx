@@ -2,7 +2,7 @@
 <app version="1">
   <name>VBoy Color GX</name>
   <coder>cmyksoda</coder>
-  <version>1.0.2</version>
+  <version>1.0.3</version>
   <release_date>20261019</release_date>
   <short_description>Virtual Boy emulator, in color!</short_description>
   <long_description>VBoy Color GX is a port of VBoy Color to the Wii, using Tantric's GX frontend.
