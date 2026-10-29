@@ -322,7 +322,8 @@ void DepthColors::Update()
                     if (!(columns[0] | columns[1] | columns[2] | columns[3] | columns[4] | columns[5] | columns[6] |
                           columns[7]))
                         continue;
-                    uint8_t *const rows = m_bits[e][s].data()->data() + (kRowPad + 32 * g) * sizeof(Row) + 8 + tile;
+                    uint8_t *const rows =
+                        reinterpret_cast<uint8_t *>(m_bits[e][s].data()) + (kRowPad + 32 * g) * sizeof(Row) + 8 + tile;
                     ToggleRows<sizeof(Row)>(columns, rows);
                 }
             }
