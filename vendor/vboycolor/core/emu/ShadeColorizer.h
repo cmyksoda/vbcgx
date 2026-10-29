@@ -29,19 +29,21 @@ public:
     // Gradient only: learns the shade brightnesses from a frame of the core's output, both eyes as Colorize reads them,
     // scanned as the side-by-side picture (width wide, the right eye from rightX). Call once per frame before Colorize;
     // cheap (a sparse scan, the table rebuilt only on change).
-    void Observe(const uint8_t *const bits[2], const uint32_t *const clut[2], size_t width, size_t height, size_t rightX);
+    void Observe(const uint8_t *const bits[2], const uint32_t *const clut[2], size_t width, size_t height,
+                 size_t rightX);
     // The 4 colors as shown at full brightness (background, 3 shades).
     std::array<ShadeRgb, 4> Palette() const { return m_palette; }
 
     // The eye's colors, once a frame before Colorize (after Observe): each column's 4 pixel values (clut, as
-    // vbgo_vip_eye_clut keeps them - bytes B,G,R,tag per pixel, tag bits 0-1 shade index, 2-7 fade level) colored; nothing
-    // is redone for the same table under the same colors.
+    // vbgo_vip_eye_clut keeps them - bytes B,G,R,tag per pixel, tag bits 0-1 shade index, 2-7 fade level) colored;
+    // nothing is redone for the same table under the same colors.
     void PrepareColumns(const uint32_t *clut);
     // Row y of the eye from column x on, pixelCount pixels (bits: as vbgo_vip_eye_bits keeps it). dst: B,G,R,A
     // bytes ready for the B8G8R8A8 screen texture, A forced opaque.
     void Colorize(const uint8_t *bits, unsigned x, unsigned y, size_t pixelCount, uint8_t *dst) const;
     // count pixels down column x from row y, rowBytes apart.
-    void ColorizeColumn(const uint8_t *bits, unsigned x, unsigned y, unsigned count, uint8_t *dst, size_t rowBytes) const;
+    void ColorizeColumn(const uint8_t *bits, unsigned x, unsigned y, unsigned count, uint8_t *dst,
+                        size_t rowBytes) const;
     // Colorize for one 8x8 cell from (x, y), its rows rowBytes apart, in one call.
     void ColorizeCell(const uint8_t *bits, unsigned x, unsigned y, uint8_t *dst, size_t rowBytes) const;
     // ColorizeCell for each band in bands (a bit each) of the cells from column x (a multiple of 8); band 0's first row
@@ -60,7 +62,8 @@ private:
     uint32_t ColorOf(uint32_t pixel) const;
     static constexpr size_t kColumns = 384; // (VBGO_TT_WIDTH)
     std::array<uint32_t, kColumns * 4> m_columnColors{};
-    std::array<uint32_t, kColumns * 4> m_columnClut{}; // (the table m_columnColors was made from, under m_columnsVersion)
+    // (the table m_columnColors was made from, under m_columnsVersion)
+    std::array<uint32_t, kColumns * 4> m_columnClut{};
     uint32_t m_columnsVersion = ~0u;
     // Every column showing the same 4 colors: a byte of bits (4 rows of a column) colored at once.
     bool m_uniform = false;

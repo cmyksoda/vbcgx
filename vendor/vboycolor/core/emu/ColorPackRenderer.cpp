@@ -89,7 +89,8 @@ struct LitRows
         const uint32_t low = band & 0x5555u, high = band >> 1 & 0x5555u;
         if (zeroOnly)
             return low | high;
-        return (value[0] & ~(low | high)) | (value[1] & low & ~high) | (value[2] & high & ~low) | (value[3] & low & high);
+        return (value[0] & ~(low | high)) | (value[1] & low & ~high) | (value[2] & high & ~low) |
+               (value[3] & low & high);
     }
 };
 
@@ -192,14 +193,17 @@ using PlainKindTag = std::integral_constant<PlainKind, kKind>;
 // Lane I: (a plain run's kind at full fade, by its tile's colors and its ramp)
 inline PlainKind FullFadeKind(const TileColorPack::Tile *tile, const AutoColors::Ramp *ramp)
 {
-    return tile->mask == ~0ull ? PlainKind::kAllOwn : tile->mask == 0 && ramp ? PlainKind::kRampOnly : PlainKind::kMixed;
+    return tile->mask == ~0ull       ? PlainKind::kAllOwn
+           : tile->mask == 0 && ramp ? PlainKind::kRampOnly
+                                     : PlainKind::kMixed;
 }
 
 // Lane I: (a color as the frame's B, G, R bytes in one word, its alpha byte 0 - see StoreFrameRgb)
 constexpr uint32_t FrameRgb(const AutoColors::Rgb &rgb)
 {
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-    return static_cast<uint32_t>(rgb[2]) << 24 | static_cast<uint32_t>(rgb[1]) << 16 | static_cast<uint32_t>(rgb[0]) << 8;
+    return static_cast<uint32_t>(rgb[2]) << 24 | static_cast<uint32_t>(rgb[1]) << 16 |
+           static_cast<uint32_t>(rgb[0]) << 8;
 #else
     return static_cast<uint32_t>(rgb[0]) << 16 | static_cast<uint32_t>(rgb[1]) << 8 | rgb[2];
 #endif
@@ -1372,7 +1376,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         }
         else if (sourceCount <= 192)
         {
-            // (up to about 200 sources the spread costs less than the whole-grid passes below: ~4 us each against 0.8 ms)
+            // (up to about 200 sources the spread costs less than the whole-grid passes below: ~4 us each against 0.8
+            // ms)
             if (m_spreadAll)
             {
                 std::fill(m_nearSprites.begin(), m_nearSprites.end(), ContextGroupBits{});
@@ -1859,10 +1864,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     }
                 }
         }
+
         // (no world that may draw in band b at columns x0 - x1 - both eyes', a superset without sprites - could start
         // a run there that resizes its layer or wants a pair; a layer this wide is sized by its width alone)
         constexpr int kSizedByWidth = VBGO_TT_HEIGHT - 1 + 7;
         uint32_t *const cellWorlds = m_rightCellWorlds.data();
+
         // (a start of world w in band b, at columns x0 - x1, can neither widen its layer nor want its pair)
         auto reached = [&](unsigned w, int b, int x0, int x1) {
             const unsigned k = m_worlds[w].colors;
@@ -1888,6 +1895,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 }
             return true;
         };
+
         // (whether a layer with a pixel counted in a cell is uncovered: the tracker's layers there also include ones
         // drawn over, or lit nowhere)
         auto uncoveredStart = [&](unsigned b, unsigned c) {
@@ -1929,6 +1937,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             }
             return false;
         };
+
         // (per cell column, a bit per band with a cell where a world isn't covered yet by its extents, and with one
         // that only waits for its pair to be wanted: starts widen the extents and want pairs, so the rest stay settled)
         uint32_t openBands[kGridW] = {}, pairBands[kGridW] = {};
@@ -2004,6 +2013,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     pairBands[c] |= 1u << b;
             }
         }
+
         int openCells = 0;
         for (int c = 0; c < kGridW; ++c)
         {
@@ -2074,6 +2084,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 }
             }
         }
+
         for (int p = 0; p < m_pairCount; ++p)
             if (wanted >> p & 1)
                 m_pairs[p].wantedAt = m_frame;
@@ -2172,8 +2183,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             return cached.run;
         };
 
-        // (the right eye: a cell not kept, walked for its bookkeeping alone - the frame's extents and wanted pairs are the
-        // shortcut's - as the walk below walks it; a band's first run is counted where the cell is next kept)
+        // (the right eye: a cell not kept, walked for its bookkeeping alone - the frame's extents and wanted pairs are
+        // the shortcut's - as the walk below walks it; a band's first run is counted where the cell is next kept)
         auto walkCell = [&](unsigned b, unsigned c) {
             Band &band = rightBands[b];
             const uint32_t bandKey = v.band_key[b];
@@ -2654,8 +2665,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 bandColumns[x * kBands + b] = column;
                 bandsActive[x] = (bandsActive[x] & ~(1u << b)) | (fromActive[sx + k] & 1u << b);
                 summaryState[x] = 0;
-                // (a left picture's run: its pair slot and tile, as setting it up and counting its first pixel note them)
-                const int pair = pairs && (fromActive[sx + k] >> b & 1) ? m_pairOfLeft[VBGO_TAG_WORLD(column.first)] : -1;
+                // (a left picture's run: its pair slot and tile, as setting it up and counting its first pixel note
+                // them)
+                const int pair =
+                    pairs && (fromActive[sx + k] >> b & 1) ? m_pairOfLeft[VBGO_TAG_WORLD(column.first)] : -1;
                 if (pair >= 0 && (VBGO_TAG_CHAR(column.first) | static_cast<uint32_t>(pair) << 11) != noted)
                 {
                     const unsigned chr = VBGO_TAG_CHAR(column.first);
@@ -2684,7 +2697,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         };
 
         uint32_t copiedHere = 0; // (the bands of the cell column at x copied rather than painted)
-        std::array<uint32_t, kGridW> recordedBands{}; // (per cell column, the bands whose cell may have a motion record)
+        // (per cell column, the bands whose cell may have a motion record)
+        std::array<uint32_t, kGridW> recordedBands{};
         for (uint32_t bands = copyBands; bands; bands &= bands - 1)
         {
             const unsigned b = static_cast<unsigned>(__builtin_ctz(bands));
@@ -2850,7 +2864,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 auto paintRows = [&](auto kind, const TileColorPack::Tile *tile, const AutoColors::Ramp *ramp)
                                      __attribute__((always_inline)) {
                     constexpr PlainKind kKind = decltype(kind)::value;
-                    const uint32_t *const rampWords = kKind == PlainKind::kRampOnly ? RampWords(ramp) : nullptr; // Lane I
+                    // Lane I
+                    const uint32_t *const rampWords = kKind == PlainKind::kRampOnly ? RampWords(ramp) : nullptr;
                     const uint32_t maskLo = static_cast<uint32_t>(tile->mask);
                     const uint32_t maskHi = static_cast<uint32_t>(tile->mask >> 32);
                     const uint32_t *tags = column + y;

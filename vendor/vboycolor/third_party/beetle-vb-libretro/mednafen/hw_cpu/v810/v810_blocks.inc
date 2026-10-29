@@ -13,8 +13,8 @@ enum { JIT_EXIT_STOPPED = 0, JIT_EXIT_BRANCH = 1, JIT_EXIT_INTERPRET = 2, JIT_EX
 enum { JIT_STUB_ENTER, JIT_STUB_LEAVE, JIT_STUB_LEAVE_TS, JIT_STUB_EVENTS, JIT_STUB_INTERPRET, JIT_STUB_INTERPRET_FIRST,
        JIT_STUB_BRANCH, JIT_STUB_IDLE, JIT_STUB_READ8, JIT_STUB_READ16, JIT_STUB_READ32, JIT_STUB_WRITE8,
        JIT_STUB_WRITE16, JIT_STUB_WRITE32, JIT_STUB_WAIT, JIT_STUBS };
-/* The code buffer is pages: hot code, then the cold code that goes with it (slow paths, exits), so what runs sits packed
- * together. A page is as far as a conditional branch reaches. */
+/* The code buffer is pages: hot code, then the cold code that goes with it (slow paths, exits), so what runs sits
+ * packed together. A page is as far as a conditional branch reaches. */
 enum { JIT_PAGE_WORDS = 32 * 1024 / 4, JIT_HOT_WORDS = 18 * 1024 / 4 };
 
 namespace
@@ -23,7 +23,8 @@ enum BlockKind : uint8
 {
    BK_NONE,
    /* reg-reg (r1 = arg1, r2 = arg2) */
-   BK_MOV, BK_ADD, BK_SUB, BK_CMP, BK_SHL, BK_SHR, BK_SAR, BK_MUL, BK_DIV, BK_MULU, BK_DIVU, BK_OR, BK_AND, BK_XOR, BK_NOT,
+   BK_MOV, BK_ADD, BK_SUB, BK_CMP, BK_SHL, BK_SHR, BK_SAR, BK_MUL, BK_DIV, BK_MULU, BK_DIVU, BK_OR, BK_AND,
+   BK_XOR, BK_NOT,
    /* imm5 (r1 = arg1, r2 = arg2) */
    BK_MOV_I, BK_ADD_I, BK_SETF, BK_CMP_I, BK_SHL_I, BK_SHR_I, BK_SAR_I, BK_STSR,
    /* 16-bit immediate (r1 = source, r2 = destination, imm) */
@@ -217,7 +218,8 @@ int V810::RunBlock(v810_timestamp_t &timestamp)
          JitLink(JitLinkSite, code); /* (the branch that came here now jumps straight into this block's code) */
    }
    JitLinkSite = NULL;
-   const uint32 exit = ((uint32 (*)(uint32 *, v810_timestamp_t *, void *))JitStub[JIT_STUB_ENTER])(P_REG, &timestamp, code);
+   const uint32 exit =
+       ((uint32 (*)(uint32 *, v810_timestamp_t *, void *))JitStub[JIT_STUB_ENTER])(P_REG, &timestamp, code);
    SetPC(JitTarget);
    const bool stopped = exit == JIT_EXIT_STOPPED || exit == JIT_EXIT_FRAME_END;
    BlockEntryOk = !stopped || !JitResumeAt; /* (stopped with nowhere to go on: the block ended there) */

@@ -54,10 +54,10 @@ public:
         // The cell at column first of each band in bands (a bit each), all in one call.
         std::function<void(unsigned first, uint32_t bands)> cellColumn;
     };
-    // frame: B,G,R,A bytes, ShownBuffer's picture as its last Paint left it (bands not kept are
-    // shaded and painted again), fbWidth pixels per row, the eyes side by side at eyeOffset[0/1]
-    // (the core's picture comes from vbgo_vip_eye_bits). other: the other buffer's picture as its last Paint left it, laid
-    // out alike (nullptr: none). background: what painted colors fade toward.
+    // frame: B,G,R,A bytes, ShownBuffer's picture as its last Paint left it (bands not kept are shaded and painted
+    // again), fbWidth pixels per row, the eyes side by side at eyeOffset[0/1] (the core's picture comes from
+    // vbgo_vip_eye_bits). other: the other buffer's picture as its last Paint left it, laid out alike (nullptr: none).
+    // background: what painted colors fade toward.
     void Paint(uint8_t *frame, const uint8_t *other, uint32_t fbWidth, const uint32_t eyeOffset[2],
                const ShadeRgb &background, const Shade &shade);
     // The frame buffer the left eye shows (0 or 1): each keeps a colored picture of its own.
@@ -85,7 +85,8 @@ private:
     // ambiguous tiles. Slow runs' columns are painted again (their surroundings move); the band's
     // bookkeeping is kept, except each column's first run start, which depends on the band above.
     static constexpr uint64_t kNoKey = ~0ull;
-    // (left eye: kOneRun - no run starts after the first pixel counted; kAutoColumn - a pixel in an automatic ramp's color)
+    // (left eye: kOneRun - no run starts after the first pixel counted; kAutoColumn - a pixel in an automatic ramp's
+    // color)
     static constexpr uint64_t kSlowColumn = 1ull << 58, kOneRun = 1ull << 59, kAutoColumn = 1ull << 60;
     // (the same, as bits of first's high word: the painter sets them without 64-bit arithmetic)
     static constexpr uint32_t kSlowColumnHi = kSlowColumn >> 32, kOneRunHi = kOneRun >> 32,
@@ -147,7 +148,8 @@ private:
         // (right eye: a bit per cell whose runs add markers; a kept cell's other slow columns aren't scanned)
         uint64_t markCells = 0;
         uint64_t autoCells = 0;    // (left eye: a bit per cell with a pixel in an automatic ramp's color)
-        // (right eye: a bit per cell whose walk a Paint skipped; both: per cell whether its band was unreached as walked)
+        // (right eye: a bit per cell whose walk a Paint skipped; both: per cell whether its band was unreached as
+        // walked)
         uint64_t skipped = 0, unreached = 0;
     };
     std::array<std::array<std::array<Band, VBGO_TT_HEIGHT / 8>, 2>, 2> m_bands; // [eye][buffer]
@@ -162,7 +164,8 @@ private:
     std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_depthCells{}; // (bit per left-eye cell PaintDepth last painted into)
     // [eye][buffer][column * bands + band]: a column's bands together (in the renderer, off the heap: MEM1 on the Wii)
     // (Lane I: line-aligned - Paint claims lines of them whole)
-    alignas(32) std::array<std::array<std::array<BandColumn, (VBGO_TT_HEIGHT / 8) * VBGO_TT_WIDTH>, 2>, 2> m_bandColumns;
+    alignas(32) std::array<std::array<std::array<BandColumn, (VBGO_TT_HEIGHT / 8) * VBGO_TT_WIDTH>, 2>, 2>
+        m_bandColumns;
     // [eye][buffer][column]: a bit per band whose BandColumn has a run; only those are read, the rest of first is stale
     std::array<std::array<std::array<uint32_t, VBGO_TT_WIDTH>, 2>, 2> m_bandsActive{};
     std::array<std::array<std::array<ColumnSummary, VBGO_TT_WIDTH>, 2>, 2> m_columnSummary; // [eye][buffer][column]

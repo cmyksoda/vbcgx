@@ -132,8 +132,8 @@ bool V810::JitEvictOldest(void)
    return true;
 }
 
-/* With few pages free the oldest are on probation, so one is ready to go and any use of it is seen. The youngest never is:
- * JitTouch has just put the page RunBlock is about to run there. */
+/* With few pages free the oldest are on probation, so one is ready to go and any use of it is seen. The youngest never
+ * is: JitTouch has just put the page RunBlock is about to run there. */
 void V810::JitKeepProbation(void)
 {
    if(JitFreePages >= JIT_PROBATION)

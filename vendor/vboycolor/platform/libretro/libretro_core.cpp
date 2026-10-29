@@ -727,7 +727,8 @@ namespace
                     g_colorizer.Colorize(bits[0], first * 8, y, count * 8, &colored[y * rowBytes + first * 32]);
             };
             auto shadeCellColumn = [&](unsigned first, uint32_t bands) {
-                const uint32_t whole = bands & ((1u << (h / 8)) - 1); // (a band cut off by the picture's height goes by rows)
+                // (a band cut off by the picture's height goes by rows)
+                const uint32_t whole = bands & ((1u << (h / 8)) - 1);
                 g_colorizer.ColorizeCells(bits[0], first * 8, whole, &colored[first * 32], rowBytes);
                 for (uint32_t cut = bands & ~whole; cut; cut &= cut - 1)
                     shadeCells(static_cast<unsigned>(__builtin_ctz(cut)), first, 1);

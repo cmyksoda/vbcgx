@@ -117,7 +117,12 @@ public:
    void BTo(const uint32 *to, unsigned link = 0) { Word(BranchWord(at, to, link)); }
    /* Branches to be pointed somewhere later (Patch). */
    uint32 *B() { uint32 *w = at; Word(18u << 26); return full ? NULL : w; }
-   uint32 *Bc(unsigned bo, unsigned bi) { uint32 *w = at; Word(16u << 26 | bo << 21 | bi << 16); return full ? NULL : w; }
+   uint32 *Bc(unsigned bo, unsigned bi)
+   {
+      uint32 *w = at;
+      Word(16u << 26 | bo << 21 | bi << 16);
+      return full ? NULL : w;
+   }
    uint32 *Bdz() { return Bc(18, 0); }
    void Patch(uint32 *w, const uint32 *to)
    {
@@ -130,7 +135,10 @@ public:
    }
 
 private:
-   void D(unsigned op, unsigned rt, unsigned ra, int32 imm) { Word(op << 26 | rt << 21 | ra << 16 | ((uint32)imm & 0xFFFF)); }
+   void D(unsigned op, unsigned rt, unsigned ra, int32 imm)
+   {
+      Word(op << 26 | rt << 21 | ra << 16 | ((uint32)imm & 0xFFFF));
+   }
    void X(unsigned rs, unsigned ra, unsigned rb, unsigned xo, unsigned rc = 0)
    {
       Word(31u << 26 | rs << 21 | ra << 16 | rb << 11 | xo << 1 | rc);
@@ -139,8 +147,14 @@ private:
    {
       Word(31u << 26 | rt << 21 | ra << 16 | rb << 11 | oe << 10 | xo << 1 | rc);
    }
-   void Mfspr(unsigned rt, unsigned spr) { Word(31u << 26 | rt << 21 | (spr & 31) << 16 | (spr >> 5) << 11 | 339 << 1); }
-   void Mtspr(unsigned spr, unsigned rs) { Word(31u << 26 | rs << 21 | (spr & 31) << 16 | (spr >> 5) << 11 | 467 << 1); }
+   void Mfspr(unsigned rt, unsigned spr)
+   {
+      Word(31u << 26 | rt << 21 | (spr & 31) << 16 | (spr >> 5) << 11 | 339 << 1);
+   }
+   void Mtspr(unsigned spr, unsigned rs)
+   {
+      Word(31u << 26 | rs << 21 | (spr & 31) << 16 | (spr >> 5) << 11 | 467 << 1);
+   }
 };
 
 const int32 kLastopUnknown = -2147483647 - 1;
@@ -162,9 +176,8 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
    for(unsigned b = 0; b < 256; ++b)
       if(MemReadBus32[b] || MemWriteBus32[b])
          return NULL;
-   for(int32 off : {offPsw, offNext, offPending, offLastop, offTarget, offLinkSite, offIdleQuiet, offIdleHead, offNotices,
-                    offWaitAt, offResumeAt,
-                    offSystem + 4 * 31, offRunning, offHandler})
+   for(int32 off : {offPsw, offNext, offPending, offLastop, offTarget, offLinkSite, offIdleQuiet, offIdleHead,
+                    offNotices, offWaitAt, offResumeAt, offSystem + 4 * 31, offRunning, offHandler})
       if(off < 0 || off > 32767)
          return NULL;
    if(!JitWorkRam)
@@ -175,7 +188,8 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
 
    const size_t page = JitWritePage;
    uint32 *const flushFrom = JitCode + JitCodeUsed, *const coldFrom = JitCode + JitColdUsed;
-   PpcWriter w(flushFrom, JitCode + page * JIT_PAGE_WORDS + JIT_HOT_WORDS), away(coldFrom, JitCode + (page + 1) * JIT_PAGE_WORDS);
+   PpcWriter w(flushFrom, JitCode + page * JIT_PAGE_WORDS + JIT_HOT_WORDS),
+       away(coldFrom, JitCode + (page + 1) * JIT_PAGE_WORDS);
    /* (w and away trade places while the code that seldom runs is written: slow paths, exits) */
    bool inCold = false;
    auto Cold = [&]() { if(!inCold) std::swap(w, away); inCold = true; };
@@ -410,8 +424,9 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Blr();
       /* Memory accesses through the C side, fn(timestamp, r4, r5), with the cycle count and PSW where it sees
        * them. */
-      const void *const fns[6] = {(const void *)&::MemRead8, (const void *)&::MemRead16, (const void *)&::VBReadWord,
-                                  (const void *)&::MemWrite8, (const void *)&::MemWrite16, (const void *)&::VBWriteWord};
+      const void *const fns[6] = {(const void *)&::MemRead8,   (const void *)&::MemRead16,
+                                  (const void *)&::VBReadWord, (const void *)&::MemWrite8,
+                                  (const void *)&::MemWrite16, (const void *)&::VBWriteWord};
       /* Branches to miss[] unless r4 is a frame buffer address (region 0, below 0x20000, under 0x6000 of its 0x8000;
        * word: 4-aligned), as VIP_ReadFBWord and VIP_WriteFBWord check one; A & 0x7FFF left in rOffset. */
       auto CheckFrameBuffer = [&](uint32 *miss[4], unsigned rOffset, bool word) {
@@ -973,7 +988,10 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
                if(clear)
                   w.Rlwinm(4, 4, 0, 0, 31 - clear);
                FirstCycle();
-               w.BTo(JitStub[op.kind == BK_LD_B ? JIT_STUB_READ8 : op.kind == BK_LD_H ? JIT_STUB_READ16 : JIT_STUB_READ32], 1);
+               w.BTo(JitStub[op.kind == BK_LD_B   ? JIT_STUB_READ8
+                             : op.kind == BK_LD_H ? JIT_STUB_READ16
+                                                  : JIT_STUB_READ32],
+                     1);
             }
             if(op.kind == BK_LD_B)
                w.Extsb(3, 3);
@@ -1026,7 +1044,10 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
                else if(op.kind == BK_ST_H)
                   w.Rlwinm(5, 5, 0, 16, 31);
                FirstCycle();
-               w.BTo(JitStub[op.kind == BK_ST_B ? JIT_STUB_WRITE8 : op.kind == BK_ST_H ? JIT_STUB_WRITE16 : JIT_STUB_WRITE32], 1);
+               w.BTo(JitStub[op.kind == BK_ST_B   ? JIT_STUB_WRITE8
+                             : op.kind == BK_ST_H ? JIT_STUB_WRITE16
+                                                  : JIT_STUB_WRITE32],
+                     1);
             }
             const int32 extra = StoreExtra(lastopNow, word);
             if(extra < 0)

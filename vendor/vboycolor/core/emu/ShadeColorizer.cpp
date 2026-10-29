@@ -186,10 +186,10 @@ void ShadeColorizer::PrepareColumns(const uint32_t *clut)
     }
 }
 
-// The cell's 8 columns of 4 colors per byte (column k's rows 0-3 and 4-7 at pair + k * 56): row pointers made once, since
-// each store then takes one register instead of a multiply or a chain of adds.
-inline __attribute__((always_inline)) void ShadeColorizer::ColorizeUniform(const uint8_t *pair, uint8_t *dst, size_t rowBytes,
-                                                                           bool claim) const
+// The cell's 8 columns of 4 colors per byte (column k's rows 0-3 and 4-7 at pair + k * 56): row pointers made once,
+// since each store then takes one register instead of a multiply or a chain of adds.
+inline __attribute__((always_inline)) void ShadeColorizer::ColorizeUniform(const uint8_t *pair, uint8_t *dst,
+                                                                           size_t rowBytes, bool claim) const
 {
     uint8_t *row[8];
     for (unsigned r = 0; r < 8; ++r, dst += rowBytes)

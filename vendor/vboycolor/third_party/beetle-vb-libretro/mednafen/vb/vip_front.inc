@@ -21,8 +21,8 @@ static INLINE bool VbgoCovered8(const uint8 *cov)
  return (c0 & c1) == 0xFFFFFFFFu;
 }
 
-/* A chunk's n rows: consecutive, sharing a map row, none outside the window or covered all along. They are the last n of 8
- * imagined rows, so the straight-line code for 8 finds each at a fixed offset: the pointers are the imagined first
+/* A chunk's n rows: consecutive, sharing a map row, none outside the window or covered all along. They are the last n
+ * of 8 imagined rows, so the straight-line code for 8 finds each at a fixed offset: the pointers are the imagined first
  * row's, skip rows back from the chunk's first. */
 typedef struct
 {
@@ -157,8 +157,8 @@ static VBGO_NOINLINE unsigned VbgoFrontRow8(const VbgoFrontChunk *c, int v, int 
  memcpy(&shades[0], GPLT_Quad[palette_selector][p & 0xFF], 4);
  memcpy(&shades[1], GPLT_Quad[palette_selector][p >> 8], 4);
  if(!(c0 | c1))
-  flags = vbgo_tt_tag_row8_fills(trow + x * VBGO_TT_COLUMN, crow + x * VBGO_TT_CELL_COLUMN, pixels, flipped, tbits, cell,
-                                 1) != 0;
+  flags = vbgo_tt_tag_row8_fills(trow + x * VBGO_TT_COLUMN, crow + x * VBGO_TT_CELL_COLUMN, pixels, flipped, tbits,
+                                 cell, 1) != 0;
  else
   flags = VbgoTagRow8Front(trow + x * VBGO_TT_COLUMN, crow + x * VBGO_TT_CELL_COLUMN, cv + x, pixels, flipped, tbits,
                            fills, cell);

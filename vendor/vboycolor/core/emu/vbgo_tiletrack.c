@@ -55,6 +55,7 @@ static int s_have_attrs[VBGO_TT_SLOTS];
 static uint32_t s_sync_at[VBGO_TT_SLOTS];
 static uint32_t s_sync_epoch[VBGO_TT_SLOTS];
 static unsigned s_flat[VBGO_TT_SLOTS]; /* flat sprite palettes as its pass started (see the view) */
+
 /* Per slot and block: the stamp of the pass whose tags it holds there (0: none), so a block a pass keeps from this
  * buffer's last one can take the new stamp instead of being drawn again (vbgo_tiletrack_keep_block). */
 #define VBGO_TT_BLOCKS (VBGO_TT_HEIGHT / 8)
@@ -75,11 +76,13 @@ static uint64_t s_tagged[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 static uint64_t s_obj_cells[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 /* ... and the cells that may hold a fill's tag (also a superset). */
 static uint64_t s_filled_cells[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
+
 /* Per slot: the blocks whose tags and cells are still slot s_lazy_from's (a pass unsharing its buffer copies a
  * block only if it keeps it), and for those the cells where the slot's own stale tags may be nonzero. */
 static uint32_t s_lazy[VBGO_TT_SLOTS];
 static int s_lazy_from[VBGO_TT_SLOTS];
 static uint64_t s_stale[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
+
 /* Per cell, the worlds its tags showed as last drawn (bit per world; all: unknown). */
 static uint32_t s_cell_worlds[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
 /* Per cell, its left eye's motion record (see vbgo_tt_motion); kept wherever the cell versions are. */
@@ -88,16 +91,19 @@ static vbgo_tt_motion s_motion[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS] __a
 static uint64_t s_motion_cells[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 /* Per slot, the blocks (a bit each) whose drawing in its latest pass was given motion records. */
 static uint32_t s_motion_noted[VBGO_TT_SLOTS];
-/* Lane F: per slot and block, whether it was drawn (or kept) with background color 0, which no colorizer lights; cleared
- * when a state is loaded, its frame buffer's pixels then not those its tags were drawn with. */
+
+/* Lane F: per slot and block, whether it was drawn (or kept) with background color 0, which no colorizer lights;
+ * cleared when a state is loaded, its frame buffer's pixels then not those its tags were drawn with. */
 static uint8_t s_band_bk0[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 /* ... and the cells (bit per 8 columns) the CPU has written into since. */
 static uint64_t s_cpu_cells[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
+
 /* Per slot, the blocks (a bit each) cpu_fb_write has reset, none once anything else may have written their stamp,
  * cell versions, black cells or worlds. */
 static uint32_t s_cpu_reset[VBGO_TT_SLOTS];
 static void ForgetCpuResets(void) { memset(s_cpu_reset, 0, sizeof(s_cpu_reset)); }
 static uint32_t s_versions;
+
 /* The block being drawn as it was (this buffer's last pass's, if s_old_valid), and what that pass's copies said about
  * tiles and sprites, to tell which cells come out the same. */
 static int s_old_valid;
@@ -934,7 +940,8 @@ void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same
                ((keep_unchanged[w] & bit) || ((keep_asked[w] & bit) && SameCell(c) && (same |= 1ull << c)))))
          {
             if (settled && s_block_was && version[c] && (keep_black[w] & bit))
-               s_motion[s_block_slot][s_block_no][c].version = 0; /* (kept black: its tags may differ from its record's) */
+               /* (kept black: its tags may differ from its record's) */
+               s_motion[s_block_slot][s_block_no][c].version = 0;
             else
                version[c] = fresh;
             stale[w] |= bit;
@@ -1220,7 +1227,8 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
       /* (a word: 16 pixels of a column, 8 in each of two blocks - the bytes' work below, at once) */
       const unsigned column = offset / 64, row = (offset % 64) * 4, block = row / 8;
       uint32_t *const tags = &s_tags[slot][lr & 1][column * VBGO_TT_COLUMN + row];
-      s_cpu_cells[slot][block] |= 1ull << (column / 8), s_cpu_cells[slot][block + 1] |= 1ull << (column / 8); /* Lane F */
+      /* Lane F */
+      s_cpu_cells[slot][block] |= 1ull << (column / 8), s_cpu_cells[slot][block + 1] |= 1ull << (column / 8);
       if (s_tagged[slot][block] >> (column / 8) & 1)
          memset(tags, 0, 8 * sizeof(*tags));
       if (s_tagged[slot][block + 1] >> (column / 8) & 1)

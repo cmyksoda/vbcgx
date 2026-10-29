@@ -208,7 +208,8 @@ typedef struct
    /* The left eye's per 8x8 cell [band * 48 + cell] (see vbgo_tt_motion), and the stamp of the pass shown. */
    const vbgo_tt_motion *motion;
    uint16_t stamp;
-   /* Per band, a bit per cell whose motion record may hold (none elsewhere); a bit per band given records by the pass. */
+   /* Per band, a bit per cell whose motion record may hold (none elsewhere); a bit per band given records by the pass.
+    * */
    const uint64_t *motion_cells;
    uint32_t motion_noted;
    /* Lane F: a bit per band drawn (or kept) with background color 0: every lit pixel shown there is a tile's, tagged
