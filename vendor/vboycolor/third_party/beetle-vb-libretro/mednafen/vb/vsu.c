@@ -248,6 +248,18 @@ void VSU_Write(int32 timestamp, uint32 A, uint8 V)
    }
 }
 
+/* A side's volume as the output scales a sample by it: the envelope times the level, rounded up past 0. */
+static INLINE int VSU_Level(int ch, int level)
+{
+   int ol = Envelope[ch] * level;
+   if(ol)
+   {
+      ol >>= 3;
+      ol += 1;
+   }
+   return ol;
+}
+
 static INLINE void VSU_CalcCurrentOutput(int ch, int *left, int *right)
 {
    int WD;
@@ -268,22 +280,293 @@ static INLINE void VSU_CalcCurrentOutput(int ch, int *left, int *right)
       else
          WD = WaveData[RAMAddress[ch]][WavePos[ch]];	/* - 0x20; */
    }
-   l_ol = Envelope[ch] * LeftLevel[ch];
-   if(l_ol)
-   {
-      l_ol >>= 3;
-      l_ol += 1;
-   }
-
-   r_ol = Envelope[ch] * RightLevel[ch];
-   if(r_ol)
-   {
-      r_ol >>= 3;
-      r_ol += 1;
-   }
+   l_ol = VSU_Level(ch, LeftLevel[ch]);
+   r_ol = VSU_Level(ch, RightLevel[ch]);
 
    *left = WD * l_ol;
    *right = WD * r_ol;
+}
+
+/* The channel's output from time on, into the buffers where it changed. */
+static INLINE void VSU_Output(unsigned ch, int32 time, int left, int right)
+{
+   if(left != last_output[ch][0])
+      Blip_Synth_offset(&Synth, time, left - last_output[ch][0], bb_l);
+   if(right != last_output[ch][1])
+      Blip_Synth_offset(&Synth, time, right - last_output[ch][1], bb_r);
+   last_output[ch][0] = left;
+   last_output[ch][1] = right;
+}
+
+/* The effects clock's steps that are due: interval, envelope, and the sweep or modulation of channel 5. */
+static void VSU_Effects(unsigned ch)
+{
+   while(EffectsClockDivider[ch] <= 0)
+   {
+      EffectsClockDivider[ch] += 4800;
+
+      IntervalClockDivider[ch]--;
+      while(IntervalClockDivider[ch] <= 0)
+      {
+         IntervalClockDivider[ch] += 4;
+
+         if(IntlControl[ch] & 0x20)
+         {
+            IntervalCounter[ch]--;
+            if(!IntervalCounter[ch])
+            {
+               IntlControl[ch] &= ~0x80;
+            }
+         }
+
+         EnvelopeClockDivider[ch]--;
+         while(EnvelopeClockDivider[ch] <= 0)
+         {
+            EnvelopeClockDivider[ch] += 4;
+
+            if(EnvControl[ch] & 0x0100)	/* Enveloping enabled? */
+            {
+               EnvelopeCounter[ch]--;
+               if(!EnvelopeCounter[ch])
+               {
+                  EnvelopeCounter[ch] = (EnvControl[ch] & 0x7) + 1;
+
+                  if(EnvControl[ch] & 0x0008)	/* Grow */
+                  {
+                     if(Envelope[ch] < 0xF || (EnvControl[ch] & 0x200))
+                        Envelope[ch] = (Envelope[ch] + 1) & 0xF;
+                  }
+                  else				/* Decay */
+                  {
+                     if(Envelope[ch] > 0 || (EnvControl[ch] & 0x200))
+                        Envelope[ch] = (Envelope[ch] - 1) & 0xF;
+                  }
+               }
+            }
+
+         } /* end while(EnvelopeClockDivider[ch] <= 0) */
+      } /* end while(IntervalClockDivider[ch] <= 0) */
+
+      if(ch == 4)
+      {
+         SweepModClockDivider--;
+         while(SweepModClockDivider <= 0)
+         {
+            SweepModClockDivider += (SweepControl & 0x80) ? 8 : 1;
+
+            if(((SweepControl >> 4) & 0x7) && (EnvControl[ch] & 0x4000))
+            {
+               if(SweepModCounter)
+                  SweepModCounter--;
+
+               if(!SweepModCounter)
+               {
+                  SweepModCounter = (SweepControl >> 4) & 0x7;
+
+                  if(EnvControl[ch] & 0x1000)	/* Modulation */
+                  {
+                     if(ModWavePos < 32 || (EnvControl[ch] & 0x2000))
+                     {
+                        ModWavePos &= 0x1F;
+			      EffFreq[ch] = (Frequency[ch] + (int8)ModData[ModWavePos]) & 0x7FF;
+
+                        ModWavePos++;
+                     }
+                  }
+                  else				/* Sweep */
+                  {
+                     int32 delta = EffFreq[ch] >> (SweepControl & 0x7);
+                     int32 NewFreq = EffFreq[ch] + ((SweepControl & 0x8) ? delta : -delta);
+
+                     if(NewFreq < 0) /* underflow */
+                        EffFreq[ch] = 0;
+                     else if(NewFreq > 0x7FF) /* overflow */
+                        IntlControl[ch] &= ~0x80;
+                     else
+                        EffFreq[ch] = NewFreq;
+                  }
+               }
+            }
+         } /* end while(SweepModClockDivider <= 0) */
+      } /* end if(ch == 4) */
+   } /* end while(EffectsClockDivider[ch] <= 0) */
+}
+
+/* One stretch of a channel, up to its next event of any kind (the general case). */
+static void VSU_RunChunk(unsigned ch, int32 *clocks, int32 *running_timestamp)
+{
+   int left, right;
+   int32 chunk_clocks = *clocks;
+
+   if(chunk_clocks > EffectsClockDivider[ch])
+      chunk_clocks = EffectsClockDivider[ch];
+
+   if(ch == 5)
+   {
+      if(chunk_clocks > NoiseLatcherClockDivider)
+         chunk_clocks = NoiseLatcherClockDivider;
+   }
+   else
+   {
+      if(EffFreq[ch] >= 2040)
+      {
+         if(chunk_clocks > LatcherClockDivider[ch])
+            chunk_clocks = LatcherClockDivider[ch];
+      }
+      else
+      {
+         if(chunk_clocks > FreqCounter[ch])
+            chunk_clocks = FreqCounter[ch];
+      }
+   }
+
+   FreqCounter[ch] -= chunk_clocks;
+   if(ch != 5 && FreqCounter[ch] <= 0)
+   {
+      /* (the steps it takes to get above 0, at once: 2048 - EffFreq is never under 1) */
+      const int32 period = 2048 - EffFreq[ch];
+      const int32 steps = (FreqCounter[ch] + period > 0) ? 1 : 1 + (-FreqCounter[ch]) / period;
+      FreqCounter[ch] += steps * period;
+      WavePos[ch] = (WavePos[ch] + steps) & 0x1F;
+   }
+   while(FreqCounter[ch] <= 0)
+   {
+      if(ch == 5)
+      {
+         int feedback = ((lfsr >> 7) & 1) ^ ((lfsr >> Tap_LUT[(EnvControl[5] >> 12) & 0x7]) & 1) ^ 1;
+         lfsr = ((lfsr << 1) & 0x7FFF) | feedback;
+
+         FreqCounter[ch] += 10 * (2048 - EffFreq[ch]);
+      }
+      else
+      {
+         FreqCounter[ch] += 2048 - EffFreq[ch];
+         WavePos[ch] = (WavePos[ch] + 1) & 0x1F;
+      }
+   }
+
+   LatcherClockDivider[ch] -= chunk_clocks;
+   while(LatcherClockDivider[ch] <= 0)
+      LatcherClockDivider[ch] += 120;
+
+   if(ch == 5)
+   {
+      NoiseLatcherClockDivider -= chunk_clocks;
+      if(!NoiseLatcherClockDivider)
+      {
+         NoiseLatcherClockDivider = 120;
+         NoiseLatcher = ((lfsr & 1) << 6) - (lfsr & 1);
+      }
+   }
+
+   EffectsClockDivider[ch] -= chunk_clocks;
+   VSU_Effects(ch);
+   *clocks -= chunk_clocks;
+   *running_timestamp += chunk_clocks;
+
+   VSU_CalcCurrentOutput(ch, &left, &right);
+   VSU_Output(ch, *running_timestamp, left, right);
+}
+
+/* (the latch divider after count clocks, as one step at a time leaves it) */
+static INLINE void VSU_Latch(unsigned ch, int32 count)
+{
+   LatcherClockDivider[ch] -= count;
+   if(LatcherClockDivider[ch] <= 0)
+      LatcherClockDivider[ch] += 120 * ((120 - LatcherClockDivider[ch]) / 120);
+}
+
+/* A wave channel up to its next effects step: only its place in the waveform moves until then, so the steps
+ * are walked one after another, each with the output it gives; a channel that is silent there skips them. */
+static void VSU_RunWave(unsigned ch, int32 *clocks, int32 *running_timestamp)
+{
+   const int32 span = *clocks < EffectsClockDivider[ch] ? *clocks : EffectsClockDivider[ch];
+   const int32 period = 2048 - EffFreq[ch], start = *running_timestamp;
+   int32 at = FreqCounter[ch]; /* (the next step, from start) */
+   int left, right;
+
+   if(at < span)
+   {
+      const int l_ol = VSU_Level(ch, LeftLevel[ch]), r_ol = VSU_Level(ch, RightLevel[ch]);
+      if(!(IntlControl[ch] & 0x80) || RAMAddress[ch] > 4 || !(l_ol | r_ol))
+      {
+         const int32 steps = 1 + (span - 1 - at) / period;
+         WavePos[ch] = (WavePos[ch] + steps) & 0x1F;
+         at += steps * period;
+      }
+      else
+      {
+         const uint8 *const wave = WaveData[RAMAddress[ch]];
+         do
+         {
+            const int WD = wave[WavePos[ch] = (WavePos[ch] + 1) & 0x1F];
+            VSU_Output(ch, start + at, WD * l_ol, WD * r_ol);
+            at += period;
+         } while(at < span);
+      }
+   }
+   /* (the span's last step: one landing on its end counts there, before the effects) */
+   FreqCounter[ch] = at - span;
+   if(!FreqCounter[ch])
+   {
+      FreqCounter[ch] = period;
+      WavePos[ch] = (WavePos[ch] + 1) & 0x1F;
+   }
+   VSU_Latch(ch, span);
+   EffectsClockDivider[ch] -= span;
+   VSU_Effects(ch);
+   *clocks -= span;
+   *running_timestamp += span;
+
+   VSU_CalcCurrentOutput(ch, &left, &right);
+   VSU_Output(ch, *running_timestamp, left, right);
+}
+
+/* (the noise generator's steps due in the next count clocks) */
+static INLINE void VSU_NoiseSteps(int32 count, int32 period, unsigned tap)
+{
+   FreqCounter[5] -= count;
+   while(FreqCounter[5] <= 0)
+   {
+      lfsr = ((lfsr << 1) & 0x7FFF) | (((lfsr >> 7) & 1) ^ ((lfsr >> tap) & 1) ^ 1);
+      FreqCounter[5] += period;
+   }
+}
+
+/* The noise channel likewise: its generator steps as before, and its output changes only at a latch tick. */
+static void VSU_RunNoise(int32 *clocks, int32 *running_timestamp)
+{
+   const int32 span = *clocks < EffectsClockDivider[5] ? *clocks : EffectsClockDivider[5];
+   const int32 period = 10 * (2048 - EffFreq[5]), start = *running_timestamp;
+   const unsigned tap = Tap_LUT[(EnvControl[5] >> 12) & 0x7];
+   const int on = IntlControl[5] & 0x80;
+   const int l_ol = on ? VSU_Level(5, LeftLevel[5]) : 0, r_ol = on ? VSU_Level(5, RightLevel[5]) : 0;
+   int32 done = 0;
+   int left, right;
+
+   while(NoiseLatcherClockDivider < span - done)
+   {
+      VSU_NoiseSteps(NoiseLatcherClockDivider, period, tap);
+      done += NoiseLatcherClockDivider;
+      NoiseLatcherClockDivider = 120;
+      NoiseLatcher = ((lfsr & 1) << 6) - (lfsr & 1);
+      VSU_Output(5, start + done, NoiseLatcher * l_ol, NoiseLatcher * r_ol);
+   }
+   VSU_NoiseSteps(span - done, period, tap);
+   NoiseLatcherClockDivider -= span - done;
+   if(!NoiseLatcherClockDivider)
+   {
+      NoiseLatcherClockDivider = 120;
+      NoiseLatcher = ((lfsr & 1) << 6) - (lfsr & 1);
+   }
+   VSU_Latch(5, span);
+   EffectsClockDivider[5] -= span;
+   VSU_Effects(5);
+   *clocks -= span;
+   *running_timestamp += span;
+
+   VSU_CalcCurrentOutput(5, &left, &right);
+   VSU_Output(5, *running_timestamp, left, right);
 }
 
 void VSU_Update(int32 timestamp)
@@ -298,183 +581,27 @@ void VSU_Update(int32 timestamp)
 
       /* Output sound here */
       VSU_CalcCurrentOutput(ch, &left, &right);
-      /* (no change adds nothing) */
-      if(left != last_output[ch][0])
-         Blip_Synth_offset(&Synth, running_timestamp, left - last_output[ch][0], bb_l);
-      if(right != last_output[ch][1])
-         Blip_Synth_offset(&Synth, running_timestamp, right - last_output[ch][1], bb_r);
-      last_output[ch][0] = left;
-      last_output[ch][1] = right;
+      VSU_Output(ch, running_timestamp, left, right);
 
       if(!(IntlControl[ch] & 0x80))
          continue;
 
+      /* (counters a state load can leave out of their range take the general case) */
       while(clocks > 0)
       {
-         int32 chunk_clocks = clocks;
-
-         if(chunk_clocks > EffectsClockDivider[ch])
-            chunk_clocks = EffectsClockDivider[ch];
-
-         if(ch == 5)
+         if(EffectsClockDivider[ch] <= 0)
+            VSU_RunChunk(ch, &clocks, &running_timestamp);
+         else if(ch == 5)
          {
-            if(chunk_clocks > NoiseLatcherClockDivider)
-               chunk_clocks = NoiseLatcherClockDivider;
+            if(NoiseLatcherClockDivider > 0)
+               VSU_RunNoise(&clocks, &running_timestamp);
+            else
+               VSU_RunChunk(ch, &clocks, &running_timestamp);
          }
+         else if(EffFreq[ch] < 2040 && FreqCounter[ch] > 0)
+            VSU_RunWave(ch, &clocks, &running_timestamp);
          else
-         {
-            if(EffFreq[ch] >= 2040)
-            {
-               if(chunk_clocks > LatcherClockDivider[ch])
-                  chunk_clocks = LatcherClockDivider[ch];
-            }
-            else
-            {
-               if(chunk_clocks > FreqCounter[ch])
-                  chunk_clocks = FreqCounter[ch];
-            }
-         }
-
-         FreqCounter[ch] -= chunk_clocks;
-         if(ch != 5 && FreqCounter[ch] <= 0)
-         {
-            /* (the steps it takes to get above 0, at once: 2048 - EffFreq is never under 1) */
-            const int32 period = 2048 - EffFreq[ch];
-            const int32 steps = (FreqCounter[ch] + period > 0) ? 1 : 1 + (-FreqCounter[ch]) / period;
-            FreqCounter[ch] += steps * period;
-            WavePos[ch] = (WavePos[ch] + steps) & 0x1F;
-         }
-         while(FreqCounter[ch] <= 0)
-         {
-            if(ch == 5)
-            {
-               int feedback = ((lfsr >> 7) & 1) ^ ((lfsr >> Tap_LUT[(EnvControl[5] >> 12) & 0x7]) & 1) ^ 1;
-               lfsr = ((lfsr << 1) & 0x7FFF) | feedback;
-
-               FreqCounter[ch] += 10 * (2048 - EffFreq[ch]);
-            }
-            else
-            {
-               FreqCounter[ch] += 2048 - EffFreq[ch];
-               WavePos[ch] = (WavePos[ch] + 1) & 0x1F;
-            }
-         }
-
-         LatcherClockDivider[ch] -= chunk_clocks;
-         while(LatcherClockDivider[ch] <= 0)
-            LatcherClockDivider[ch] += 120;
-
-         if(ch == 5)
-         {
-            NoiseLatcherClockDivider -= chunk_clocks;
-            if(!NoiseLatcherClockDivider)
-            {
-               NoiseLatcherClockDivider = 120;
-               NoiseLatcher = ((lfsr & 1) << 6) - (lfsr & 1);
-            }
-         }
-
-         EffectsClockDivider[ch] -= chunk_clocks;
-         while(EffectsClockDivider[ch] <= 0)
-         {
-            EffectsClockDivider[ch] += 4800;
-
-            IntervalClockDivider[ch]--;
-            while(IntervalClockDivider[ch] <= 0)
-            {
-               IntervalClockDivider[ch] += 4;
-
-               if(IntlControl[ch] & 0x20)
-               {
-                  IntervalCounter[ch]--;
-                  if(!IntervalCounter[ch])
-                  {
-                     IntlControl[ch] &= ~0x80;
-                  }
-               }
-
-               EnvelopeClockDivider[ch]--;
-               while(EnvelopeClockDivider[ch] <= 0)
-               {
-                  EnvelopeClockDivider[ch] += 4;
-
-                  if(EnvControl[ch] & 0x0100)	/* Enveloping enabled? */
-                  {
-                     EnvelopeCounter[ch]--;
-                     if(!EnvelopeCounter[ch])
-                     {
-                        EnvelopeCounter[ch] = (EnvControl[ch] & 0x7) + 1;
-
-                        if(EnvControl[ch] & 0x0008)	/* Grow */
-                        {
-                           if(Envelope[ch] < 0xF || (EnvControl[ch] & 0x200))
-                              Envelope[ch] = (Envelope[ch] + 1) & 0xF;
-                        }
-                        else				/* Decay */
-                        {
-                           if(Envelope[ch] > 0 || (EnvControl[ch] & 0x200))
-                              Envelope[ch] = (Envelope[ch] - 1) & 0xF;
-                        }
-                     }
-                  }
-
-               } /* end while(EnvelopeClockDivider[ch] <= 0) */
-            } /* end while(IntervalClockDivider[ch] <= 0) */
-
-            if(ch == 4)
-            {
-               SweepModClockDivider--;
-               while(SweepModClockDivider <= 0)
-               {
-                  SweepModClockDivider += (SweepControl & 0x80) ? 8 : 1;
-
-                  if(((SweepControl >> 4) & 0x7) && (EnvControl[ch] & 0x4000))
-                  {
-                     if(SweepModCounter)
-                        SweepModCounter--;
-
-                     if(!SweepModCounter)
-                     {
-                        SweepModCounter = (SweepControl >> 4) & 0x7;
-
-                        if(EnvControl[ch] & 0x1000)	/* Modulation */
-                        {
-                           if(ModWavePos < 32 || (EnvControl[ch] & 0x2000))
-                           {
-                              ModWavePos &= 0x1F;
-			      EffFreq[ch] = (Frequency[ch] + (int8)ModData[ModWavePos]) & 0x7FF;
-
-                              ModWavePos++;
-                           }
-                        }
-                        else				/* Sweep */
-                        {
-                           int32 delta = EffFreq[ch] >> (SweepControl & 0x7);
-                           int32 NewFreq = EffFreq[ch] + ((SweepControl & 0x8) ? delta : -delta);
-
-                           if(NewFreq < 0) /* underflow */
-                              EffFreq[ch] = 0;
-                           else if(NewFreq > 0x7FF) /* overflow */
-                              IntlControl[ch] &= ~0x80;
-                           else
-                              EffFreq[ch] = NewFreq;
-                        }
-                     }
-                  }
-               } /* end while(SweepModClockDivider <= 0) */
-            } /* end if(ch == 4) */
-         } /* end while(EffectsClockDivider[ch] <= 0) */
-         clocks -= chunk_clocks;
-         running_timestamp += chunk_clocks;
-
-         /* Output sound here too. */
-         VSU_CalcCurrentOutput(ch, &left, &right);
-         if(left != last_output[ch][0])
-            Blip_Synth_offset(&Synth, running_timestamp, left - last_output[ch][0], bb_l);
-         if(right != last_output[ch][1])
-            Blip_Synth_offset(&Synth, running_timestamp, right - last_output[ch][1], bb_r);
-         last_output[ch][0] = left;
-         last_output[ch][1] = right;
+            VSU_RunChunk(ch, &clocks, &running_timestamp);
       }
    }
 

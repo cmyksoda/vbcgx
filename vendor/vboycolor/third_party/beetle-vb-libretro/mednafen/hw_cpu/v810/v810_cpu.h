@@ -150,7 +150,7 @@ typedef enum
  */
 
 
-/* Set by reads of memory that changes between events (timer, controller) - see V810::IdleLoop. */
+/* Set by timer and controller reads, which change at their events - see V810::IdleLoop. */
 extern uint32 vb_idle_unsteady;
 
 class V810
@@ -256,6 +256,15 @@ class V810
     int32 pollDisp;
  } IdleShapeSeen = {};
  v810_timestamp_t IdleLoop(v810_timestamp_t timestamp, const uint8 *code);
+
+ /* WAIT loops (the idle patches) let past events that change nothing (see WaitTarget): the WAIT last taken, the events
+    noticed by then and since, its registers then, and the body last looked at. */
+ uint32 EventNotices = 0, WaitNotice = 0;
+ const uint8 *WaitAt = nullptr, *WaitBodyFor = nullptr;
+ int32 WaitBodyCycles = -1;
+ uint32 WaitRegs[64];
+ v810_timestamp_t WaitTarget(v810_timestamp_t timestamp, const uint8 *code, uint32 arg1);
+ void ForgetIdle(void);
 
  public:
  v810_timestamp_t v810_timestamp;	/* Will never be less than 0. */
@@ -386,38 +395,79 @@ class V810
  uint8 DummyRegion[V810_FAST_MAP_PSIZE + V810_FAST_MAP_TRAMPOLINE_SIZE];
 
 #ifdef GEKKO
- /* The Wii's recompiler (v810_blocks.inc, v810_jit.inc): straight runs of ROM code, decoded once and turned into
-    Broadway code that does exactly what the interpreter would. Blocks live in one arena, cleared whole with the
-    code when either fills (decoding again gives the same blocks). */
+ /* The Wii's recompiler (v810_blocks.inc, v810_jitpages.inc, v810_jit.inc): straight runs of ROM code, decoded once and
+    turned into Broadway code that does exactly what the interpreter would. The code fills pages; when all are used
+    the one used least recently is dropped (decoding and compiling again gives the same code). */
+ enum { BLOCK_SLOTS = 16384, BLOCK_POOL = 8192, BLOCK_MAX_OPS = 64, JIT_PAGES = 64, JIT_LINK_NOTES = 6144 };
  struct BlockOp
  {
     uint8 kind, opcode, r1, r2;
     uint32 imm;
  };
- struct Block
+ struct Decoded /* (a block as read from the ROM, until CompileBlock has used it) */
  {
     uint32 pc;
     uint8 *code; /* (where it was decoded from: PC_ptr must match) */
     uint32 count;
-    void *jit;   /* (its Broadway code, or NULL - see v810_jit.inc) */
-    uint32 jitTried;
-    Block *next; /* (another in the same slot) */
-    BlockOp ops[1];
+    BlockOp ops[BLOCK_MAX_OPS];
  };
- enum { BLOCK_SLOTS = 16384, BLOCK_ARENA = 256 * 1024, BLOCK_MAX_OPS = 64 };
+ struct Block
+ {
+    uint32 pc;
+    uint8 *code;
+    void *jit;   /* (its Broadway code, or NULL - see v810_jit.inc) */
+    Block *next; /* (another in the same slot) */
+    Block *pageNext; /* (another with its code in the same page) */
+ };
+ struct JitLinkNote /* (a branch from another page into this one, to undo when the page goes on probation) */
+ {
+    uint32 site; /* (its word in JitCode) */
+    uint16 gen;  /* (of the page it is in, when linked) */
+    uint16 next; /* (1-based; 0 ends) */
+ };
+ struct JitPage
+ {
+    Block *blocks;
+    uint16 notes; /* (the first link into it; 1-based) */
+    uint16 gen;
+    uint8 state;
+ };
  Block *BlockSlot[BLOCK_SLOTS];
- uint8 *BlockArena = nullptr;
- size_t BlockArenaUsed = 0;
+ Block *BlockPool = nullptr, *BlockFreed = nullptr;
+ size_t BlockPoolUsed = 0;
+ Decoded BlockDecoded;
+ JitLinkNote *JitNotes = nullptr;
+ size_t JitNotesUsed = 0, JitNotesFreed = 0;
+ bool JitNotesStale = false; /* (a page was dropped since the notes were last swept) */
+ JitPage JitPages[JIT_PAGES];
+ uint8 JitAge[JIT_PAGES]; /* (the pages in use but not being written, oldest first) */
+ uint8 JitFreePage[JIT_PAGES];
+ unsigned JitAged = 0, JitFreePages = 0, JitWritePage = 0;
+ size_t JitStubEnd = 0; /* (where the shared code ends in the first page; 0 until it is written) */
  int RunBlock(v810_timestamp_t &timestamp);
  static v810_timestamp_t JitIdleLoop(V810 *cpu, v810_timestamp_t timestamp, uint32 target);
- Block *FindBlock(uint32 pc, bool decode);
+ static void JitWaitTarget(V810 *cpu, v810_timestamp_t timestamp, uint32 pc, uint32 arg1);
+ Block *FindBlock(uint32 pc);
+ const Decoded *DecodeBlock(uint32 pc);
+ Block *AddBlock(const Decoded *decoded, void *jit);
+ bool JitPools(void);
+ void JitTouch(Block *block);
+ void JitLink(uint32 *site, void *code);
+ bool JitNoteLink(uint32 *site, unsigned target);
+ void JitSweepNotes(void);
+ void JitNextPage(void);
+ bool JitEvictOldest(void);
+ void JitKeepProbation(void);
+ void JitProbate(unsigned page);
+ void JitEvict(unsigned page);
+ void JitForgetInto(unsigned page);
  /* Compiled blocks start only where a branch lands, after one, or after an op left to the interpreter:
     an event can stop a block anywhere, and starting new ones there would never end. */
  bool BlockEntryOk = true;
  uint8 *BlockExpect = nullptr; /* (where the op the interpreter ran last would continue) */
  void FlushBlocks(void);
- void *CompileBlock(Block *block);
- size_t JitCodeUsed = 0;
+ void *CompileBlock(const Decoded *block, bool retried = false);
+ size_t JitCodeUsed = 0, JitColdUsed = 0; /* (the hot and cold ends, in words) */
  uint32 *JitStub[16]; /* (shared code at the code buffer's start: JIT_STUB_*) */
  uint8 *JitWorkRam = nullptr;
 

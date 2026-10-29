@@ -463,6 +463,9 @@
 		{					\
 		 ADDCLOCK(1);				\
 		 RB_INCPCBY2();				\
+		 /* (left: code run before coming back isn't a pass) */ \
+		 if(!RB_AccurateMode && arg1 >= 0x1C0)	\
+		  IdleHead = ~0u;			\
 		}
 
 	BEGIN_OP(BV);
@@ -962,12 +965,13 @@
                 PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
                 goto op_INVALID;
             if (TESTCOND_E) {
-                if (timestamp < next_event_ts) timestamp = next_event_ts;
+                { const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1); if (timestamp < to) timestamp = to; }
                 ADDCLOCK(3);
                 RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
             } else {
                 ADDCLOCK(1);
                 RB_INCPCBY2();
+                WaitAt = nullptr;
             }
         END_OP();
 
@@ -976,12 +980,13 @@
                 PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
                 goto op_INVALID;
             if (TESTCOND_NE) {
-                if (timestamp < next_event_ts) timestamp = next_event_ts;
+                { const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1); if (timestamp < to) timestamp = to; }
                 ADDCLOCK(3);
                 RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
             } else {
                 ADDCLOCK(1);
                 RB_INCPCBY2();
+                WaitAt = nullptr;
             }
         END_OP();
 
@@ -990,12 +995,13 @@
                 PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
                 goto op_INVALID;
             if (TESTCOND_P) {
-                if (timestamp < next_event_ts) timestamp = next_event_ts;
+                { const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1); if (timestamp < to) timestamp = to; }
                 ADDCLOCK(3);
                 RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
             } else {
                 ADDCLOCK(1);
                 RB_INCPCBY2();
+                WaitAt = nullptr;
             }
         END_OP();
 
@@ -1004,12 +1010,13 @@
                 PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
                 goto op_INVALID;
             if (TESTCOND_LT) {
-                if (timestamp < next_event_ts) timestamp = next_event_ts;
+                { const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1); if (timestamp < to) timestamp = to; }
                 ADDCLOCK(3);
                 RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
             } else {
                 ADDCLOCK(1);
                 RB_INCPCBY2();
+                WaitAt = nullptr;
             }
         END_OP();
 
@@ -1018,12 +1025,13 @@
                 PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
                 goto op_INVALID;
             if (TESTCOND_L) {
-                if (timestamp < next_event_ts) timestamp = next_event_ts;
+                { const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1); if (timestamp < to) timestamp = to; }
                 ADDCLOCK(3);
                 RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
             } else {
                 ADDCLOCK(1);
                 RB_INCPCBY2();
+                WaitAt = nullptr;
             }
         END_OP();
 
@@ -1032,12 +1040,13 @@
                 PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
                 goto op_INVALID;
             if (true) {
-                if (timestamp < next_event_ts) timestamp = next_event_ts;
+                { const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1); if (timestamp < to) timestamp = to; }
                 ADDCLOCK(3);
                 RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
             } else {
                 ADDCLOCK(1);
                 RB_INCPCBY2();
+                WaitAt = nullptr;
             }
         END_OP();
 
@@ -1129,6 +1138,8 @@
 	 have_dst_cache = false;
 
 	 IPendingCache = 0;
+	 IdleHead = ~0u;
+	 WaitAt = nullptr;
 
  	 goto OpFinished;
 	}
@@ -1160,6 +1171,7 @@
 	lastop = opcode;
 	OpFinishedSkipLO: ;
      }	/* end  while(timestamp_rl < next_event_ts) */
+     EventNotices++;
      next_event_ts = event_handler(timestamp_rl);
 #ifdef GEKKO
      EventsRan: ;

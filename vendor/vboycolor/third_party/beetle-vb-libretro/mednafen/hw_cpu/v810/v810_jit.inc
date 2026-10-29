@@ -1,6 +1,7 @@
-/* The Wii's recompiler, part two: Broadway code for a block (see V810::Block). Every op does exactly what its
+/* The Wii's recompiler, part three: Broadway code for a block (see V810::Block). Every op does exactly what its
  * case in v810_oploop.inc does, cycles and lastop included. Included by v810_cpu.cpp. */
 
+#include <utility>
 #include <vector>
 
 namespace
@@ -24,9 +25,6 @@ unsigned FlagsSetBy(int kind)
    }
    return 0;
 }
-enum { JIT_BYTES = 2 * 1024 * 1024 };
-/* (in the DOL's own memory: MEM1, the faster to fetch code from) */
-uint32 JitCode[JIT_BYTES / 4] __attribute__((aligned(32)));
 
 class PpcWriter
 {
@@ -116,10 +114,7 @@ public:
    void Blr() { Word(0x4E800020); }
    void Blrl() { Word(0x4E800021); }
    /* b / bl to code already written */
-   void BTo(const uint32 *to, unsigned link = 0)
-   {
-      Word(18u << 26 | ((uint32)((const uint8 *)to - (const uint8 *)at) & 0x03FFFFFC) | link);
-   }
+   void BTo(const uint32 *to, unsigned link = 0) { Word(BranchWord(at, to, link)); }
    /* Branches to be pointed somewhere later (Patch). */
    uint32 *B() { uint32 *w = at; Word(18u << 26); return full ? NULL : w; }
    uint32 *Bc(unsigned bo, unsigned bi) { uint32 *w = at; Word(16u << 26 | bo << 21 | bi << 16); return full ? NULL : w; }
@@ -129,6 +124,8 @@ public:
       if(!w)
          return;
       const int32 d = (int32)((const uint8 *)to - (const uint8 *)w);
+      if((*w >> 26) != 18 && (d < -32768 || d > 32764))
+         full = true; /* (out of reach) */
       *w |= (*w >> 26) == 18 ? (uint32)d & 0x03FFFFFC : (uint32)d & 0xFFFC;
    }
 
@@ -151,19 +148,22 @@ const int32 kLastopUnknown = -2147483647 - 1;
 
 /* Code for the block, or NULL. CTR holds the cycles left before the next event (from ENTER on), so the interpreter's
  * per-op check is one bdz after a one-cycle op. It returns a JIT_EXIT_* (v810_blocks.inc), next PC in JitTarget. */
-void *V810::CompileBlock(Block *block)
+void *V810::CompileBlock(const Decoded *block, bool retried)
 {
    const uint8 *const base = (const uint8 *)P_REG;
    const int32 offPsw = (const uint8 *)&S_REG[PSW] - base, offNext = (const uint8 *)&next_event_ts - base;
    const int32 offPending = (const uint8 *)&IPendingCache - base, offLastop = (const uint8 *)&lastop - base;
    const int32 offTarget = (const uint8 *)&JitTarget - base, offLinkSite = (const uint8 *)&JitLinkSite - base;
    const int32 offIdleQuiet = (const uint8 *)&IdleQuiet - base, offResumeAt = (const uint8 *)&JitResumeAt - base;
+   const int32 offIdleHead = (const uint8 *)&IdleHead - base, offNotices = (const uint8 *)&EventNotices - base;
+   const int32 offWaitAt = (const uint8 *)&WaitAt - base;
    const int32 offSystem = (const uint8 *)S_REG - base, offRunning = (const uint8 *)&Running - base;
    const int32 offHandler = (const uint8 *)&JitEventHandler - base;
    for(unsigned b = 0; b < 256; ++b)
       if(MemReadBus32[b] || MemWriteBus32[b])
          return NULL;
-   for(int32 off : {offPsw, offNext, offPending, offLastop, offTarget, offLinkSite, offIdleQuiet, offResumeAt,
+   for(int32 off : {offPsw, offNext, offPending, offLastop, offTarget, offLinkSite, offIdleQuiet, offIdleHead, offNotices,
+                    offWaitAt, offResumeAt,
                     offSystem + 4 * 31, offRunning, offHandler})
       if(off < 0 || off > 32767)
          return NULL;
@@ -173,8 +173,13 @@ void *V810::CompileBlock(Block *block)
    static_assert(JIT_STUBS <= sizeof(JitStub) / sizeof(JitStub[0]), "JitStub");
    static_assert(JIT_LOOKUP_SIZE == 4096 && sizeof(JitLookupEntry) == 8, "BK_JMP's index into JitLookup");
 
-   uint32 *const flushFrom = JitCode + JitCodeUsed;
-   PpcWriter w(flushFrom, JitCode + JIT_BYTES / 4);
+   const size_t page = JitWritePage;
+   uint32 *const flushFrom = JitCode + JitCodeUsed, *const coldFrom = JitCode + JitColdUsed;
+   PpcWriter w(flushFrom, JitCode + page * JIT_PAGE_WORDS + JIT_HOT_WORDS), away(coldFrom, JitCode + (page + 1) * JIT_PAGE_WORDS);
+   /* (w and away trade places while the code that seldom runs is written: slow paths, exits) */
+   bool inCold = false;
+   auto Cold = [&]() { if(!inCold) std::swap(w, away); inCold = true; };
+   auto Hot = [&]() { if(inCold) std::swap(w, away); inCold = false; };
    /* ts = next_event_ts - CTR, and back */
    auto CtrToTs = [&]() {
       w.Mfctr(9);
@@ -188,7 +193,7 @@ void *V810::CompileBlock(Block *block)
       w.Subf(9, JR_TS, 0);
       w.Mtctr(9);
    };
-   if(!JitCodeUsed)
+   if(!JitStubEnd)
    {
       /* ENTER(P_REG, &timestamp, code) */
       JitStub[JIT_STUB_ENTER] = w.at;
@@ -248,6 +253,10 @@ void *V810::CompileBlock(Block *block)
       w.Lwz(0, offNext, JR_REGS);
       w.Cmpw(JR_TS, 0);
       uint32 *const noEvent = w.Bc(BO_TRUE, CR_LT);
+      /* (counted as the interpreter loop counts its handler calls, for WaitTarget) */
+      w.Lwz(6, offNotices, JR_REGS);
+      w.Addi(6, 6, 1);
+      w.Stw(6, offNotices, JR_REGS);
       {
          /* A column boundary that only counts (instant display hack: no column table read, no region end, no drawing
           * step in reach) gets VIP_Update's and the handler's bookkeeping here, without the calls; all else calls. */
@@ -379,6 +388,26 @@ void *V810::CompileBlock(Block *block)
       w.Mtlr(12);
       w.Addi(1, 1, 16);
       w.Blr();
+      /* WAIT (data: its PC, its displacement): WaitTarget before a taken WAIT, which then sets the cycle count */
+      JitStub[JIT_STUB_WAIT] = w.at;
+      w.Stwu(1, -16, 1);
+      w.Mflr(0);
+      w.Stw(0, 20, 1);
+      CtrToTs();
+      w.Stw(JR_PSW, offPsw, JR_REGS);
+      w.Imm32(3, (uint32)(uintptr_t)this);
+      w.Mr(4, JR_TS);
+      w.Lwz(7, 20, 1);
+      w.Lwz(5, 0, 7);
+      w.Lwz(6, 4, 7);
+      w.Imm32(12, (uint32)(uintptr_t)&JitWaitTarget);
+      w.Mtlr(12);
+      w.Blrl();
+      w.Lwz(12, 20, 1);
+      w.Addi(12, 12, 8);
+      w.Mtlr(12);
+      w.Addi(1, 1, 16);
+      w.Blr();
       /* Memory accesses through the C side, fn(timestamp, r4, r5), with the cycle count and PSW where it sees
        * them. */
       const void *const fns[6] = {(const void *)&::MemRead8, (const void *)&::MemRead16, (const void *)&::VBReadWord,
@@ -407,19 +436,28 @@ void *V810::CompileBlock(Block *block)
             /* A frame buffer read has no side effects: its bytes straight from FB, no call. */
             uint32 *miss[4] = {};
             CheckFrameBuffer(miss, 5, k == 2);
-            /* (FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF], as VIP_Read8 indexes it) */
-            w.Rlwinm(0, 4, 16, 31, 31);
-            w.Rlwinm(6, 4, 18, 30, 30);
+            /* (FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)], as VIP_Read8 indexes it) */
+            w.Rlwinm(0, 4, 21, 26, 26);
+            w.Rlwinm(6, 4, 23, 25, 25);
+            w.Rlwimi(0, 4, 31, 27, 31);
             w.Or(0, 0, 6);
-            w.Mulli(0, 0, 0x6000);
+            w.Mulli(0, 0, 768);
+            w.Rlwinm(5, 4, 27, 22, 30);
+            if(k == 0)
+               w.Rlwimi(5, 4, 0, 31, 31);
             w.Add(5, 5, 0);
             w.Imm32(6, (uint32)(uintptr_t)VIP_FBBase());
             if(k == 0)
                w.Lbzx(3, 5, 6);
-            else if(k == 1)
-               w.Lhbrx(3, 5, 6);
             else
-               w.Lwbrx(3, 5, 6);
+               w.Lhbrx(3, 5, 6);
+            if(k == 2)
+            {
+               /* (a word's two halfwords are a band apart: vip.c's FB_BAND) */
+               w.Addi(5, 5, 768);
+               w.Lhbrx(0, 5, 6);
+               w.Rlwimi(3, 0, 16, 0, 15);
+            }
             w.Blr();
             for(uint32 *m : miss)
                w.Patch(m, w.at);
@@ -468,7 +506,7 @@ void *V810::CompileBlock(Block *block)
          w.Word(0);
       if(w.full)
          return NULL;
-      JitCodeUsed = w.at - JitCode;
+      JitCodeUsed = JitStubEnd = w.at - JitCode;
    }
 
    uint32 *const start = w.at;
@@ -617,12 +655,10 @@ void *V810::CompileBlock(Block *block)
       ExitBefore(w.Bc(BO_FALSE, CR_EQ), next, lastopNext, JIT_STUB_EVENTS);
    };
    /* Into r4: a load or store's address. */
-   auto Address = [&](unsigned vbase, uint32 imm, unsigned clear) {
+   auto Address = [&](unsigned vbase, uint32 imm) {
       Get(4, vbase);
       if(sign_16(imm))
          w.Addi(4, 4, (int32)sign_16(imm));
-      if(clear)
-         w.Rlwinm(4, 4, 0, 0, 31 - clear);
    };
    /* The load and store cycles that depend on the op before: known, or (a block's first) into r9 at run time. */
    auto LoadExtra = [&](int32 before, bool word) -> int32 {
@@ -679,6 +715,22 @@ void *V810::CompileBlock(Block *block)
       if(cond >= 8) /* (8-15 are 0-7 negated) */
          w.Xori(3, 3, 1);
    };
+   /* CR0 EQ if the condition cond (0-7, not T) fails: shorter than Condition's 0 or 1 in r3 */
+   auto TestCondition = [&](unsigned cond) {
+      switch(cond)
+      {
+      case COND_V: w.AndiDot(3, JR_PSW, PSW_OV); break;
+      case COND_C: w.AndiDot(3, JR_PSW, PSW_CY); break;
+      case COND_Z: w.AndiDot(3, JR_PSW, PSW_Z); break;
+      case COND_NH: w.AndiDot(3, JR_PSW, PSW_Z | PSW_CY); break;
+      case COND_S: w.AndiDot(3, JR_PSW, PSW_S); break;
+      case COND_LT: case COND_LE:
+         /* (adding 2 carries S into OV's bit, leaving S xor OV there; Z stays in bit 0) */
+         w.Addi(3, JR_PSW, 2);
+         w.AndiDot(3, 3, cond == COND_LE ? PSW_OV | PSW_Z : PSW_OV);
+         break;
+      }
+   };
    /* Events due at a branch target, then straight on (EVENTS' data: leaving, it starts at the target afresh). */
    auto EventsAt = [&](uint32 target, unsigned opcode, uint32 *goOn) {
       w.BTo(JitStub[JIT_STUB_EVENTS], 1);
@@ -698,7 +750,10 @@ void *V810::CompileBlock(Block *block)
       else
       {
          w.Mfctr(9);
-         w.Addi(9, 9, -cycles);
+         if(back)
+            w.Addi(9, 9, -cycles);
+         else
+            w.AddicDot(9, 9, -cycles);
          w.Mtctr(9);
          if(back)
          {
@@ -708,12 +763,14 @@ void *V810::CompileBlock(Block *block)
             w.Addi(10, 10, -1);
             w.Stw(10, offIdleQuiet, JR_REGS);
          }
-         w.Cmpwi(9, 0);
+         if(back)
+            w.Cmpwi(9, 0);
          due = w.Bc(BO_FALSE, CR_GT);
       }
       uint32 *const link = w.at;
       w.BTo(JitStub[JIT_STUB_BRANCH], 1);
       w.Word(target);
+      Cold();
       if(idle)
       {
          w.Patch(idle, w.at);
@@ -725,6 +782,7 @@ void *V810::CompileBlock(Block *block)
       }
       w.Patch(due, w.at);
       EventsAt(target, opcode, link);
+      Hot();
    };
 
    uint32 offset = 0;
@@ -891,24 +949,29 @@ void *V810::CompileBlock(Block *block)
       {
          const bool word = op.kind == BK_LD_W;
          const uint32 next = offset + 4;
-         Address(arg1, op.imm, op.kind == BK_LD_H ? 1 : word ? 2 : 0);
+         const unsigned clear = op.kind == BK_LD_H ? 1 : word ? 2 : 0; /* (low address bits an access ignores) */
+         Address(arg1, op.imm);
          w.Rlwinm(5, 4, 8, 29, 31);
          w.Cmpwi(5, 5);
          uint32 *slow = w.Bc(BO_FALSE, CR_EQ);
          /* (work RAM, little-endian) */
-         w.Rlwinm(6, 4, 0, 16, 31);
+         w.Rlwinm(6, 4, 0, 16, 31 - clear);
          if(op.kind == BK_LD_B)
             w.Lbzx(3, JR_RAM, 6);
          else if(op.kind == BK_LD_H)
             w.Lhbrx(3, JR_RAM, 6);
          else
             w.Lwbrx(3, JR_RAM, 6);
-         uint32 *done = NULL;
+         uint32 *onward = NULL;
          for(int path = 0; path < 2; ++path)
          {
             if(path)
             {
+               onward = w.at;
+               Cold();
                w.Patch(slow, w.at);
+               if(clear)
+                  w.Rlwinm(4, 4, 0, 0, 31 - clear);
                FirstCycle();
                w.BTo(JitStub[op.kind == BK_LD_B ? JIT_STUB_READ8 : op.kind == BK_LD_H ? JIT_STUB_READ16 : JIT_STUB_READ32], 1);
             }
@@ -924,10 +987,9 @@ void *V810::CompileBlock(Block *block)
                Spend(extra + !path, next, LASTOP_LD, path);
             if(path)
                PendingExit(next, LASTOP_LD);
-            if(!path)
-               done = w.B();
          }
-         w.Patch(done, w.at);
+         w.BTo(onward);
+         Hot();
          lastopNow = LASTOP_LD;
          offset = next;
          continue;
@@ -936,24 +998,29 @@ void *V810::CompileBlock(Block *block)
       {
          const bool word = op.kind == BK_ST_W;
          const uint32 next = offset + 4;
-         Address(arg2, op.imm, op.kind == BK_ST_H ? 1 : word ? 2 : 0);
+         const unsigned clear = op.kind == BK_ST_H ? 1 : word ? 2 : 0;
+         Address(arg2, op.imm);
          Get(5, arg1);
          w.Rlwinm(6, 4, 8, 29, 31);
          w.Cmpwi(6, 5);
          uint32 *slow = w.Bc(BO_FALSE, CR_EQ);
-         w.Rlwinm(7, 4, 0, 16, 31);
+         w.Rlwinm(7, 4, 0, 16, 31 - clear);
          if(op.kind == BK_ST_B)
             w.Stbx(5, JR_RAM, 7);
          else if(op.kind == BK_ST_H)
             w.Sthbrx(5, JR_RAM, 7);
          else
             w.Stwbrx(5, JR_RAM, 7);
-         uint32 *done = NULL;
+         uint32 *onward = NULL;
          for(int path = 0; path < 2; ++path)
          {
             if(path)
             {
+               onward = w.at;
+               Cold();
                w.Patch(slow, w.at);
+               if(clear)
+                  w.Rlwinm(4, 4, 0, 0, 31 - clear);
                if(op.kind == BK_ST_B)
                   w.Rlwinm(5, 5, 0, 24, 31);
                else if(op.kind == BK_ST_H)
@@ -968,10 +1035,9 @@ void *V810::CompileBlock(Block *block)
                Spend(extra + !path, next, LASTOP_ST, path);
             if(path)
                PendingExit(next, LASTOP_ST);
-            if(!path)
-               done = w.B();
          }
-         w.Patch(done, w.at);
+         w.BTo(onward);
+         Hot();
          lastopNow = LASTOP_ST;
          offset = next;
          continue;
@@ -1055,14 +1121,18 @@ void *V810::CompileBlock(Block *block)
          uint32 *notTaken = NULL;
          if(cond != COND_T)
          {
-            Condition(cond & 7);
-            w.Cmpwi(3, 0);
+            TestCondition(cond & 7);
             notTaken = w.Bc(cond >= 8 ? BO_FALSE : BO_TRUE, CR_EQ);
          }
          BranchTo(pc + (sign_9(op.imm) & 0xFFFFFFFE), op.opcode, op.imm >= 0x1C0, 3); /* (back 64 bytes at most) */
          if(notTaken)
          {
             w.Patch(notTaken, w.at);
+            if(op.imm >= 0x1C0) /* (as the interpreter: a loop left is looked at afresh) */
+            {
+               w.Li(10, -1);
+               w.Stw(10, offIdleHead, JR_REGS);
+            }
             BranchTo(pc + 2, op.opcode, false, 1);
          }
          ended = true;
@@ -1077,12 +1147,22 @@ void *V810::CompileBlock(Block *block)
          uint32 *notTaken = NULL;
          if(cond != COND_T)
          {
-            Condition(cond & 7);
-            w.Cmpwi(3, 0);
+            TestCondition(cond & 7);
             notTaken = w.Bc(cond >= 8 ? BO_FALSE : BO_TRUE, CR_EQ);
          }
          w.Li(4, op.opcode);
          w.Stw(4, offLastop, JR_REGS);
+         if(WaitBody(&FastMap[pc >> V810_FAST_MAP_SHIFT][pc], op.imm) >= 0)
+         {
+            w.BTo(JitStub[JIT_STUB_WAIT], 1);
+            w.Word(pc);
+            w.Word(op.imm);
+         }
+         else
+         {
+            w.Li(10, 0); /* (as WaitTarget for a loop it can't skip) */
+            w.Stw(10, offWaitAt, JR_REGS);
+         }
          w.Li(9, -3);
          w.Mtctr(9);
          uint32 *const skip = w.B();
@@ -1094,6 +1174,8 @@ void *V810::CompileBlock(Block *block)
          if(notTaken)
          {
             w.Patch(notTaken, w.at);
+            w.Li(10, 0);
+            w.Stw(10, offWaitAt, JR_REGS);
             BranchTo(pc + 2, op.opcode, false, 1);
          }
          ended = true;
@@ -1116,9 +1198,8 @@ void *V810::CompileBlock(Block *block)
          w.Li(4, op.opcode);
          w.Stw(4, offLastop, JR_REGS);
          w.Mfctr(9);
-         w.Addi(9, 9, -3);
+         w.AddicDot(9, 9, -3);
          w.Mtctr(9);
-         w.Cmpwi(9, 0);
          uint32 *const due = w.Bc(BO_FALSE, CR_GT);
          /* (straight on when the target's code is in JitLookup, else back to the C side, which finds it) */
          w.Rlwinm(6, 5, 2, 17, 28);
@@ -1130,10 +1211,12 @@ void *V810::CompileBlock(Block *block)
          w.Lwzx(8, 7, 6);
          w.Mtlr(8);
          w.Blr();
+         Cold();
          w.Patch(due, w.at);
          w.Patch(miss, w.at);
          w.Li(3, JIT_EXIT_BRANCH);
          w.BTo(JitStub[JIT_STUB_LEAVE]);
+         Hot();
          ended = true;
          continue;
       }
@@ -1150,6 +1233,7 @@ void *V810::CompileBlock(Block *block)
    skip = 0;
    if(!ended)
       ExitBefore(w.B(), offset, lastopNow, JIT_STUB_INTERPRET);
+   Cold();
    for(const Exit &e : exits)
    {
       for(uint32 *from : e.from)
@@ -1175,16 +1259,23 @@ void *V810::CompileBlock(Block *block)
          w.Word((uint32)(uintptr_t)resume);
       }
    }
-
-   if(w.full)
-   {
-      FlushBlocks();
-      return NULL;
-   }
+   Hot();
    while((w.at - JitCode) & 3)
       w.Word(0);
+
+   if(w.full || away.full)
+   {
+      /* (it didn't fit in what is left of its page: it goes in the next, or nowhere if it's too big for a page) */
+      if(retried)
+         return NULL;
+      JitNextPage();
+      return CompileBlock(block, true);
+   }
    JitCodeUsed = w.at - JitCode;
+   JitColdUsed = away.at - JitCode;
    DCFlushRange(flushFrom, (w.at - flushFrom) * 4);
    ICInvalidateRange(flushFrom, (w.at - flushFrom) * 4);
+   DCFlushRange(coldFrom, (away.at - coldFrom) * 4);
+   ICInvalidateRange(coldFrom, (away.at - coldFrom) * 4);
    return start;
 }

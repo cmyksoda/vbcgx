@@ -27,9 +27,20 @@
 #include "../masmem.h"
 #include "../state_helpers.h"
 
-static uint8 FB[2][2][0x6000];
+/* VirtualBoyGo: the statics depth reads are 64-byte aligned, so their phase in the L2's 64-byte lines
+ * doesn't move with the link (depth's time did, by 0.2 ms). */
+/* (stored by band - see FBOffset - so a block's drawing fills one run of bytes, not 2 bytes of each column's cache line) */
+static uint8 FB[2][2][0x6000] __attribute__((aligned(64)));
+#define FB_BAND 768 /* (a band: 384 columns of 2 bytes) */
 static uint16 CHR_RAM[0x8000 / sizeof(uint16)];
 static uint16 DRAM[0x20000 / sizeof(uint16)];
+
+/* Where in FB[fb][lr] the frame buffer byte at VB address A is: its band (A >> 1) & 31, column (A & 0x7FFF) >> 6,
+ * byte A & 1. */
+static INLINE uint32 FBOffset(uint32 A)
+{
+   return ((A >> 1) & 31) * FB_BAND + ((A & 0x7FFF) >> 6) * 2 + (A & 1);
+}
 
 /* Helper functions for the V810 VIP RAM read/write handlers.
  *  "Memory Array 16 (Write/Read) (16/8)" */
@@ -92,7 +103,7 @@ static uint32 VBSBS_Separation;
 static uint32 HLILUT[256];
 static uint32 ColorLUT[2][256];
 static int32 BrightnessCache[4];
-static uint32 BrightCLUT[2][4];
+static uint32 BrightCLUT[2][4] __attribute__((aligned(8)));
 
 static double ColorLUTNoGC[2][256][3];
 static uint32 AnaSlowColorLUT[256][256];
@@ -391,11 +402,13 @@ static int32 SBOUT_InactiveTime;
 /* A pass whose inputs haven't changed since the other buffer's last pass
  * started draws exactly what that one drew, so its blocks are copied. */
 static uint32 DrawSerial;    /* bumped by every change to what drawing reads */
+static uint32 SerialEpoch = 1; /* moves whenever the serials below are reset or the memories they stamp are loaded */
 static uint32 PassSerial[2]; /* DrawSerial as each buffer's last pass started */
 static bool PassClean[2];    /* that pass drew with unchanged inputs, and the CPU hasn't written into the buffer since */
 static bool PassTouched[2];  /* the CPU wrote into the buffer during its pass */
 static bool PassRepeats;     /* the pass in progress copies the other buffer's */
 static bool PassAlreadyCopied; /* ... whose blocks this buffer already holds */
+static bool PassShared;      /* ... and has copied a block: the tracker shares the other's tags from then on */
 static uint32 PassStartedAt; /* DrawSerial as the pass in progress started */
 static uint32 PassNo;        /* the passes begun (what the front to back waits count in) */
 /* A block whose inputs haven't changed since this buffer last drew it still
@@ -406,14 +419,36 @@ static uint32 SptChangedAt;       /* sprite groups (some games move them every f
 static uint64 ObjSerial = 1;      /* bumped by every change to a sprite attribute or group: sorted sprite lists stay good until it moves */
 static uint32 RowChangedAt[1024]; /* DRAM, per 64 halfwords */
 static uint32 ChrChangedAt[2048];
+static uint32 LastChrChangeAt; /* (the latest of them) */
+static uint32 ChrChangedInPass[2][2048 / 32]; /* per buffer: the characters changed since its pass started */
+static INLINE void ChrChanged(uint32 c)
+{
+   ChrChangedAt[c] = LastChrChangeAt = ++DrawSerial;
+   ChrChangedInPass[0][c >> 5] |= 1u << (c & 31);
+   ChrChangedInPass[1][c >> 5] |= 1u << (c & 31);
+}
+/* Per BG map row (64 halfwords), the columns written in its two latest generations (a pass each): since[k] is the
+ * first write of generation k, last1 the last of generation 1; writes before since[1] are forgotten. */
+typedef struct
+{
+   uint64 cols[2];
+   uint32 since[2], last1, pass;
+} RowWrites;
+static RowWrites RowCols[0x1D800 / 128] __attribute__((aligned(32)));
 static uint32 ObjChangedAt[32];   /* sprite attributes, per 8 rows the sprite was or is on */
 static uint32 ObjEntryChangedAt[1024];
 static uint32 WorldChangedAt[28]; /* a background world's attributes, per block its window covers (or did) */
 static uint32 WorldCellChangedAt[28][48]; /* (the same, per cell, for windows narrower than the screen) */
+static uint32 WorldCellMaxAt[28];         /* (the latest of a block's) */
 static uint64 WorldDirty; /* (BlockChange: the cells only a world's change covers) */
-static uint32 WorldBlockChangedAt[32][28]; /* (per world: the blocks its change covers) */
+static uint32 WorldBlockChangedAt[28][32]; /* (per block: the worlds whose change covers it) */
 static uint32 ChangedWorlds; /* (BlockChange: the worlds changed there since it was drawn) */
 static bool SpritesChanged; /* (BlockChange: and its sprites, or their characters) */
+/* Lane G: (BlockChange: background characters changed since, with nothing else of the backgrounds - then only the cells
+ * their map entries place them in are drawn again; see ChrCells) */
+static bool BgChrChanged;
+static uint32 ChangedBgChr[2048 / 32];
+#define CHR_CELLS_MAX 40
 #define MAX_BLOCK_SPRITES 96
 typedef struct
 {
@@ -436,6 +471,10 @@ typedef struct
    SpriteDrawn sprite[MAX_BLOCK_SPRITES];
 } BlockInputs;
 static BlockInputs Blocks[2][28];
+const uint32 *vbgo_vip_block_pixels(unsigned fb, unsigned lr, unsigned block)
+{
+   return (const uint32 *)(FB[fb & 1][lr & 1] + block * FB_BAND);
+}
 /* Each buffer's side-by-side picture has a half of the surface of its own,
  * where a column's block is converted again only if the buffer's pixels there
  * (per 8x8 cell) or the brightness table changed since. */
@@ -445,15 +484,14 @@ static uint32 CellContent[2][28][48]; /* a version per cell's pixels, 0: unknown
 static uint16 CellClean[2][48];
 static void EditBlock(int fb) { memset(CellClean[fb], 0, sizeof(CellClean[fb])); }
 static uint32 Contents;
-static uint32 ShownContent[2][2][384][28]; /* [fb][output eye][column][block]: CellContent as converted */
-static uint32 ShownClut[2][2][384];        /* ... vbgo_tt_clut_serial as converted */
+static uint32 ShownClut[2][2][384];        /* [fb][output eye][column]: vbgo_tt_clut_serial as converted */
 static uint32 ShownVersion[2][2][384];     /* ... FBVersion as converted, and from which eye's buffer (0: not all of it) */
 static uint8 ShownLr[2][2][384];
 static int ShownFB;
 /* VirtualBoyGo: the colorizer reads the picture, never shows it, so each eye is kept compact - per
  * frame buffer and column, its 2-bit pixels and the 4 values they stand for (vbgo_tiletrack.h). */
-static uint8 EyeBits[2][2][384][56];
-static uint32 EyeClut[2][2][384][4];
+static uint8 EyeBits[2][2][384][56] __attribute__((aligned(64)));
+static uint32 EyeClut[2][2][384][4] __attribute__((aligned(64)));
 const uint8 *vbgo_vip_eye_bits(int eye) { return &EyeBits[ShownFB][eye][0][0]; }
 const uint32 *vbgo_vip_eye_clut(int eye) { return &EyeClut[ShownFB][eye][0][0]; }
 
@@ -569,6 +607,7 @@ static void ForgetBlocks(void);
 
 static void ForgetPasses(void)
 {
+   SerialEpoch++;
    DrawSerial++;
    ObjSerial++;
    ForgetBlocks();
@@ -596,10 +635,13 @@ static void RestartSerials(void)
 {
    memset(RowChangedAt, 0, sizeof(RowChangedAt));
    memset(ChrChangedAt, 0, sizeof(ChrChangedAt));
+   memset(RowCols, 0, sizeof(RowCols));
+   LastChrChangeAt = 0;
    memset(ObjChangedAt, 0, sizeof(ObjChangedAt));
    memset(ObjEntryChangedAt, 0, sizeof(ObjEntryChangedAt));
    memset(WorldChangedAt, 0, sizeof(WorldChangedAt));
    memset(WorldCellChangedAt, 0, sizeof(WorldCellChangedAt));
+   memset(WorldCellMaxAt, 0, sizeof(WorldCellMaxAt));
    memset(WorldBlockChangedAt, 0, sizeof(WorldBlockChangedAt));
    GlobalChangedAt = SptChangedAt = 0;
    DrawSerial = 0;
@@ -629,12 +671,13 @@ static void WorldRowsChanged(const uint16 *attr, uint32 at, unsigned world)
    for(y = 0; y < 224; y++)
       if((uint16)(y - gy) <= height)
       {
-         WorldBlockChangedAt[world][y >> 3] = at;
+         WorldBlockChangedAt[y >> 3][world] = at;
          if(x0 == 0 && x1 == 383)
             WorldChangedAt[y >> 3] = at;
          else
          {
             int c;
+            WorldCellMaxAt[y >> 3] = at;
             for(c = x0 >> 3; c <= x1 >> 3; c++)
                WorldCellChangedAt[y >> 3][c] = at;
          }
@@ -653,6 +696,16 @@ static void DramChanging(uint32 a, uint16 v)
 {
    const uint32 h = a >> 1;
    const uint32 at = ++DrawSerial;
+   if(h < (0x1D800 >> 1))
+   {
+      RowWrites *const row = &RowCols[h >> 6];
+      if(row->pass != PassNo)
+      {
+         row->cols[1] = row->cols[0], row->since[1] = row->since[0], row->last1 = RowChangedAt[h >> 6];
+         row->cols[0] = 0, row->since[0] = at, row->pass = PassNo;
+      }
+      row->cols[0] |= 1ull << (h & 63);
+   }
    RowChangedAt[h >> 6] = at;
    if(h >= (0x1D800 >> 1) && h < (0x1DC00 >> 1))
    {
@@ -697,7 +750,7 @@ static void DramChanging(uint32 a, uint16 v)
 
 /* What changed since the block was drawn: 0 nothing, 1 only its sprites
  * (some moved, came or went, or show another tile), 2 more. */
-/* 0: nothing it reads changed; 1: only some cells (sprites, narrow worlds);
+/* 0: nothing it reads changed; 1: only some cells (sprites, narrow worlds, or background characters: BgChrChanged);
  * 3: worlds as wide as the screen, maybe sprites too (drawn again, and worked
  * out after: see vbgo_tiletrack_world_cells); 2: anything else. */
 static int BlockChange(const BlockInputs *block)
@@ -705,20 +758,19 @@ static int BlockChange(const BlockInputs *block)
    int i, change = 0, wholeWorld;
    bool worldsSame = false;
    WorldDirty = 0;
+   BgChrChanged = false; /* Lane G */
    if(!block->valid || GlobalChangedAt > block->drawnAt)
       return 2;
    wholeWorld = WorldChangedAt[DrawingBlock] > block->drawnAt;
    /* (world attributes written since but back as they were - a game switching worlds off and on between passes: nothing
     * to redraw, whatever the writes marked; only the worlds whose writes marked this block are compared) */
    {
-      bool marked = wholeWorld;
-      for(i = 0; i < 48 && !marked; i++)
-         marked = WorldCellChangedAt[DrawingBlock][i] > block->drawnAt;
+      const bool marked = wholeWorld || WorldCellMaxAt[DrawingBlock] > block->drawnAt;
       if(marked)
       {
          worldsSame = true;
          for(i = 0; i < 32 && worldsSame; i++)
-            if(WorldBlockChangedAt[i][DrawingBlock] > block->drawnAt)
+            if(WorldBlockChangedAt[DrawingBlock][i] > block->drawnAt)
                worldsSame = !memcmp(&block->worlds[i * 16], &DRAM[(0x1D800 >> 1) + i * 16], 16 * sizeof(uint16));
          if(worldsSame)
             wholeWorld = 0;
@@ -739,8 +791,15 @@ static int BlockChange(const BlockInputs *block)
          const int c = i * 32 + __builtin_ctz(m);
          if(ChrChangedAt[c] > block->passAt)
          {
+            /* Lane G: (a background's character: which ones, for ChrCells) */
             if(block->bgChr[i] >> (c & 31) & 1)
-               return 2;
+            {
+               if(!BgChrChanged)
+                  memset(ChangedBgChr, 0, sizeof(ChangedBgChr));
+               BgChrChanged = true;
+               ChangedBgChr[i] |= 1u << (c & 31);
+               continue;
+            }
             change = 1;
          }
       }
@@ -749,13 +808,22 @@ static int BlockChange(const BlockInputs *block)
       change = 1;
    if(!change && SptChangedAt > block->drawnAt && ObjListsHash(DrawingBlock) != block->objs)
       change = 1;
-   for(i = 0; i < 48 && !worldsSame; i++)
+   for(i = 0; i < 48 && !worldsSame && WorldCellMaxAt[DrawingBlock] > block->drawnAt; i++)
       WorldDirty |= (uint64)(WorldCellChangedAt[DrawingBlock][i] > block->drawnAt) << i;
+   /* Lane G: (with a world changed too, drawn whole as before) */
+   if(BgChrChanged && (wholeWorld || WorldDirty))
+   {
+      WorldDirty = 0;
+      BgChrChanged = false;
+      return 2;
+   }
    ChangedWorlds = 0;
    if(wholeWorld || WorldDirty)
       for(i = 0; i < 32; i++)
-         ChangedWorlds |= (uint32)(WorldBlockChangedAt[i][DrawingBlock] > block->drawnAt) << i;
+         ChangedWorlds |= (uint32)(WorldBlockChangedAt[DrawingBlock][i] > block->drawnAt) << i;
    SpritesChanged = change != 0;
+   if(BgChrChanged)
+      return 1;
    if(wholeWorld)
       return 3;
    return change || WorldDirty ? 1 : 0;
@@ -842,9 +910,8 @@ static bool BlockSettled(const BlockInputs *block)
    int i;
    if(GlobalChangedAt > PassStartedAt || WorldChangedAt[DrawingBlock] > PassStartedAt || ObjChangedAt[DrawingBlock] > PassStartedAt)
       return false;
-   for(i = 0; i < 48; i++)
-      if(WorldCellChangedAt[DrawingBlock][i] > PassStartedAt)
-         return false;
+   if(WorldCellMaxAt[DrawingBlock] > PassStartedAt)
+      return false;
    for(i = 0; i < 2048 / 32; i++)
    {
       uint32 m;
@@ -853,6 +920,125 @@ static bool BlockSettled(const BlockInputs *block)
             return false;
    }
    return true;
+}
+
+/* The columns (bit per map column) of BG map row r written since serial `since` (all: not known). */
+static uint64 RowColsSince(uint32 r, uint32 since)
+{
+   const RowWrites *row;
+   if(RowChangedAt[r] <= since)
+      return 0;
+   if(r >= sizeof(RowCols) / sizeof(RowCols[0]))
+      return ~0ull;
+   row = &RowCols[r];
+   if(row->last1 <= since && row->since[1] <= since)
+      return row->cols[0];
+   return row->since[1] <= since ? row->cols[0] | row->cols[1] : ~0ull;
+}
+
+/* The cells (bit per 8 columns) of the block being drawn where background world a (left eye, as wide as the screen)
+ * may show a map entry written since serial `since`. */
+static uint64 WorldCellsWritten(const uint16 *a, uint32 since)
+{
+   const uint32 scx = (a[0] >> 10) & 3, scy = (a[0] >> 8) & 3;
+   const uint32 xmask = (512u << scx) - 1, ymask = (512u << scy) - 1;
+   const uint16 gy = sign_11_to_s16(a[3]), height = a[8] & 0x3FF;
+   const uint16 gp = ParallaxDisabled ? 0 : sign_9_to_s16(a[2]), mp = ParallaxDisabled ? 0 : sign_9_to_s16(a[5]);
+   const int32 dest = (int16)sign_10_to_s16((uint16)(sign_11_to_s16(a[1]) - gp));
+   /* (screen x shows the map's pixel column (x + off) & xmask) */
+   const uint32 off = (uint32)((int32)(int16)(uint16)(a[4] - mp) - dest);
+   uint64 cells = 0;
+   int last_row = -1, y;
+   for(y = 0; y < 8; y++)
+   {
+      const uint16 row_y = DrawingBlock * 8 + y - gy;
+      uint32 sy, base, page, pages[2];
+      int k;
+      if(row_y > height)
+         continue;
+      sy = (uint32)(int32)(int16)(uint16)(a[6] + row_y) & ymask;
+      if((int)(sy >> 3) == last_row)
+         continue;
+      last_row = sy >> 3;
+      base = ((a[0] & 0xF) << 12) | (((sy >> 3) & 0x3F) * 0x40) | (((sy << 3) & ~0xFFFu) << scx);
+      pages[0] = (off & xmask) >> 9, pages[1] = ((off + 383) & xmask) >> 9;
+      for(k = 0; k < 2; k++)
+      {
+         uint64 cols;
+         page = pages[k];
+         if(k && page == pages[0])
+            break;
+         cols = RowColsSince(((base | (page << 12)) & 0xFFFF) >> 6, since);
+         for(; cols; cols &= cols - 1)
+         {
+            /* (the map column's 8 pixels on screen: at most two cells, one past a wrap) */
+            const uint32 x0 = (page * 512 + __builtin_ctzll(cols) * 8 - off) & xmask, x7 = (x0 + 7) & xmask;
+            if(x0 < 384)
+               cells |= 1ull << (x0 >> 3);
+            if(x7 < 384)
+               cells |= 1ull << (x7 >> 3);
+         }
+      }
+   }
+   return cells;
+}
+
+/* VirtualBoyGo: after a block is drawn whole, which of its left eye's cells show only what the other buffer's last pass
+ * drew in the block, moved sideways (vbgo_tiletrack_note_motion): known from what drawing reads, not by comparing. */
+static void NoteBlockMotion(void)
+{
+   /* (a block whose last noting made few records, or whose records haven't paid in the renderer lately, is noted again
+    * only every 8th pass: most of the cost is fixed) */
+   static bool Few[28];
+   const BlockInputs *const src = &Blocks[!DrawingFB][DrawingBlock];
+   const uint16 *const cur = &DRAM[0x1D800 >> 1];
+   int8_t dx[32];
+   uint64_t bad[32];
+   uint32 worlds = 0, moved = 0, still = 0;
+   int c;
+   if(!vbgo_tt_on || !src->valid || GlobalChangedAt > src->drawnAt ||
+      ((Few[DrawingBlock] || !(vbgo_tt_copy_bands >> DrawingBlock & 1)) && (PassNo & 7) != (DrawingBlock & 7)))
+      return;
+   /* (a character changed since that pass started, if the block uses it, or a drawing an older pass made: nothing
+    * recorded) */
+   if(LastChrChangeAt > src->passAt)
+   {
+      const uint32 *const used = Blocks[DrawingFB][DrawingBlock].bgChr;
+      if(src->passAt != PassSerial[!DrawingFB])
+         return;
+      for(c = 0; c < 2048 / 32; c++)
+         if(used[c] & ChrChangedInPass[!DrawingFB][c])
+            return;
+   }
+   for(c = 0; c < 48; c++)
+      worlds |= vbgo_tt_wcells[c];
+   for(; worlds; worlds &= worlds - 1)
+   {
+      const int w = __builtin_ctz(worlds);
+      const uint16 *const a = cur + w * 16, *const s = src->worlds + w * 16;
+      const int16 d = (int16)(a[4] - s[4]);
+      int k, same = a[0] == s[0];
+      for(k = 1; k <= 10 && same; k++)
+         same = k == 4 || a[k] == s[k];
+      if(!same || ((a[0] >> 12) & 3) || (a[0] & 0x80))
+         continue;
+      if(!(a[0] & 0x8000))
+      {
+         still |= 1u << w;
+         continue;
+      }
+      {
+         const uint16 gp = ParallaxDisabled ? 0 : sign_9_to_s16(a[2]);
+         const int32 dest = (int16)sign_10_to_s16((uint16)(sign_11_to_s16(a[1]) - gp));
+         if(d < -127 || d > 127 || dest > 0 || dest + (int16)sign_11_to_s16(a[7]) < 383)
+            continue;
+      }
+      dx[w] = (int8_t)d;
+      bad[w] = WorldCellsWritten(a, src->drawnAt);
+      moved |= 1u << w;
+   }
+   if(moved)
+      Few[DrawingBlock] = vbgo_tiletrack_note_motion(moved, still, dx, bad) < 4;
 }
 
 static void BeginPass(void)
@@ -865,32 +1051,83 @@ static void BeginPass(void)
    PassRepeats = PassClean[src] && PassSerial[src] == DrawSerial && vbgo_tiletrack_pass_reusable(src);
    PassAlreadyCopied = PassRepeats && PassClean[DrawingFB] && PassSerial[DrawingFB] == PassSerial[src];
    PassSerial[DrawingFB] = DrawSerial;
+   memset(ChrChangedInPass[DrawingFB], 0, sizeof(ChrChangedInPass[DrawingFB]));
    PassClean[DrawingFB] = false;
    PassTouched[DrawingFB] = false;
+   PassShared = false;
    if(PassRepeats)
-   {
-      vbgo_tiletrack_share_pass(DrawingFB, src);
       FBVersion[DrawingFB] = FBVersion[src];
-   }
    else
       NewContents(DrawingFB);
 }
 
+static void CopyOtherBlockPixels(void)
+{
+   int lr;
+   for(lr = 0; lr < 2; lr++)
+      memcpy(FB[DrawingFB][lr] + DrawingBlock * FB_BAND, FB[!DrawingFB][lr] + DrawingBlock * FB_BAND, FB_BAND);
+}
+
 static void CopyRepeatedBlock(void)
 {
-   int lr, x;
    if(PassAlreadyCopied && !PassTouched[DrawingFB])
       return;
-   for(lr = 0; lr < 2; lr++)
+   CopyOtherBlockPixels();
+}
+
+/* The CPU writes into the buffer a repeated pass is drawing: a repeat copies only pixels, not the tags the CPU write
+ * clears, so the rest of the pass is drawn. (Before the first copy the tags are still the buffer's own, and the copies
+ * to come cover the write.) */
+static void StopRepeating(int fb)
+{
+   if(!PassRepeats || fb != DrawingFB || !PassShared)
+      return;
+   vbgo_tiletrack_resume_pass(DrawingFB, DrawingBlock);
+   PassRepeats = false;
+   PassAlreadyCopied = false;
+}
+
+/* Lane G: whether the other buffer's drawing of this block still stands: nothing it read changed since (as for a
+ * BlockChange of 0, but attributes written and back count as changed), the cheapest tests first. */
+static NO_INLINE bool OtherBlockCurrent(void)
+{
+   const BlockInputs *other = &Blocks[!DrawingFB][DrawingBlock];
+   int i;
+   if(!other->valid || GlobalChangedAt > other->drawnAt || WorldChangedAt[DrawingBlock] > other->drawnAt ||
+      WorldCellMaxAt[DrawingBlock] > other->drawnAt || ObjChangedAt[DrawingBlock] > other->drawnAt)
+      return false;
+   for(i = 0; i < 2048 / 32; i++)
+      if(other->chr[i] & ChrChangedInPass[!DrawingFB][i])
+         return false;
+   for(i = 0; i < 1024 / 32; i++)
    {
-      const uint8 *from = FB[!DrawingFB][lr] + DrawingBlock * 2;
-      uint8 *to = FB[DrawingFB][lr] + DrawingBlock * 2;
-      for(x = 0; x < 384; x++)
-      {
-         to[64 * x + 0] = from[64 * x + 0];
-         to[64 * x + 1] = from[64 * x + 1];
-      }
+      uint32 m;
+      for(m = other->rows[i]; m; m &= m - 1)
+         if(RowChangedAt[i * 32 + __builtin_ctz(m)] > other->drawnAt)
+            return false;
    }
+   /* (drawn in that buffer's latest pass, the characters changed since are the ones above) */
+   for(i = 0; other->passAt != PassSerial[!DrawingFB] && i < 2048 / 32; i++)
+   {
+      uint32 m;
+      for(m = other->chr[i]; m; m &= m - 1)
+         if(ChrChangedAt[i * 32 + __builtin_ctz(m)] > other->passAt)
+            return false;
+   }
+   return !(SptChangedAt > other->drawnAt && ObjListsHash(DrawingBlock) != other->objs);
+}
+
+/* Lane G: a block to draw whole that the other buffer drew from what is still there: its pixels and what they read
+ * are copied, as a repeated pass's are (out of line: the drawing loop keeps its registers). */
+static NO_INLINE bool AdoptOtherBlock(BlockInputs *block)
+{
+   if(!OtherBlockCurrent() || !vbgo_tiletrack_adopt_block(DrawingFB))
+      return false;
+   CopyOtherBlockPixels();
+   *block = Blocks[!DrawingFB][DrawingBlock];
+   memcpy(CellContent[DrawingFB][DrawingBlock], CellContent[!DrawingFB][DrawingBlock], sizeof(CellContent[0][0]));
+   EditBlock(DrawingFB);
+   return true;
 }
 
 static void CheckIRQ(void)
@@ -1151,7 +1388,8 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
 
          if(V & 1)
          {
-            if(PassRepeats)
+            /* (cut before its first copy, the buffer still holds its own last pass, tags and all) */
+            if(PassRepeats && PassShared)
                vbgo_tiletrack_resume_pass(DrawingFB, DrawingBlock);
             PassRepeats = false;
             NewContents(DrawingFB);
@@ -1218,7 +1456,7 @@ uint8 VIP_Read8(int32 timestamp, uint32 A)
       case 0x1:
          if((A & 0x7FFF) >= 0x6000)
             return VIP_MA16R8(CHR_RAM, (A & 0x1FFF) | ((A >> 2) & 0x6000));
-         return FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF];
+         return FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)];
       case 0x2:
       case 0x3:
          return VIP_MA16R8(DRAM, A & 0x1FFFF);
@@ -1251,8 +1489,8 @@ bool VIP_ReadFBWord(uint32 A, uint32 *V)
 {
    if((A >> 16) > 1 || (A & 0x7FFF) >= 0x6000 || (A & 3))
       return false;
-   const uint8 *fb = &FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF];
-   *V = LoadU16_LE((const uint16 *)fb) | ((uint32)LoadU16_LE((const uint16 *)(fb + 2)) << 16);
+   const uint8 *fb = &FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)];
+   *V = LoadU16_LE((const uint16 *)fb) | ((uint32)LoadU16_LE((const uint16 *)(fb + FB_BAND)) << 16);
    return true;
 }
 
@@ -1264,7 +1502,7 @@ uint16 VIP_Read16(int32 timestamp, uint32 A)
       case 0x1:
          if((A & 0x7FFF) >= 0x6000)
             return VIP_MA16R16(CHR_RAM, (A & 0x1FFF) | ((A >> 2) & 0x6000));
-         return LoadU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF]);
+         return LoadU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)]);
       case 0x2:
       case 0x3:
          return VIP_MA16R16(DRAM, A & 0x1FFFF);
@@ -1296,7 +1534,7 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
          {
             const uint32 a = (A & 0x1FFF) | ((A >> 2) & 0x6000);
             if(VIP_MA16R8(CHR_RAM, a) != V)
-               ChrChangedAt[a >> 4] = ++DrawSerial;
+               ChrChanged(a >> 4);
             VIP_MA16W8(CHR_RAM, a, V);
          }
          else
@@ -1304,10 +1542,12 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
             PassClean[(A >> 15) & 1] = false;
             PassTouched[(A >> 15) & 1] = true;
             NewContents((A >> 15) & 1);
+            StopRepeating((A >> 15) & 1);
             if((A & 63) < 56)
-               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false, CellContent[(A >> 15) & 1][(A & 63) >> 1][((A & 0x7FFF) >> 9) % 48] = 0,
+               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false,
+                  CellContent[(A >> 15) & 1][(A & 63) >> 1][((A & 0x7FFF) >> 9) % 48] = 0,
                   CellClean[(A >> 15) & 1][((A & 0x7FFF) >> 9) % 48] = 0;
-            FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF] = V;
+            FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)] = V;
          }
          break;
 
@@ -1336,7 +1576,7 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
          if(A >= 0x8000)
          {
             if(VIP_MA16R8(CHR_RAM, A & 0x7FFF) != V)
-               ChrChangedAt[(A & 0x7FFF) >> 4] = ++DrawSerial;
+               ChrChanged((A & 0x7FFF) >> 4);
             VIP_MA16W8(CHR_RAM, A & 0x7FFF, V);
          }
          break;
@@ -1352,6 +1592,7 @@ bool VIP_WriteFBWord(uint32 A, uint32 V)
    PassClean[fb] = false;
    PassTouched[fb] = true;
    NewContents(fb);
+   StopRepeating(fb);
    if((A & 63) < 56) /* (a word's two halfwords are in the blocks (A & 63) >> 1 and the next, and in the same cell) */
    {
       const uint32 b = (A & 63) >> 1, cell = ((A & 0x7FFF) >> 9) % 48;
@@ -1359,8 +1600,11 @@ bool VIP_WriteFBWord(uint32 A, uint32 V)
       Blocks[fb][b + 1].valid = false, CellContent[fb][b + 1][cell] = 0;
       CellClean[fb][cell] = 0;
    }
-   StoreU16_LE((uint16 *)&FB[fb][lr][A & 0x7FFF], V & 0xFFFF);
-   StoreU16_LE((uint16 *)&FB[fb][lr][(A & 0x7FFF) + 2], V >> 16);
+   {
+      const uint32 at = FBOffset(A);
+      StoreU16_LE((uint16 *)&FB[fb][lr][at], V & 0xFFFF);
+      StoreU16_LE((uint16 *)&FB[fb][lr][at + FB_BAND], V >> 16);
+   }
    vbgo_tiletrack_cpu_fb_write(fb, lr, A & 0x7FFF, 4); /* VirtualBoyGo */
    return true;
 }
@@ -1375,7 +1619,7 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
          {
             const uint32 a = (A & 0x1FFF) | ((A >> 2) & 0x6000);
             if(VIP_MA16R16(CHR_RAM, a) != V)
-               ChrChangedAt[a >> 4] = ++DrawSerial;
+               ChrChanged(a >> 4);
             VIP_MA16W16(CHR_RAM, a, V);
          }
          else
@@ -1383,10 +1627,12 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
             PassClean[(A >> 15) & 1] = false;
             PassTouched[(A >> 15) & 1] = true;
             NewContents((A >> 15) & 1);
+            StopRepeating((A >> 15) & 1);
             if((A & 63) < 56)
-               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false, CellContent[(A >> 15) & 1][(A & 63) >> 1][((A & 0x7FFF) >> 9) % 48] = 0,
+               Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false,
+                  CellContent[(A >> 15) & 1][(A & 63) >> 1][((A & 0x7FFF) >> 9) % 48] = 0,
                   CellClean[(A >> 15) & 1][((A & 0x7FFF) >> 9) % 48] = 0;
-            StoreU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF], V);
+            StoreU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)], V);
          }
          break;
 
@@ -1411,7 +1657,7 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
          if(A >= 0x8000)
          {
             if(VIP_MA16R16(CHR_RAM, A & 0x7FFF) != V)
-               ChrChangedAt[(A & 0x7FFF) >> 4] = ++DrawSerial;
+               ChrChanged((A & 0x7FFF) >> 4);
             VIP_MA16W16(CHR_RAM, A & 0x7FFF, V);
          }
          break;
@@ -1529,8 +1775,9 @@ static INLINE bool MayTag(uint32 chr)
 }
 
 /* Cells plus the ones background world w could tag in the block being drawn, as DrawBG would walk its map (a
- * source character at a time), until they're all of them; ~0 for an affine world. */
-static uint64 WorldCellsNow(unsigned w, uint64 cells)
+ * source character at a time), until they're all of them; ~0 for an affine world. Lane G: with chr, the ones its map
+ * entries place a character of chr in instead, noting nothing as read. */
+static uint64 WorldCellsNow(unsigned w, uint64 cells, const uint32 *chr)
 {
    const uint16 *world_ptr = &DRAM[(0x1D800 + w * 0x20) >> 1];
    const uint32 bgm = (world_ptr[0] >> 12) & 3, scy = (world_ptr[0] >> 8) & 3, scx = (world_ptr[0] >> 10) & 3;
@@ -1563,6 +1810,8 @@ static uint64 WorldCellsNow(unsigned w, uint64 cells)
             srcX += (int16)DRAM[(param_base + (((RealY - gy) * 2) | lr)) & 0xFFFF];
          if((uint16)(RealY - gy) > window_height)
             continue;
+         if(bgm == 1 && !chr)
+            USE_ROW(param_base + (((RealY - gy) * 2) | lr));
          SourceX = (int32)(int16)srcX;
          SourceY = (int32)(int16)srcY;
          DestX = sign_10_to_s16(DestX);
@@ -1576,6 +1825,10 @@ static uint64 WorldCellsNow(unsigned w, uint64 cells)
             final_x = 383;
          SourceY &= SourceY_Mask;
          BGMap_Base = ((world_ptr[0] & 0xF) << 12) | (((SourceY >> 3) & 0x3F) * 0x40) | (((SourceY << 3) & ~0xFFF) << scx);
+         if(over && !chr)
+            USE_ROW(world_ptr[10]);
+         for(x = 0; x < (1 << scx) && !chr; x++)
+            USE_ROW(BGMap_Base | (x << 12));
          {
             const uint32 key[3] = { BGMap_Base | (uint32)(SourceY < SourceY_Size) << 31, SourceX & SourceX_Mask,
                                     (uint32)start_x | (uint32)(final_x + 1) << 16 };
@@ -1593,8 +1846,10 @@ static uint64 WorldCellsNow(unsigned w, uint64 cells)
             SourceX &= SourceX_Mask;
             if(SourceX < SourceX_Size && SourceY < SourceY_Size)
                bgsc = DRAM[(BGMap_Base | ((SourceX << 3) & ~0xFFF) | ((SourceX >> 3) & 0x3F)) & 0xFFFF];
+            if(!chr)
+               USE_BG_CHR(bgsc & 0x7FF);
             step = 8 - (int32)(SourceX & 7);
-            if(MayTag(bgsc & 0x7FF))
+            if(chr ? chr[(bgsc & 0x7FF) >> 5] >> (bgsc & 31) & 1 : MayTag(bgsc & 0x7FF))
             {
                const int32 end = x + step - 1 < final_x ? x + step - 1 : final_x;
                cells |= (~0ull >> (63 - (end >> 3))) & ~((1ull << (x >> 3)) - 1);
@@ -1618,9 +1873,38 @@ static uint64 ChangedWorldCells(uint32 changed, uint64 cells)
       if(DRAM[(0x1D800 + w * 0x20) >> 1] & 0x40)
          break;
       if(changed >> w & 1)
-         cells = WorldCellsNow(w, cells);
+         cells = WorldCellsNow(w, cells, NULL);
    }
    return cells;
+}
+
+/* Lane G: the cells of the block being drawn where the worlds, as when it was drawn, place a character of ChangedBgChr;
+ * ~0 with an affine world, or nearly every cell (then drawing it whole costs less). */
+static uint64 ChrCells(void)
+{
+   uint64 cells = 0;
+   int w;
+   for(w = 31; w >= 0; w--)
+   {
+      if(DRAM[(0x1D800 + w * 0x20) >> 1] & 0x40)
+         break;
+      cells = WorldCellsNow(w, cells, ChangedBgChr);
+      if(cells == ~0ull || __builtin_popcountll(cells & ((1ull << 48) - 1)) > CHR_CELLS_MAX)
+         return ~0ull;
+   }
+   return cells;
+}
+
+/* A frame buffer column as the VB lays it out (rows 0-223, 4 a byte), gathered from FB's bands into to. */
+static INLINE uint8 *GatherColumn(uint8 *to, int fb, int lr, int column)
+{
+   const uint8 *from = FB[fb][lr] + 2 * column;
+   int b;
+   /* (unrolled: a load and a store a band, the band's offset in the instruction) */
+#pragma GCC unroll 28
+   for(b = 0; b < 28; b++)
+      memcpy(to + 2 * b, from + FB_BAND * b, 2);
+   return to;
 }
 
 static INLINE void CopyFBColumnToTarget_Anaglyph_BASE(const bool DisplayActive_arg, const int lr)
@@ -1636,7 +1920,8 @@ static INLINE void CopyFBColumnToTarget_Anaglyph_BASE(const bool DisplayActive_a
    uint32 *target = surface->pixels   + Column;
 #endif
    const int32 pitchinpix = surface->pitchinpix;
-   const uint8 *fb_source = &FB[fb][lr][64 * Column];
+   uint8 gathered[56];
+   const uint8 *fb_source = GatherColumn(gathered, fb, lr, Column);
 
    if (DisplayActive_arg)
    {
@@ -1719,7 +2004,8 @@ static uint32 AnaSlowBuf[384][224];
 static INLINE void CopyFBColumnToTarget_AnaglyphSlow_BASE(const bool DisplayActive_arg, const int lr)
 {
    const int fb = DisplayFB;
-   const uint8 *fb_source = &FB[fb][lr][64 * Column];
+   uint8 gathered[56];
+   const uint8 *fb_source = GatherColumn(gathered, fb, lr, Column);
 
    if(!lr)
    {
@@ -1802,7 +2088,8 @@ static void CopyFBColumnToTarget_CScope_BASE(const bool DisplayActive_arg, const
 {
    int y, y_sub;
    const int fb = DisplayFB;
-   const uint8 *fb_source = &FB[fb][lr][64 * Column];
+   uint8 gathered[56];
+   const uint8 *fb_source = GatherColumn(gathered, fb, lr, Column);
 
    if(dest_lr)
    {
@@ -1883,57 +2170,38 @@ static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, c
 {
    const int fb = DisplayFB;
    const int eye = dest_lr & 1;
-   const uint8 *fb_source = &FB[fb][lr][64 * Column];
-   uint32 *shown = ShownContent[fb][eye][Column];
-   int block;
-   bool unknown, sameBits, reuse;
+   bool sameBits;
 
    ShownFB = fb;
    if(DisplayActive_arg)
    {
       const bool sameClut = ShownClut[fb][eye][Column] == vbgo_tt_clut_serial;
-      ShownClut[fb][eye][Column] = vbgo_tt_clut_serial;
+      if(!sameClut)
+         ShownClut[fb][eye][Column] = vbgo_tt_clut_serial;
       /* (a buffer as it was converted, with the same brightness table: nothing to copy) */
       if(sameClut && FBVersion[fb] && ShownVersion[fb][eye][Column] == FBVersion[fb] && ShownLr[fb][eye][Column] == lr)
          return;
       sameBits = ShownLr[fb][eye][Column] == lr; /* (the bits are the shown eye's as they were converted) */
-      memcpy(EyeClut[fb][eye][Column], BrightCLUT[lr], sizeof(EyeClut[0][0][0]));
+      /* (a column converted since the display was last off, with these shades and from this eye, holds them already) */
+      if(!(sameClut && sameBits && ShownVersion[fb][eye][Column]))
+         vbgo_copy8(EyeClut[fb][eye][Column], BrightCLUT[lr], sizeof(EyeClut[0][0][0]) / 8);
       /* (no block's content edited since every one was found converted: the loop would skip them all) */
       if(sameBits && (CellClean[fb][Column >> 3] >> (eye << 3 | (Column & 7)) & 1))
       {
          ShownVersion[fb][eye][Column] = FBVersion[fb];
          return;
       }
-      reuse = sameClut || sameBits;
-      unknown = false;
-      for(block = 0; block < 28; block++, fb_source += 2)
-      {
-         const uint32 content = CellContent[fb][block][Column >> 3];
-         if(content)
-         {
-            if(reuse && shown[block] == content)
-               continue;
-         }
-         else
-            unknown = true;
-         shown[block] = content;
-         EyeBits[fb][eye][Column][block * 2] = fb_source[0];
-         EyeBits[fb][eye][Column][block * 2 + 1] = fb_source[1];
-      }
+      /* (the whole column, as the eye's buffer is fixed: every edit to its pixels clears the cell's bits) */
+      GatherColumn(EyeBits[fb][eye][Column], fb, lr, Column);
       ShownVersion[fb][eye][Column] = FBVersion[fb];
       ShownLr[fb][eye][Column] = lr;
-      if(unknown)
-         CellClean[fb][Column >> 3] &= ~(1 << (eye << 3 | (Column & 7)));
-      else
-         CellClean[fb][Column >> 3] |= 1 << (eye << 3 | (Column & 7));
+      CellClean[fb][Column >> 3] |= 1 << (eye << 3 | (Column & 7));
    }
    else
    {
       ShownVersion[fb][eye][Column] = 0;
       CellClean[fb][Column >> 3] &= ~(1 << (eye << 3 | (Column & 7)));
       memset(EyeClut[fb][eye][Column], 0, sizeof(EyeClut[0][0][0]));
-      for(block = 0; block < 28; block++)
-         shown[block] = 0;
    }
 }
 
@@ -1952,7 +2220,8 @@ static INLINE void CopyFBColumnToTarget_VLI_BASE(const bool DisplayActive_arg, c
    const int fb           = DisplayFB;
    uint32 *target         = surface->pixels + Column * 2 * VBPrescale + dest_lr;
    const int32 pitch32    = surface->pitch32;
-   const uint8 *fb_source = &FB[fb][lr][64 * Column];
+   uint8 gathered[56];
+   const uint8 *fb_source = GatherColumn(gathered, fb, lr, Column);
 
    if(DisplayActive_arg)
    {
@@ -2011,7 +2280,8 @@ static INLINE void CopyFBColumnToTarget_HLI_BASE(const bool DisplayActive_arg, c
    const int fb = DisplayFB;
    const int32 pitch32 = surface->pitch32;
    uint32 *target = surface->pixels + Column + dest_lr * pitch32;
-   const uint8 *fb_source = &FB[fb][lr][64 * Column];
+   uint8 gathered[56];
+   const uint8 *fb_source = GatherColumn(gathered, fb, lr, Column);
 
    if(VBPrescale <= 4)
    {
@@ -2072,29 +2342,46 @@ static void CopyFBColumnToTarget_HLI(void)
       CopyFBColumnToTarget_HLI_BASE(DisplayActive, 1, 1 ^ VB3DReverse);
 }
 
-/* Columns x0-x1 of the block just drawn into the drawing buffer's frame buffer; differs[cell] gets the bits that
-   changed there in either eye (each column is read as it's overwritten: on the Wii every column is its own cache line). */
-static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1, uint8 *differs)
+/* Four columns' lo bytes (lo) and hi bytes (hi), one column a byte, as the frame buffer holds them: each column's pair side
+ * by side, the first two columns in a and the others in b. */
+static INLINE void PackColumns(uint32 lo, uint32 hi, uint32 *a, uint32 *b)
+{
+#if defined(GEKKO)
+   /* (the compiler spells this with twice the instructions: rlwimi rotates, masks and merges in one) */
+   uint32 x, y;
+   __asm__("rlwinm %0,%1,0,0,7" : "=r"(x) : "r"(lo));
+   __asm__("rlwimi %0,%1,24,8,15" : "+r"(x) : "r"(hi));
+   __asm__("rlwimi %0,%1,24,16,23" : "+r"(x) : "r"(lo));
+   __asm__("rlwimi %0,%1,16,24,31" : "+r"(x) : "r"(hi));
+   __asm__("rlwinm %0,%1,16,0,7" : "=r"(y) : "r"(lo));
+   __asm__("rlwimi %0,%1,8,8,15" : "+r"(y) : "r"(hi));
+   __asm__("rlwimi %0,%1,8,16,23" : "+r"(y) : "r"(lo));
+   __asm__("rlwimi %0,%1,0,24,31" : "+r"(y) : "r"(hi));
+   *a = x, *b = y;
+#elif defined(MSB_FIRST)
+   *a = (lo & 0xFF000000u) | ((hi & 0xFF000000u) >> 8) | ((lo & 0x00FF0000u) >> 8) | ((hi & 0x00FF0000u) >> 16);
+   *b = ((lo & 0x0000FF00u) << 16) | ((hi & 0x0000FF00u) << 8) | ((lo & 0x000000FFu) << 8) | (hi & 0x000000FFu);
+#else
+   *a = (lo & 0x000000FFu) | ((hi & 0x000000FFu) << 8) | ((lo & 0x0000FF00u) << 8) | ((hi & 0x0000FF00u) << 16);
+   *b = ((lo & 0x00FF0000u) >> 16) | ((hi & 0x00FF0000u) >> 8) | ((lo & 0xFF000000u) >> 8) | (hi & 0xFF000000u);
+#endif
+}
+
+/* Columns x0-x1 (whole cells) of the block just drawn into the drawing buffer's frame buffer; with compare, differs[cell]
+ * becomes nonzero where either eye's bytes changed. Only columns that did are written (so unchanged cache lines stay clean). */
+static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1, uint8 *differs, bool compare)
 {
    int lr, x, k;
    for(lr = 0; lr < 2; lr++)
    {
       const uint8 *rows = buffers[lr] + 8;
-      uint8 *to = FB[DrawingFB][lr] + DrawingBlock * 2;
-      for(x = x0; x <= x1 && (x & 3); x++)
-      {
-         const uint8 lo = rows[x + 512 * 0] | (rows[x + 512 * 1] << 2) | (rows[x + 512 * 2] << 4) | (rows[x + 512 * 3] << 6);
-         const uint8 hi = rows[x + 512 * 4] | (rows[x + 512 * 5] << 2) | (rows[x + 512 * 6] << 4) | (rows[x + 512 * 7] << 6);
-         differs[x >> 3] |= (to[64 * x] ^ lo) | (to[64 * x + 1] ^ hi);
-         to[64 * x + 0] = lo, to[64 * x + 1] = hi;
-      }
+      uint32 *const band = (uint32 *)(FB[DrawingFB][lr] + DrawingBlock * FB_BAND);
       /* 4 columns at a time, a byte each in a word: each row masked to the bits that stay in its byte, as the byte
-         arithmetic above keeps them */
-      for(; x + 3 <= x1; x += 4)
+         arithmetic of one column keeps them */
+      for(x = x0; x + 3 <= x1; x += 4)
       {
          static const uint32 keep[4] = {0xFFFFFFFFu, 0x3F3F3F3Fu, 0x0F0F0F0Fu, 0x03030303u};
-         uint32 lo = 0, hi = 0, word;
-         uint8 bytes[8];
+         uint32 lo = 0, hi = 0, word, a, b;
          for(k = 0; k < 4; k++)
          {
             memcpy(&word, rows + x + 512 * k, 4);
@@ -2102,21 +2389,16 @@ static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1, uint8 *differs)
             memcpy(&word, rows + x + 512 * (k + 4), 4);
             hi |= (word & keep[k]) << (2 * k);
          }
-         memcpy(bytes, &lo, 4);
-         memcpy(bytes + 4, &hi, 4);
-         for(k = 0; k < 4; k++)
+         PackColumns(lo, hi, &a, &b);
+         if(compare)
          {
-            uint8 *at = to + 64 * (x + k);
-            differs[(x + k) >> 3] |= (at[0] ^ bytes[k]) | (at[1] ^ bytes[4 + k]);
-            at[0] = bytes[k], at[1] = bytes[4 + k];
+            const uint32 d = (a ^ band[x >> 1]) | (b ^ band[(x >> 1) + 1]);
+            if(!d)
+               continue;
+            differs[x >> 3] = 1;
          }
-      }
-      for(; x <= x1; x++)
-      {
-         const uint8 lo = rows[x + 512 * 0] | (rows[x + 512 * 1] << 2) | (rows[x + 512 * 2] << 4) | (rows[x + 512 * 3] << 6);
-         const uint8 hi = rows[x + 512 * 4] | (rows[x + 512 * 5] << 2) | (rows[x + 512 * 6] << 4) | (rows[x + 512 * 7] << 6);
-         differs[x >> 3] |= (to[64 * x] ^ lo) | (to[64 * x + 1] ^ hi);
-         to[64 * x + 0] = lo, to[64 * x + 1] = hi;
+         band[x >> 1] = a;
+         band[(x >> 1) + 1] = b;
       }
    }
 }
@@ -2155,8 +2437,11 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
             BlockInputs *block = &Blocks[DrawingFB][DrawingBlock];
             if(skip && InstantDisplayHack && AllowDrawSkip)
                PassTouched[DrawingFB] = true, NewContents(DrawingFB), block->valid = false, memset(CellContent[DrawingFB][DrawingBlock], 0, sizeof(CellContent[0][0])), EditBlock(DrawingFB);
-            else if(PassRepeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB])
+            else if(PassRepeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB] &&
+                    (PassShared || vbgo_tiletrack_pass_reusable(!DrawingFB))) /* (options can change after BeginPass) */
             {
+               if(!PassShared)
+                  vbgo_tiletrack_share_pass(DrawingFB, !DrawingFB), PassShared = true;
                CopyRepeatedBlock();
                /* (it holds the other buffer's drawing now, with what that read) */
                if(Blocks[!DrawingFB][DrawingBlock].valid)
@@ -2176,8 +2461,13 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   PassRepeats = false;
                   PassAlreadyCopied = false;
                }
-               vbgo_tiletrack_begin_block(DrawingBuffers[0], CHR_RAM, DRAM, DrawingBlock, DrawingFB, &JPLT_Cache[0][0]);
+               const vbgo_tt_serials serials = { ChrChangedAt, ObjEntryChangedAt, DrawSerial, SerialEpoch };
+               vbgo_tt_bkcol = BKCOL; /* Lane F */
+               vbgo_tiletrack_begin_block(DrawingBuffers[0], CHR_RAM, DRAM, DrawingBlock, DrawingFB, &JPLT_Cache[0][0], &serials);
                int change = BlockChange(block);
+               bool adopted = false;
+               if((change == 2 || change == 3) && AdoptOtherBlock(block)) /* Lane G */
+                  adopted = true, change = 0;
                if(change == 3 && block->valid)
                {
                   /* (screen-wide worlds redrawn only where they were or can be, as narrow worlds are, when that's under
@@ -2188,14 +2478,18 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      --*skip;
                   else
                   {
+                     UsedChr = block->chr;
+                     UsedRows = block->rows;
+                     UsedBgChr = block->bgChr;
                      const uint64 cells = ChangedWorldCells(ChangedWorlds, WorldDirty);
+                     UsedChr = UsedRows = UsedBgChr = UnusedInputs;
                      if(cells != ~0ull && __builtin_popcountll(cells & ((1ull << 48) - 1)) <= 15)
                         WorldDirty = cells, change = 1;
                      else
                         *skip = 4;
                   }
                }
-               if(!change && vbgo_tiletrack_keep_block())
+               if(!change && (adopted || vbgo_tiletrack_keep_block()))
                   block->drawnAt = DrawSerial, block->passAt = PassStartedAt;
                else
                {
@@ -2206,15 +2500,34 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   const bool hadDrawing = block->valid;
                   uint64 same = 0, unchanged = change == 0 ? all : 0, dirty = all, spriteDirty = all;
                   bool partial = false;
+                  /* Lane G: (drawn aside and compared only where the block's last drawing came out nearly as before:
+                   * comparing a cell costs about what painting it again does) */
+                  static uint8 LastSame[2][28];
+                  uint64 chrDirty = 0;
                   int c;
+                  if(change == 1 && BgChrChanged)
+                  {
+                     /* Lane G: (only the cells they show drawn again, if a run or two: each drawing walks every world
+                      * and sprite; else whole as before, and not tried again for a while) */
+                     static uint8 ChrSkip[2][28];
+                     uint8 *const skip = &ChrSkip[DrawingFB][DrawingBlock];
+                     if(*skip)
+                        --*skip, change = 2;
+                     else if((chrDirty = ChrCells()) == ~0ull || __builtin_popcountll(chrDirty & ~(chrDirty << 1)) > 2)
+                        *skip = 4, change = 2;
+                  }
                   if(change == 1)
                   {
                      now.objs = GatherBlockSprites(DrawingBlock, &now);
                      spriteDirty = SpriteChangedCells(block, block->sprites, block->drawnAt, block->passAt, &now) & all;
-                     dirty = (spriteDirty | WorldDirty) & all;
+                     dirty = (spriteDirty | WorldDirty | chrDirty) & all;
+                     if(BgChrChanged && __builtin_popcountll(dirty & ~(dirty << 1)) > 2) /* Lane G */
+                        dirty = all;
                      unchanged = ~dirty & all;
                      /* (the cells it covers drawn again, the rest kept) */
                      partial = hadDrawing && dirty != all && vbgo_tiletrack_keep_cells(unchanged);
+                     if(BgChrChanged && !partial) /* Lane G */
+                        change = 2, unchanged = 0;
                   }
                   if(partial)
                   {
@@ -2239,7 +2552,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                         ClipX0 = c * 8;
                         ClipX1 = end * 8 - 1;
                         VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
-                        PackBlock(DrawingBuffers, ClipX0, ClipX1, differs);
+                        PackBlock(DrawingBuffers, ClipX0, ClipX1, differs, true);
                         c = end;
                      }
                      ClipX0 = 0;
@@ -2259,7 +2572,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                            spriteDirty = SpriteChangedCells(block, block->sprites, block->drawnAt, block->passAt, &now) & all;
                         }
                      }
-                     vbgo_tiletrack_block_drawing(change == 2);
+                     vbgo_tiletrack_block_drawing(change == 2 && LastSame[DrawingFB][DrawingBlock] >= 40);
                      memset(block->chr, 0, sizeof(block->chr));
                      memset(block->rows, 0, sizeof(block->rows));
                      memset(block->bgChr, 0, sizeof(block->bgChr));
@@ -2273,7 +2586,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      memset(vbgo_tt_wcells, 0, sizeof(vbgo_tt_wcells));
                      memset(vbgo_tt_fillc, 0, sizeof(vbgo_tt_fillc));
                      VIP_DrawBlock(DrawingBlock, DrawingBuffers[0] + 8, DrawingBuffers[1] + 8);
-                     PackBlock(DrawingBuffers, 0, 383, differs);
+                     PackBlock(DrawingBuffers, 0, 383, differs, hadDrawing);
                      {
                         const uint64 maybe = vbgo_tiletrack_world_cells(change == 3 ? ChangedWorlds : 0, all);
                         if(change == 3)
@@ -2287,6 +2600,8 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      for(c = 0; c < 48; c++)
                         if(!partial || (dirty >> c & 1))
                            same |= (uint64)!differs[c] << c;
+                  if(!partial) /* Lane G */
+                     LastSame[DrawingFB][DrawingBlock] = (uint8)__builtin_popcountll(same);
                   {
                      const uint32 fresh = NewContent();
                      for(c = 0; c < 48; c++)
@@ -2301,6 +2616,8 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   UsedObjs = &UnusedObjs;
                   Drawing = NULL;
                   vbgo_tiletrack_block_drawn(block->chr, BlockSettled(block), same, unchanged);
+                  if(!partial)
+                     NoteBlockMotion();
                }
             }
 
@@ -2438,11 +2755,30 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
    return (timestamp + ColumnCounter);
 }
 
+/* The frame buffers as save states hold them, in VB address order. */
+static uint8 FBState[2][2][0x6000];
+
+static void CopyFBState(bool load)
+{
+   int fb, lr;
+   uint32 A;
+   for(fb = 0; fb < 2; fb++)
+      for(lr = 0; lr < 2; lr++)
+      {
+         if(load)
+            for(A = 0; A < 0x6000; A++)
+               FB[fb][lr][FBOffset(A)] = FBState[fb][lr][A];
+         else
+            for(A = 0; A < 0x6000; A++)
+               FBState[fb][lr][A] = FB[fb][lr][FBOffset(A)];
+      }
+}
+
 int VIP_StateAction(StateMem *sm, int load, int data_only)
 {
    SFORMAT StateRegs[] =
    {
-      SFARRAY(FB[0][0], 0x6000 * 2 * 2),
+      SFARRAYN(FBState[0][0], 0x6000 * 2 * 2, "FB[0][0]"),
       SFARRAY16(CHR_RAM, 0x8000 / sizeof(uint16)),
       SFARRAY16(DRAM, 0x20000 / sizeof(uint16)),
 
@@ -2488,11 +2824,16 @@ int VIP_StateAction(StateMem *sm, int load, int data_only)
       SFEND
    };
 
-   int ret = MDFNSS_StateAction(sm, load, data_only, StateRegs, "VIP", false);
+   int ret;
+
+   /* (copied before a load too: a state without the frame buffers leaves them as they were) */
+   CopyFBState(false);
+   ret = MDFNSS_StateAction(sm, load, data_only, StateRegs, "VIP", false);
 
    if(load)
    {
       int i;
+      CopyFBState(true);
       RecalcBrightnessCache();
       for(i = 0; i < 4; i++)
       {
@@ -2500,6 +2841,9 @@ int VIP_StateAction(StateMem *sm, int load, int data_only)
          Recalc_JPLT_Cache(i);
       }
       ForgetPasses();
+      /* (a load mid-pass would leave the slot's character hashes from before it: count every character as changed) */
+      LastChrChangeAt = ++DrawSerial;
+      memset(ChrChangedInPass, 0xFF, sizeof(ChrChangedInPass));
    }
 
    return(ret);
@@ -2624,4 +2968,22 @@ void VIP_SetRegister(const unsigned int id, const uint32 value)
          BKCOL = value & 0x03;
          break;
    }
+}
+
+/* The first column boundary from next_vip on that the CPU can see (a region's end, or two before a drawing step, whose
+ * SBOUT time depends on when the boundary before was handled): the ones before it can be handled together, late. */
+int32 VIP_QuietUntil(int32 next_vip)
+{
+   int32 j;
+   if(!InstantDisplayHack || skip)
+      return next_vip;
+   j = 383 - Column;
+   if(DrawingCounter > 0)
+   {
+      const int32 td = last_ts + DrawingCounter;
+      const int32 jd = (td <= next_vip ? 0 : (td - next_vip + 258) / 259) - 2;
+      if(jd < j)
+         j = jd;
+   }
+   return j > 0 ? next_vip + 259 * j : next_vip;
 }

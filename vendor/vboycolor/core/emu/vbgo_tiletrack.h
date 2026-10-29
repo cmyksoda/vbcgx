@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,6 +24,39 @@ extern "C" {
 #define VBGO_TT_CELL_ROW 400
 /* Row y of a column's cells, from its first (cells[x] in the view, vbgo_tt_cell_row's row). */
 static inline unsigned vbgo_tt_cell_at(unsigned y) { return y * VBGO_TT_CELL_ROW; }
+
+/* Copies and fills of runs of doublewords (the memory 4-byte aligned at least, n constant where it can be). On the Wii
+ * they go through the FPU's 8-byte registers, one load and one store a doubleword, where a memcpy or memset call costs
+ * far more than the copy itself for these short runs. */
+#ifdef GEKKO
+typedef double __attribute__((may_alias, aligned(4))) vbgo_dword;
+static inline void vbgo_copy8(void *dst, const void *src, unsigned n)
+{
+   vbgo_dword *const d = (vbgo_dword *)dst;
+   const vbgo_dword *const s = (const vbgo_dword *)src;
+   /* (spelled out, up to 8: as a loop the compiler turns it back into a memcpy call) */
+   if (n > 0) d[0] = s[0];
+   if (n > 1) d[1] = s[1];
+   if (n > 2) d[2] = s[2];
+   if (n > 3) d[3] = s[3];
+   if (n > 4) d[4] = s[4];
+   if (n > 5) d[5] = s[5];
+   if (n > 6) d[6] = s[6];
+   if (n > 7) d[7] = s[7];
+}
+static inline void vbgo_fill8(void *dst, unsigned byte, unsigned n)
+{
+   const uint32_t two[2] = { byte * 0x01010101u, byte * 0x01010101u };
+   double d = *(const vbgo_dword *)two;
+   unsigned i;
+   __asm__("" : "+f"(d)); /* (kept in a floating-point register, not stored as two words) */
+   for (i = 0; i < n; i++)
+      ((vbgo_dword *)dst)[i] = d;
+}
+#else
+static inline void vbgo_copy8(void *dst, const void *src, unsigned n) { memcpy(dst, src, n * 8); }
+static inline void vbgo_fill8(void *dst, unsigned byte, unsigned n) { memset(dst, (int)byte, n * 8); }
+#endif
 
 /* ---- Tags (the tracker's own per-pixel format) -------------------------- */
 
@@ -87,9 +121,14 @@ void vbgo_tiletrack_reset(void);
  * libretro core calls it only for buffers that changed a lot: rewind and run-ahead load states a frame or two away,
  * whose buffers still hold nearly what was tracked (platform/libretro/libretro_core.cpp). */
 void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr);
-/* The VIP's frame buffers, FB[fb][lr][0x6000] (a function the patched vip.c
- * adds - see cmake/PatchBeetleVip.cmake). */
+/* Forget which cells only moved (a save state loaded: the buffers' pixels may differ from what was recorded). */
+void vbgo_tiletrack_forget_motion(void);
+/* The VIP's frame buffers, FB[fb][lr][0x6000], each stored by band (vip.c's FBOffset), through a function the patched
+ * vip.c adds - see cmake/PatchBeetleVip.cmake. */
 const uint8_t *vbgo_vip_framebuffers(void);
+/* An eye's pixels of a block as the frame buffer holds them: 192 words of two columns' two bytes each, all zero where
+ * the pixels are. */
+const uint32_t *vbgo_vip_block_pixels(unsigned fb, unsigned lr, unsigned block);
 /* An eye of the picture last shown (the side-by-side surface isn't written): per column, 56 bytes
  * of 2-bit pixels (row y: byte y / 4, bits (y % 4) * 2) and the 4 pixel values they index, each the
  * 32-bit word the surface would have held (0: the display was off). */
@@ -110,6 +149,16 @@ static inline uint32_t vbgo_eye_word(const uint8_t *bits, const uint32_t *clut, 
 void vbgo_tiletrack_set_fill_mode(int mode);
 /* 65536-bit map (8 KB): bit n set = BG map cell n has fill colors. Copied. */
 void vbgo_tiletrack_set_fill_cells(const uint8_t *bits);
+
+/* A left-eye 8x8 cell drawn as the other frame buffer's pass showed columns x + dx to x + dx + 7 of its band, the
+ * camera having only moved: the same tags, cells, pixels and tiles' hashes, none a sprite's or a fill. */
+typedef struct
+{
+   uint32_t version; /* the cell's version it holds for (0: none) */
+   uint32_t from[2]; /* that pass's versions of the cells holding columns x + dx and x + dx + 7 */
+   uint16_t stamp;   /* that pass's stamp */
+   int8_t dx;
+} vbgo_tt_motion;
 
 /* What one eye showed in the frame most recently output by retro_run(): per column, the 224 tags and cells of that
  * column (NULL if the column was blank), plus each 8-row band's key (which of its tags the pass drew) and the drawing
@@ -148,10 +197,24 @@ typedef struct
    const uint32_t *cell_worlds;
    /* Per band, a bit per 8x8 cell that may hold a tag in either eye (0: all its tags are 0). */
    const uint64_t *tagged;
+   /* Per band, a bit per 8x8 cell that may hold a sprite's tag in either eye (only where tagged says one may be). */
+   const uint64_t *obj_cells;
+   /* Per band, a bit per 8x8 cell that may hold a fill's tag in either eye (only where tagged says one may be). */
+   const uint64_t *filled_cells;
    int fb; /* the frame buffer shown */
    /* vbgo_tt_clut_serial as every column was shown, or 0 if they differed (or
     * a column showed nothing, or the other eye): the core's shades to colors. */
    uint32_t clut;
+   /* The left eye's per 8x8 cell [band * 48 + cell] (see vbgo_tt_motion), and the stamp of the pass shown. */
+   const vbgo_tt_motion *motion;
+   uint16_t stamp;
+   /* Per band, a bit per cell whose motion record may hold (none elsewhere); a bit per band given records by the pass. */
+   const uint64_t *motion_cells;
+   uint32_t motion_noted;
+   /* Lane F: a bit per band drawn (or kept) with background color 0: every lit pixel shown there is a tile's, tagged
+    * with its pixel value, but in the cells the CPU wrote into since (cpu_cells: per band, a bit per 8 columns). */
+   uint32_t clean_bands;
+   const uint64_t *cpu_cells;
 } vbgo_tt_eye_view;
 
 /* World attribute fields (w = 16 halfwords of one world). */
@@ -182,6 +245,8 @@ extern const uint8_t *vbgo_tt_blank;
 extern uint8_t vbgo_tt_fill_cells[8192];
 /* Bumped by the core whenever its shades-to-colors table changes. */
 extern uint32_t vbgo_tt_clut_serial;
+/* Lane F: the VIP's background color (BKCOL) as the block about to begin is drawn. */
+extern uint8_t vbgo_tt_bkcol;
 
 /* Sprites have no cell: their cell is which OBJ drew the pixel (the same in both eyes). */
 #define VBGO_TT_OBJ_CELL(obj) ((uint16_t)((obj) & 0x3FF))
@@ -233,13 +298,14 @@ static inline int vbgo_tt_fills_from(unsigned chr, unsigned cell)
 
 /* A whole character row drawn by DrawBG's 8-pixel path, tagged as one pixel at a time would be (pixel k: tag
  * d[k * VBGO_TT_COLUMN], cell c[k * VBGO_TT_CELL_COLUMN]). pixels: the row as stored (tile pixel n in bits 2n);
- * flipped: drawn mirrored (pixel k shows 7 - k). bits: vbgo_tt_call_bits() | VBGO_TT_BG_BITS(chr, 0, sy, pal, 0). */
-static inline int vbgo_tt_tag_row8(uint32_t *d, uint16_t *c, unsigned pixels, int flipped, uint32_t bits, unsigned chr,
-                                   unsigned cell)
+ * flipped: drawn mirrored (pixel k shows 7 - k). bits: vbgo_tt_call_bits() | VBGO_TT_BG_BITS(chr, 0, sy, pal, 0).
+ * fills_from: vbgo_tt_fills_from(chr, cell), if the caller has it. */
+static inline int vbgo_tt_tag_row8_fills(uint32_t *d, uint16_t *c, unsigned pixels, int flipped, uint32_t bits,
+                                         unsigned cell, int fills_from)
 {
    /* (a row with every pixel drawn leaves no fills) */
    const int opaque = ((pixels | (pixels >> 1)) & 0x5555) == 0x5555;
-   const int fills = !opaque && vbgo_tt_fills_from(chr, cell);
+   const int fills = !opaque && fills_from;
    const unsigned x7 = flipped ? 7 : 0;
    unsigned k;
    if (!fills)
@@ -298,11 +364,27 @@ static inline int vbgo_tt_tag_row8(uint32_t *d, uint16_t *c, unsigned pixels, in
    return 2; /* (fills may be among them) */
 }
 
+/* The same, working out fills_from itself. */
+static inline int vbgo_tt_tag_row8(uint32_t *d, uint16_t *c, unsigned pixels, int flipped, uint32_t bits, unsigned chr,
+                                   unsigned cell)
+{
+   return vbgo_tt_tag_row8_fills(d, c, pixels, flipped, bits, cell, vbgo_tt_fills_from(chr, cell));
+}
+
+/* The core's change serials: its serial now, and the one each character and sprite (4 halfwords of OAM) was last
+ * changed at. The epoch moves when they are reset (a state loaded, power on), so older stamps don't count. */
+typedef struct
+{
+   const uint32_t *chr_at; /* 2048 */
+   const uint32_t *oam_at; /* 1024 */
+   uint32_t serial, epoch;
+} vbgo_tt_serials;
+
 /* dram: the VIP's DRAM (VIP 0x20000-0x3FFFF as halfwords), for the world and
  * OBJ attributes - may be NULL. jplt: the sprite palettes as shades (4 x 4:
- * palette, pixel value -> shade) - may be NULL. */
+ * palette, pixel value -> shade) - may be NULL. serials: may be NULL (every pass then copies and hashes it all). */
 void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *chr_ram, const uint16_t *dram,
-                                unsigned block_no, unsigned fb, const uint8_t *jplt);
+                                unsigned block_no, unsigned fb, const uint8_t *jplt, const vbgo_tt_serials *serials);
 void vbgo_tiletrack_display_column(unsigned fb, unsigned lr, unsigned dest_lr, unsigned column, bool display_active);
 void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsigned bytes);
 /* After vbgo_tiletrack_begin_block, for a block the VIP doesn't draw because it would draw what this buffer's last pass
@@ -311,6 +393,9 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
 bool vbgo_tiletrack_keep_block(void);
 /* The same for only some of its cells (bit per 8 columns), the rest drawn again. */
 bool vbgo_tiletrack_keep_cells(uint64_t cells);
+/* Lane G: for a block the VIP copies from the other buffer, whose drawing it would make again: takes that pass's tags
+ * for it. False if they're gone (the block must be drawn after all). */
+bool vbgo_tiletrack_adopt_block(unsigned fb);
 /* Before drawing the block begun last (rather than keeping it); compare: tell
  * the cells that came out the same by their tags (else only by unchanged). */
 void vbgo_tiletrack_block_drawing(bool compare);
@@ -324,6 +409,14 @@ void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same
 uint64_t vbgo_tiletrack_world_cells(uint32_t changed, uint64_t cells);
 /* The cells these worlds tagged in the block begun last, as it was drawn (~0: not known). */
 uint64_t vbgo_tiletrack_world_cells_were(uint32_t worlds);
+/* After vbgo_tiletrack_block_drawn, for a block drawn whole: its left eye's motion records (see vbgo_tt_motion) against
+ * the other frame buffer's pass. moved: background worlds whose attributes are as when that buffer drew the block but
+ * for MX; dx[w]: a column world w shows at x it showed at x + dx[w] then; bad[w]: cells (bit per 8 columns) where
+ * world w may show a map entry or character changed since. still: worlds that draw nothing in the left eye. Returns the
+ * records made. */
+unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, const int8_t *dx, const uint64_t *bad);
+/* A bit per band (block) whose motion records paid in the renderer lately: the rest are noted only now and then. */
+extern uint32_t vbgo_tt_copy_bands;
 /* Per cell of the block being drawn, the background worlds that tagged a pixel
  * there (cleared before drawing: more than shows, never less). */
 extern uint32_t vbgo_tt_wcells[48];

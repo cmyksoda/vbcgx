@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <type_traits>
 
 namespace
 {
@@ -49,18 +50,41 @@ inline uint32_t ByteCounts32(uint32_t x)
     return (x + (x >> 4)) & 0x0F0F0F0Fu;
 }
 
-// Bits set in x.
-inline uint32_t Ones32(uint32_t x)
-{
-    return ByteCounts32(x) * 0x01010101u >> 24;
-}
-
 // Pixels x - 3 to x + 3 of a guarded row, as bits 0-6 (from one 32-bit word, or two where they straddle a word).
 inline unsigned Window7(const uint8_t *row, int x)
 {
     const int bit = 64 + x - 3, i = bit >> 5, s = bit & 31;
     const uint32_t lo = Half(row, i);
     return (s <= 25 ? lo >> s : (lo >> s) | (Half(row, i + 1) << (32 - s))) & 0x7F;
+}
+
+// n words from p to q, eight at a time and then one by one (a call to memcpy takes longer for this few).
+void CopyWords(uint32_t *q, const int16_t *p, int n)
+{
+    int i = 0;
+    for (; i + 8 <= n; i += 8)
+    {
+        uint32_t w[8];
+        for (int k = 0; k < 8; ++k)
+            std::memcpy(&w[k], p + 2 * (i + k), sizeof(uint32_t));
+        for (int k = 0; k < 8; ++k)
+            q[i + k] = w[k];
+    }
+    for (; i < n; ++i)
+        std::memcpy(&q[i], p + 2 * i, sizeof(uint32_t));
+}
+
+// Whether n words from p are q's (it ends at the first that isn't).
+bool SameWords(const uint32_t *q, const int16_t *p, int n)
+{
+    for (int i = 0; i < n; ++i)
+    {
+        uint32_t w;
+        std::memcpy(&w, p + 2 * i, sizeof(uint32_t));
+        if (w != q[i])
+            return false;
+    }
+    return true;
 }
 
 // Bits set in each 7-bit value.
@@ -86,6 +110,7 @@ constexpr int kPlaneBonus = 60;          // the pull of the frame's main depths
 constexpr int kKeepNow = 154, kKeepLast = 102; // (out of 256: this frame's costs, the last frame's - 60 / 40 %)
 constexpr int kSwitch = 2;               // votes a pixel's neighbors' disparity needs over its own block's
 constexpr int kPrior = 6;                // cost per pixel of disparity (ties go to the screen's plane)
+constexpr uint32_t kSparseHalf = 8;      // lit pixels in a 32-pixel half up to which counting each beats 81 shifts
 
 // Far to near (indigo, violet, rose, orange, gold); per stop the shade 1, 2
 // and 3 color. Disparity kFar and beyond is the first, kNear and nearer the last.
@@ -115,15 +140,6 @@ void DepthColors::Color(int disparity, unsigned shade, uint8_t rgb[3])
 void DepthColors::Reset()
 {
     m_state = State{};
-    for (int e = 0; e < 2; ++e)
-    {
-        m_shade[e].clear();
-        m_want[e].clear();
-        m_was[e].clear();
-        m_changed[e].clear();
-        m_lastLit[e].size = 0;
-        m_lastLit[e].count.fill(0);
-    }
     m_lastWanted.size = 0;
     m_staleWanted.size = 0;
     m_disparity.clear();
@@ -174,26 +190,68 @@ int DepthColors::WindowPixels(const unsigned left[7])
            kSetIn7.n[left[5]] + kSetIn7.n[left[6]];
 }
 
-DepthColors::LitColumns &DepthColors::NextLit(unsigned eye)
+DepthColors::LitMasks &DepthColors::NextLit(unsigned eye)
 {
-    LitColumns &lit = m_nextLit[eye];
-    lit.size = 0;
-    lit.count.fill(0);
+    LitMasks &lit = m_masks[eye][m_lastMasks ^ 1];
+    if (lit.words.size() != static_cast<size_t>(kWidth) * kColumnStride)
+        lit.words.assign(static_cast<size_t>(kWidth) * kColumnStride, 0);
+    lit.used.fill(0);
+    lit.anyWanted = false;
     if (!eye)
         m_nextWanted.size = 0;
     return lit;
 }
 
-static bool SameLit(const DepthColors::LitColumns &a, const DepthColors::LitColumns &b)
+static bool SameMasks(const DepthColors::LitMasks &a, const DepthColors::LitMasks &b)
 {
-    return a.size == b.size && a.count == b.count &&
-           (!a.size || std::memcmp(a.pixels.data(), b.pixels.data(), a.size * sizeof(uint16_t)) == 0);
+    if (a.used != b.used)
+        return false;
+    for (int x = 0; x < DepthColors::kWidth; ++x)
+        for (unsigned groups = a.used[x]; groups; groups &= groups - 1)
+        {
+            const size_t at = static_cast<size_t>(x) * DepthColors::kColumnStride + __builtin_ctz(groups);
+            for (int k = 0; k < 4; ++k)
+                if (a.words[at + k * DepthColors::kColumnWords] != b.words[at + k * DepthColors::kColumnWords])
+                    return false;
+        }
+    return true;
+}
+
+// Eight columns' changed pixels (word c: column c's, row MaskRow(b) of a group of 32 at bit b) toggled in the bit rows
+// (`rows`: the group's first, a byte a row, column c at bit c): the 8 x 32 bits are turned, not toggled one by one.
+template <size_t kRowBytes>
+static inline void ToggleRows(uint32_t a[8], uint8_t *rows)
+{
+    for (int i = 0; i < 4; ++i) // (swapping blocks of 4 bits between words 4 apart, then 2 bits, then 1 bit)
+    {
+        const uint32_t t = ((a[i] >> 4) ^ a[i + 4]) & 0x0F0F0F0Fu;
+        a[i + 4] ^= t;
+        a[i] ^= t << 4;
+    }
+    for (int i = 0; i < 8; i += 4)
+        for (int k = 0; k < 2; ++k)
+        {
+            const uint32_t t = ((a[i + k] >> 2) ^ a[i + k + 2]) & 0x33333333u;
+            a[i + k + 2] ^= t;
+            a[i + k] ^= t << 2;
+        }
+    for (int i = 0; i < 8; i += 2)
+    {
+        const uint32_t t = ((a[i] >> 1) ^ a[i + 1]) & 0x55555555u;
+        a[i + 1] ^= t;
+        a[i] ^= t << 1;
+    }
+    // (word j's byte q is now the pixel bit 8q + j of all eight columns)
+    for (int q = 0; q < 4; ++q)
+        for (int j = 0; j < 8; ++j)
+            rows[DepthColors::MaskRow(8 * q + j) * kRowBytes] ^= static_cast<uint8_t>(a[j] >> (8 * q));
 }
 
 void DepthColors::Update()
 {
     const size_t n = static_cast<size_t>(kWidth) * kHeight;
-    if (m_haveLast && SameLit(m_nextLit[0], m_lastLit[0]) && SameLit(m_nextLit[1], m_lastLit[1]))
+    const int now = m_lastMasks ^ 1, was = m_lastMasks;
+    if (m_haveLast && SameMasks(m_masks[0][now], m_masks[0][was]) && SameMasks(m_masks[1][now], m_masks[1][was]))
         return; // same pictures as last time (most 3D games draw a new picture every other frame or less)
 
     const bool rebuild = !m_haveLast || !m_bitsValid;
@@ -203,130 +261,85 @@ void DepthColors::Update()
         for (const uint32_t p : m_staleWanted) // (the only pixels it was given: those wanted then)
             m_disparity[static_cast<size_t>(LitY(p)) * kWidth + LitX(p)] = kUnknown;
 
-    // Each eye's picture: only changed pixels are rewritten (shades, bit rows, wanted flags) and their blocks marked.
+    // Each eye's bit rows: only the pixels whose shade changed are toggled, and their blocks marked.
     if (rebuild)
     {
         for (int e = 0; e < 2; ++e)
-        {
-            m_shade[e].assign(n, 0);
-            m_want[e].assign(n, 0);
-            m_was[e].assign(n, 0xFF);
-            m_changed[e].clear();
             for (int s = 0; s < 3; ++s)
             {
                 m_bits[e][s].resize(kHeight + 2 * kRowPad);
                 for (Row &row : m_bits[e][s])
                     row.fill(0);
-                m_wantedCount[e][s] = 0;
             }
-        }
         m_dirtyLeft.fill(~0ull);
         m_dirtyRight.fill(~0ull);
     }
-    else
-        for (int e = 0; e < 2; ++e)
-        {
-            for (const uint32_t i : m_changed[e])
-                m_was[e][i] = 0xFF;
-            m_changed[e].clear();
-        }
 
     for (int e = 0; e < 2; ++e)
     {
         std::array<uint64_t, kBlocksY> &dirty = e ? m_dirtyRight : m_dirtyLeft;
-        uint8_t *const shade = m_shade[e].data(), *const wants = m_want[e].data();
-        auto toggle = [&](unsigned s, uint32_t x, uint32_t y) {
-            m_bits[e][s - 1][y + kRowPad][8 + (x >> 3)] ^= static_cast<uint8_t>(1u << (x & 7));
-        };
-        // (put: a lit pixel added or given another shade or need; take: one no longer lit)
-        auto put = [&](uint32_t p) {
-            const uint32_t x = LitX(p), y = LitY(p);
-            const size_t i = static_cast<size_t>(y) * kWidth + x;
-            const unsigned was = shade[i], now = LitShade(p);
-            if (was != now)
-            {
-                if (was)
-                    toggle(was, x, y);
-                toggle(now, x, y);
-                dirty[y >> 3] |= 1ull << (x >> 3);
-                if (!rebuild)
-                    m_was[e][i] = static_cast<uint8_t>(was), m_changed[e].push_back(static_cast<uint32_t>(i));
-            }
-
-            if (wants[i])
-                --m_wantedCount[e][was - 1];
-            shade[i] = static_cast<uint8_t>(now);
-            wants[i] = LitWanted(p);
-            if (wants[i])
-                ++m_wantedCount[e][now - 1];
-        };
-        auto take = [&](uint32_t p) {
-            const uint32_t x = LitX(p), y = LitY(p);
-            const size_t i = static_cast<size_t>(y) * kWidth + x;
-            const unsigned was = shade[i];
-            toggle(was, x, y);
-            dirty[y >> 3] |= 1ull << (x >> 3);
-            m_was[e][i] = static_cast<uint8_t>(was), m_changed[e].push_back(static_cast<uint32_t>(i));
-            if (wants[i])
-                --m_wantedCount[e][was - 1];
-            shade[i] = 0;
-            wants[i] = 0;
-        };
-
-        const LitColumns &last = m_lastLit[e], &next = m_nextLit[e];
-        const uint16_t *lastAt = last.pixels.data(), *nextAt = next.pixels.data();
-        // (a column's pixel as the lit pixel it stands for)
-        const auto lit = [](uint32_t x, uint32_t p) { return Lit(x, p & 255, p >> 8 & 3, (p & 1 << 10) != 0); };
-        for (uint32_t x = 0; x < kWidth; ++x)
+        const LitMasks &next = m_masks[e][now], &last = m_masks[e][was];
+        for (uint32_t tile = 0; tile < kWidth / 8; ++tile)
         {
-            const unsigned lastCount = rebuild ? 0 : last.count[x], nextCount = next.count[x];
-            const unsigned lastRoom = (lastCount + 1) & ~1u, nextRoom = (nextCount + 1) & ~1u;
-            // (both columns run top down: what's the same in both is skipped at a glance)
-            if (lastCount == nextCount && (!nextCount || !std::memcmp(lastAt, nextAt, nextRoom * sizeof(uint16_t))))
+            unsigned nextUsed[8], lastUsed[8], either = 0;
+            for (int c = 0; c < 8; ++c)
             {
-                lastAt += lastRoom, nextAt += nextRoom;
-                continue;
+                nextUsed[c] = next.used[8 * tile + c], lastUsed[c] = rebuild ? 0 : last.used[8 * tile + c];
+                either |= nextUsed[c] | lastUsed[c];
             }
-
-            unsigned i = 0, j = 0;
-            while (i < lastCount && j < nextCount)
+            const uint64_t block = 1ull << tile;
+            for (unsigned groups = either; groups; groups &= groups - 1)
             {
-                if (lastAt[i] == nextAt[j])
-                    ++i, ++j;
-                else if ((lastAt[i] & 255) == (nextAt[j] & 255))
-                    put(lit(x, nextAt[j++])), ++i;
-                else if ((lastAt[i] & 255) < (nextAt[j] & 255))
-                    take(lit(x, lastAt[i++]));
-                else
-                    put(lit(x, nextAt[j++]));
+                const unsigned g = static_cast<unsigned>(__builtin_ctz(groups));
+                uint32_t diff[3][8], changed = 0; // (per shade, the 8 columns' pixels that changed)
+                for (int c = 0; c < 8; ++c)
+                {
+                    const uint32_t *const nextAt = &next.words[(8 * tile + c) * kColumnStride + g];
+                    const uint32_t *const lastAt = &last.words[(8 * tile + c) * kColumnStride + g];
+                    for (int s = 0; s < 3; ++s)
+                    {
+                        // (a group not used holds old words: its pixels are all off)
+                        if (!(nextUsed[c] >> g & 1))
+                            diff[s][c] = (lastUsed[c] >> g & 1) ? lastAt[s * kColumnWords] : 0;
+                        else if (!(lastUsed[c] >> g & 1))
+                            diff[s][c] = nextAt[s * kColumnWords];
+                        else
+                            diff[s][c] = nextAt[s * kColumnWords] ^ lastAt[s * kColumnWords];
+                        changed |= diff[s][c];
+                    }
+                }
+                if (!changed)
+                    continue;
+                // (the group's bands at the even bits' low and high halves, then the odd bits')
+                static constexpr uint32_t kBand[4] = {0x00005555u, 0x55550000u, 0x0000AAAAu, 0xAAAA0000u};
+                for (unsigned b = 0; b < 4; ++b)
+                    if (changed & kBand[b])
+                        dirty[4 * g + b] |= block;
+                static_assert(sizeof(Row) == 8 * kGuarded, "(rows one after another)");
+                for (int s = 0; s < 3; ++s)
+                {
+                    uint32_t *const columns = diff[s];
+                    if (!(columns[0] | columns[1] | columns[2] | columns[3] | columns[4] | columns[5] | columns[6] |
+                          columns[7]))
+                        continue;
+                    uint8_t *const rows = m_bits[e][s].data()->data() + (kRowPad + 32 * g) * sizeof(Row) + 8 + tile;
+                    ToggleRows<sizeof(Row)>(columns, rows);
+                }
             }
-
-            for (; i < lastCount; ++i)
-                take(lit(x, lastAt[i]));
-            for (; j < nextCount; ++j)
-                put(lit(x, nextAt[j]));
-            lastAt += lastRoom, nextAt += nextRoom;
         }
     }
 
-    const uint8_t *const shades[2] = {m_shade[0].data(), m_shade[1].data()},
-                  *const want[2] = {m_want[0].data(), m_want[1].data()};
-    // (the shades anything needs a color in)
-    bool wanted[3] = {false, false, false};
-    for (int e = 0; e < 2; ++e)
-        for (int s = 0; s < 3; ++s)
-            wanted[s] |= m_wantedCount[e][s] > 0;
     m_bitsValid = true;
 
-    if (wanted[0] || wanted[1] || wanted[2])
-        Estimate(shades, want);
+    if (m_masks[0][now].anyWanted || m_masks[1][now].anyWanted)
+        Estimate();
 
     // Flat fills: in an area of one shade (a whole 7x7 window of it) any shift lines up, so nothing says its depth.
     // Each connected area takes one plane (a floor or wall in perspective, not per-row blends: those streak) through
     // its shade's disparities just outside it, where edges and lines across it say.
     {
         auto flat = [&](int x, int y) {
-            const unsigned s = shades[0][static_cast<size_t>(y) * kWidth + x];
+            const unsigned s = Shade(0, static_cast<unsigned>(x), static_cast<unsigned>(y));
             if (!s || y < 3 || y >= kHeight - 3 || x < 3 || x >= kWidth - 3)
                 return false;
             const Row *l = m_bits[0][s - 1].data() + kRowPad;
@@ -336,7 +349,7 @@ void DepthColors::Update()
             return true;
         };
 
-        std::vector<int16_t> &left = m_disparity;
+        Vec64<int16_t> &left = m_disparity;
         // (the last fills left their areas' pixels 0, all else -1)
         if (m_flatLabel.size() != n)
             m_flatLabel.assign(n, -1);
@@ -361,7 +374,7 @@ void DepthColors::Update()
             m_samples.clear();
             m_area.push_back(seed);
             m_flatLabel[seed] = 0;
-            const uint8_t shade = shades[0][seed];
+            const unsigned shade = Shade(0, static_cast<unsigned>(seed % kWidth), static_cast<unsigned>(seed / kWidth));
             for (size_t k = 0; k < m_area.size(); ++k)
             {
                 const int i = m_area[k], x = i % kWidth, y = i / kWidth;
@@ -376,8 +389,8 @@ void DepthColors::Update()
                         m_flatLabel[ni] = 0;
                         m_area.push_back(ni);
                     }
-                    else if (m_flatLabel[ni] == -1 && shades[0][ni] == shade && want[0][ni] && left[ni] != kUnknown
-                             && inner(nx[j], ny[j]))
+                    else if (m_flatLabel[ni] == -1 && Shade(0, nx[j], ny[j]) == shade && Wanted(nx[j], ny[j])
+                             && left[ni] != kUnknown && inner(nx[j], ny[j]))
                         m_samples.push_back({static_cast<int16_t>(nx[j]), static_cast<int16_t>(ny[j]), left[ni]});
                 }
             }
@@ -385,11 +398,11 @@ void DepthColors::Update()
             if (m_samples.empty())
                 continue; // nothing says - their blocks' disparities stay
 
-            auto median = [&](std::vector<int> &v) {
+            auto median = [&](Vec64<int> &v) {
                 std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
                 return v[v.size() / 2];
             };
-            std::vector<int> &ds = m_scratch;
+            Vec64<int> &ds = m_scratch;
             ds.clear();
             for (const Sample &p : m_samples)
                 ds.push_back(p.d);
@@ -452,7 +465,7 @@ void DepthColors::Update()
                         if (nx[j] < 0 || nx[j] >= kWidth || ny[j] < 0 || ny[j] >= kHeight)
                             continue;
                         const int ni = ny[j] * kWidth + nx[j];
-                        if (m_flatLabel[ni] != -1 || shades[0][ni] != shade || !want[0][ni])
+                        if (m_flatLabel[ni] != -1 || Shade(0, nx[j], ny[j]) != shade || !Wanted(nx[j], ny[j]))
                             continue;
                         m_flatLabel[ni] = -3; // (seen)
                         m_area.push_back(ni);
@@ -469,8 +482,7 @@ void DepthColors::Update()
         }
     }
 
-    std::swap(m_lastLit[0], m_nextLit[0]);
-    std::swap(m_lastLit[1], m_nextLit[1]);
+    m_lastMasks = now;
     std::swap(m_staleWanted, m_lastWanted); // (the pixels m_disparity holds after the swap below)
     std::swap(m_lastWanted, m_nextWanted);
 
@@ -727,46 +739,60 @@ struct DepthColors::CostRowArgs
     uint64_t active;           // the blocks whose costs are worked out (bit per block): the others' stay
 };
 
-// The cost of a block at one disparity from its window counts: matches (m) among the countable pixels (in) of its 3x3
-// blocks, and (wm, wn) the same for its 11-block strip.
-static int CostOf(int m, int in, int wm, int wn, const int32_t *perMille, const int16_t *smallTab,
-                  const int16_t *wideTab)
-{
-    const int small = in < kSmallFull ? smallTab[in * kSmallFull + m] : 1000 - ((m * perMille[in]) >> 16);
-    const int wide = wn < kWideFull ? wideTab[wn * kWideFull + wm] : 1000 - ((wm * perMille[wn]) >> 16);
-    return (small + wide) >> 1;
-}
+// (the prefix sums' rows: a block's windows reach 5 blocks either side; the stride is no power of two, to spread the
+// rows over the cache)
+constexpr int kPad = 8, kRowPadded = kPad + DepthColors::kWidth / 8 + kPad, kPrefixStride = 2 * kRowPadded + 16;
 
-// One block's costs at the disparities diLo to diHi, from the prefix sums at its place (e, f: a row per disparity),
-// its windows counted from a table or by the formula (kSmallTable, kWideTable); also tracks the block's cheapest.
+// One block's costs at the disparities diLo to diHi, from the prefix sums at its place (e: a row per disparity, the
+// 3-row sums and the single row's kRowPadded on, all doubled to read a table at a byte offset), its windows counted
+// from a table (sRow, wRow: the block's rows) or by the formula (sMul, wMul); also tracks the block's cheapest.
 template <bool kLast, bool kSmallTable, bool kWideTable>
-static void CostBlock(const int16_t *__restrict e, const int16_t *__restrict f, int rowStride, int diLo, int diHi,
-                      const int *__restrict priors, int sBase, int wBase, int16_t *__restrict col, int16_t &cheapest,
-                      uint8_t &cheapestAt, const int16_t *__restrict smallTab, const int16_t *__restrict wideTab)
+static void CostBlock(const int16_t *__restrict e, int diLo, int diHi, const int16_t *__restrict priors,
+                      const char *sRow, const char *wRow, int sMul, int wMul, int16_t *__restrict col,
+                      int16_t &cheapest, uint8_t &cheapestAt)
 {
-    int best = cheapest, bestAt = cheapestAt;
-    for (int di = diLo; di <= diHi; ++di, e += rowStride, f += rowStride)
-    {
-        const int m = e[2] - e[-1];
-        const int wm = f[6] - f[-5];
-        const int small = kSmallTable ? smallTab[sBase + m] : 1000 - ((m * sBase) >> 16);
-        const int wide = kWideTable ? wideTab[wBase + wm] : 1000 - ((wm * wBase) >> 16);
-        int c = ((small + wide) >> 1) + priors[di];
+    int best = cheapest;
+    const int16_t *bestAt = col + cheapestAt;
+    const int16_t *prior = priors + diLo;
+    int16_t *at = col + diLo;
+    // (the disparity k on from the pair's first)
+    const auto one = [&](int k) {
+        const int16_t *const ek = e + k * kPrefixStride;
+        const int m2 = ek[2] - ek[-1];
+        const int wm2 = ek[kRowPadded + 6] - ek[kRowPadded - 5];
+        // (c is twice the cost until the last shift: prior is twice the pull, plus the 1000 of each formula window)
+        int c = prior[k];
+        if constexpr (kSmallTable)
+            c += *reinterpret_cast<const int16_t *>(sRow + m2);
+        else
+            c -= (m2 * sMul) >> 17;
+        if constexpr (kWideTable)
+            c += *reinterpret_cast<const int16_t *>(wRow + wm2);
+        else
+            c -= (wm2 * wMul) >> 17;
+        c >>= 1;
         if (kLast)
-            c = (c * kKeepNow + col[di] * kKeepLast) >> 8;
-        const int16_t out = static_cast<int16_t>(c);
-        col[di] = out;
-        if (out < best)
-            best = out, bestAt = di;
+            c = (c * kKeepNow + at[k] * kKeepLast) >> 8;
+        at[k] = static_cast<int16_t>(c);
+        if (c < best)
+            best = c, bestAt = at + k;
+    };
+    int left = diHi - diLo + 1;
+    if (left & 1)
+    {
+        one(0);
+        ++at, ++prior, e += kPrefixStride;
     }
+    for (left >>= 1; left > 0; --left, at += 2, prior += 2, e += 2 * kPrefixStride)
+        one(0), one(1);
     cheapest = static_cast<int16_t>(best);
-    cheapestAt = static_cast<uint8_t>(bestAt);
+    cheapestAt = static_cast<uint8_t>(bestAt - col);
 }
 
 void DepthColors::CostRow(const CostRowArgs &a)
 {
     static const CostTables &tables = Tables();
-    constexpr int kPad = 8, kPadded = kBlocksX + 2 * kWideBlocks, kEdge = 8;
+    constexpr int kPadded = kBlocksX + 2 * kWideBlocks, kEdge = 8;
     const int32_t *const perMille = a.perMille;
     // (the countable pixels in each block's 3x3 blocks and 11-block strip at disparity 0, where all of them are)
     int16_t in0[kBlocksX], wn0[kBlocksX];
@@ -820,27 +846,35 @@ void DepthColors::CostRow(const CostRowArgs &a)
     }
 
     // (each disparity's pull toward the screen's plane, and the same times kKeepNow)
-    static const auto kPriors = [] {
+    alignas(64) static const auto kPriors = [] { // (64-byte aligned like the statics depth reads: see FB in vip.c)
         std::array<std::array<int, kDisparities>, 2> t{};
         for (int di = 0; di < kDisparities; ++di)
             t[0][di] = kPrior * std::abs(di - kMaxDisparity), t[1][di] = t[0][di] * kKeepNow;
         return t;
     }();
     const int *const priors = kPriors[0].data(), *const priors154 = kPriors[1].data();
+    // (twice the pull, and 1000 for each window counted by the formula, for CostBlock)
+    alignas(64) static const auto kPriors2 = [] {
+        std::array<std::array<int16_t, kDisparities>, 3> t{};
+        for (int formulas = 0; formulas < 3; ++formulas)
+            for (int di = 0; di < kDisparities; ++di)
+                t[formulas][di] = static_cast<int16_t>(1000 * formulas + 2 * kPrior * std::abs(di - kMaxDisparity));
+        return t;
+    }();
 
     if (last >= 0)
     {
         // (prefix sums of the matches along the row, per disparity, over what the active blocks read: constant past
         // them; the 3x3 blocks sum three rows, the strip only its own - four blocks' counts at a time, one word)
-        constexpr int kRowPadded = kPad + kBlocksX + kPad;
+        static_assert(kRowPadded == kPad + kBlocksX + kPad, "(the prefix rows)");
         const int reachFirst = std::max(0, first - kWideBlocks), reachLast = std::min(kBlocksX - 1, last + kWideBlocks);
         const int from = reachFirst & ~3, to = reachLast | 3;
-        static int16_t eqAll[kDisparities][kRowPadded], epAll[kDisparities][kRowPadded];
+        alignas(64) static int16_t prefixAll[kDisparities][kPrefixStride]; // (doubled: see CostBlock)
         for (int di = 0; di < kDisparities; ++di)
         {
             const uint8_t *M = a.matches[1] + di * a.step[1], *Mu = a.matches[0] + di * a.step[0],
                           *Md = a.matches[2] + di * a.step[2];
-            int16_t *const eq = eqAll[di] + kPad, *const ep = epAll[di] + kPad; // (eq[b + 1]: the sum up to block b)
+            int16_t *const eq = prefixAll[di] + kPad, *const ep = eq + kRowPadded; // (eq[b + 1]: the sum up to block b)
             // (only the entries up to the first block's reads need to be 0)
             for (int i = from - kWideBlocks; i <= from; ++i)
                 eq[i] = ep[i] = 0;
@@ -851,14 +885,15 @@ void DepthColors::CostRow(const CostRowArgs &a)
                 const uint32_t m = LoadWord(M + bx), m3 = m + LoadWord(Mu + bx) + LoadWord(Md + bx);
                 for (int k = 0; k < 4; ++k)
                 {
-                    q += m3 >> ByteShift(k) & 0xFF;
-                    p += m >> ByteShift(k) & 0xFF;
+                    q += (m3 >> ByteShift(k) & 0xFF) << 1;
+                    p += (m >> ByteShift(k) & 0xFF) << 1;
                     eq[bx + 1 + k] = static_cast<int16_t>(q);
                     ep[bx + 1 + k] = static_cast<int16_t>(p);
                 }
             }
+            const int16_t qEnd = eq[to + 1], pEnd = ep[to + 1]; // (the sums to the last block)
             for (int i = to + 2; i <= to + 6; ++i)
-                eq[i] = static_cast<int16_t>(q), ep[i] = static_cast<int16_t>(p);
+                eq[i] = qEnd, ep[i] = pEnd;
         }
 
         // (each block over the disparities where its windows lose no pixels off the edge: |d| up to 8 * (bx - 5)
@@ -870,16 +905,18 @@ void DepthColors::CostRow(const CostRowArgs &a)
             const int posMax = std::max(0, std::min(kMaxDisparity, 8 * (kBlocksX - 6 - bx)));
             const int diLo = kMaxDisparity - negMax, diHi = kMaxDisparity + posMax;
             diLoOf[bx] = static_cast<uint8_t>(diLo), diHiOf[bx] = static_cast<uint8_t>(diHi);
-            const int16_t *const e = &eqAll[diLo][kPad + bx], *const f = &epAll[diLo][kPad + bx];
+            const int16_t *const e = &prefixAll[diLo][kPad + bx];
             const bool smallTable = in0[bx] < kSmallFull, wideTable = wn0[bx] < kWideFull;
+            const char *const sRow = reinterpret_cast<const char *>(tables.small + (smallTable ? sBase[bx] : 0));
+            const char *const wRow = reinterpret_cast<const char *>(tables.wide + (wideTable ? wBase[bx] : 0));
 
 #define VBGO_BLOCK(S, W) \
             if (a.hadLast) \
-                CostBlock<true, S, W>(e, f, kRowPadded, diLo, diHi, priors, sBase[bx], wBase[bx], cols[bx], \
-                                      cheapest[bx], a.cheapestAt[bx], tables.small, tables.wide); \
+                CostBlock<true, S, W>(e, diLo, diHi, kPriors2[!S + !W].data(), sRow, wRow, sBase[bx], wBase[bx], \
+                                      cols[bx], cheapest[bx], a.cheapestAt[bx]); \
             else \
-                CostBlock<false, S, W>(e, f, kRowPadded, diLo, diHi, priors, sBase[bx], wBase[bx], cols[bx], \
-                                       cheapest[bx], a.cheapestAt[bx], tables.small, tables.wide);
+                CostBlock<false, S, W>(e, diLo, diHi, kPriors2[!S + !W].data(), sRow, wRow, sBase[bx], wBase[bx], \
+                                       cols[bx], cheapest[bx], a.cheapestAt[bx]);
             if (smallTable)
             {
                 if (wideTable)
@@ -911,7 +948,12 @@ void DepthColors::CostRow(const CostRowArgs &a)
             rightStart = std::min<int>(rightStart, diHiOf[blocks[k]] + 1);
         }
 
-        static int16_t pd3All[kDisparities][kEdge + 1], pdnAll[kDisparities][kEdge + 1];
+        // (per disparity, what the edge word's blocks lose, summed along them: the 3x3 blocks' share and the strips')
+        struct EdgeLoss
+        {
+            int16_t sum3[kEdge + 1], sumN[kEdge + 1];
+        };
+        alignas(64) static EdgeLoss lossAll[kDisparities];
         for (int di = 0; di < kDisparities; ++di)
         {
             if (di >= leftEnd && di < rightStart)
@@ -924,13 +966,15 @@ void DepthColors::CostRow(const CostRowArgs &a)
             const uint8_t *N0 = a.inside[1] + kMaxDisparity * a.step[1], *Nu0 = a.inside[0] + kMaxDisparity * a.step[0];
             const uint8_t *Nd0 = a.inside[2] + kMaxDisparity * a.step[2];
 
-            // (what the edge word's blocks lose, summed along them: the 3x3 blocks lose their share, the strips theirs;
-            // only the blocks j0 to j1 do)
-            int16_t *const pd3 = pd3All[di], *const pdn = pdnAll[di];
+            // (only the blocks j0 to j1 lose pixels: before them the sums are 0, after them they stay)
+            int16_t *const pd3 = lossAll[di].sum3, *const pdn = lossAll[di].sumN;
             const int j0 = d < 0 ? 0 : kEdge - 1 - jmax, j1 = d < 0 ? jmax : kEdge - 1;
             int sum3 = 0, sumn = 0;
-            for (int j = 0; j < kEdge; ++j)
-                pd3[j] = pdn[j] = 0;
+            if (d < 0)
+                pd3[0] = pdn[0] = 0;
+            else
+                for (int j = 0; j < kEdge; ++j)
+                    pd3[j] = pdn[j] = 0;
             for (int j = j0; j <= j1; ++j)
             {
                 const int bx = lo + j, dn = N[bx] - N0[bx];
@@ -943,24 +987,34 @@ void DepthColors::CostRow(const CostRowArgs &a)
         }
 
         // (a block's costs at disparities diFrom to diTo; a tie goes to the lower one, the block's others came first)
-        const auto edgeRun = [&](int bx, int lo, int diFrom, int diTo) {
+        const auto edgeRun = [&](auto last, int bx, int lo, int diFrom, int diTo) {
+            constexpr bool kLast = decltype(last)::value;
             const auto at = [](int j) { return std::min(std::max(j, 0), static_cast<int>(kEdge)); };
             const int r = bx - lo, a3 = at(r + 2), b3 = at(r - 1), an = at(r + 6), bn = at(r - 5);
             int16_t *const col = cols[bx];
+            const int inHere = in0[bx], wnHere = wn0[bx];
             int best = cheapest[bx], bestAt = a.cheapestAt[bx];
             for (int di = diFrom; di <= diTo; ++di)
             {
-                const int16_t *const e = eqAll[di] + kPad, *const f = epAll[di] + kPad;
-                const int in = in0[bx] + pd3All[di][a3] - pd3All[di][b3];
-                const int wn = wn0[bx] + pdnAll[di][an] - pdnAll[di][bn];
-                int c = CostOf(e[bx + 2] - e[bx - 1], in, f[bx + 6] - f[bx - 5], wn, perMille, tables.small,
-                               tables.wide) + priors[di];
-                if (a.hadLast)
+                const int16_t *const e = prefixAll[di] + kPad, *const f = e + kRowPadded;
+                const EdgeLoss &loss = lossAll[di];
+                const int in = inHere + loss.sum3[a3] - loss.sum3[b3];
+                const int wn = wnHere + loss.sumN[an] - loss.sumN[bn];
+                const int m2 = e[bx + 2] - e[bx - 1], wm2 = f[bx + 6] - f[bx - 5];
+                const int small = in < kSmallFull ? *reinterpret_cast<const int16_t *>(
+                                                        reinterpret_cast<const char *>(tables.small) +
+                                                        in * (2 * kSmallFull) + m2)
+                                                  : 1000 - ((m2 * perMille[in]) >> 17);
+                const int wide = wn < kWideFull ? *reinterpret_cast<const int16_t *>(
+                                                      reinterpret_cast<const char *>(tables.wide) +
+                                                      wn * (2 * kWideFull) + wm2)
+                                                : 1000 - ((wm2 * perMille[wn]) >> 17);
+                int c = ((small + wide) >> 1) + priors[di];
+                if (kLast)
                     c = (c * kKeepNow + col[di] * kKeepLast) >> 8;
-                const int16_t out = static_cast<int16_t>(c);
-                col[di] = out;
-                if (out < best || (out == best && di < bestAt))
-                    best = out, bestAt = di;
+                col[di] = static_cast<int16_t>(c);
+                if (c < best || (c == best && di < bestAt))
+                    best = c, bestAt = di;
             }
             cheapest[bx] = static_cast<int16_t>(best);
             a.cheapestAt[bx] = static_cast<uint8_t>(bestAt);
@@ -970,9 +1024,19 @@ void DepthColors::CostRow(const CostRowArgs &a)
         {
             const int bx = blocks[k];
             if (diLoOf[bx] > 0)
-                edgeRun(bx, 0, 0, diLoOf[bx] - 1);
+            {
+                if (a.hadLast)
+                    edgeRun(std::true_type{}, bx, 0, 0, diLoOf[bx] - 1);
+                else
+                    edgeRun(std::false_type{}, bx, 0, 0, diLoOf[bx] - 1);
+            }
             if (diHiOf[bx] < kDisparities - 1)
-                edgeRun(bx, kBlocksX - kEdge, diHiOf[bx] + 1, kDisparities - 1);
+            {
+                if (a.hadLast)
+                    edgeRun(std::true_type{}, bx, kBlocksX - kEdge, diHiOf[bx] + 1, kDisparities - 1);
+                else
+                    edgeRun(std::false_type{}, bx, kBlocksX - kEdge, diHiOf[bx] + 1, kDisparities - 1);
+            }
         }
     }
 
@@ -981,8 +1045,12 @@ void DepthColors::CostRow(const CostRowArgs &a)
     {
         int16_t *const out = cols[empty[i]];
         if (a.hadLast)
+        {
+            // (unrolled, as the compare loop in CountBand is)
+#pragma GCC unroll 9
             for (int di = 0; di < kDisparities; ++di)
                 out[di] = static_cast<int16_t>((priors154[di] + out[di] * kKeepLast) >> 8);
+        }
         else
             for (int di = 0; di < kDisparities; ++di)
                 out[di] = static_cast<int16_t>(priors[di]);
@@ -997,6 +1065,77 @@ static inline void StoreBytes(uint8_t *p, uint32_t v)
     std::memcpy(p, &v, 4);
 }
 
+// Each lit left pixel's same-shade right pixels within reach, added to a's counts where they meet (the same counts as
+// all 81 shifts, a left pixel having one shade); o: the first right bit in reach of left pixel 0.
+template <int kStride>
+__attribute__((noinline)) static void SparseShifts(const uint32_t (*words)[5], const uint32_t *shades, int n, int o,
+                                                   uint32_t *a)
+{
+    constexpr int kRowBytes = kStride * sizeof(uint32_t);
+    for (int s = 0; s < n; ++s)
+        for (uint32_t l = shades[s]; l; l &= l - 1)
+        {
+            const int b = __builtin_ctz(l), from = o + b;
+            const uint32_t one = 1u << (8 * (b >> 3));
+            // (the pixel's reach as 3 words, disparity 0 at bit 0 of the first, the last with just its 17 bits)
+            const uint32_t *const w = words[s] + (from >> 5);
+            const int shift = from & 31;
+            for (int t = 0; t < 3; ++t)
+            {
+                uint32_t r = w[t] >> shift | w[t + 1] << 1 << (31 - shift);
+                if (t == 2)
+                    r &= (1u << (2 * DepthColors::kMaxDisparity + 1 - 64)) - 1;
+                // (from the highest bit down: bit 31 - z is at disparity 32 * t + 31 - z)
+                char *const top = reinterpret_cast<char *>(a + (32 * t + 31) * kStride);
+                while (r)
+                {
+                    // (in bytes, so that one multiplication gives the address)
+                    const int z = __builtin_clz(r);
+                    *reinterpret_cast<uint32_t *>(top - z * kRowBytes) += one;
+                    r &= ~(0x80000000u >> z);
+                }
+            }
+        }
+}
+
+// The shifts sh = kFrom..kTo of a word of right bits against the left words, added to a's counts a disparity apart
+// (constant shifts: a funnel shift is then two instructions per shade).
+template <int N, int kStride, int kFrom, int kTo>
+static inline void DenseRun(const uint32_t (&lo)[N], const uint32_t (&hi)[N], const uint32_t (&left)[N], uint32_t *a)
+{
+#pragma GCC unroll 32
+    for (int sh = kFrom; sh <= kTo; ++sh)
+    {
+        uint32_t m = 0;
+        for (int s = 0; s < N; ++s)
+            m |= left[s] & (lo[s] >> sh | hi[s] << (31 - sh));
+        a[(sh - kFrom) * kStride] += ByteCounts32(m);
+    }
+}
+
+// All 81 shifts of a half's right rows against its left ones (n shades, a word each in `shades`, each with the 5 right
+// words the shifts read), added to a's counts a disparity apart (kStride words). Every half's window starts 24 bits
+// into its first right word, so each disparity's word and shift are the same for all.
+template <int N, int kStride>
+__attribute__((noinline)) static void DenseShifts(const uint32_t (*words)[5], const uint32_t *shades, uint32_t *a)
+{
+    uint32_t left[N]; // (copied: a store through a could change `shades` as far as the compiler knows)
+    for (int s = 0; s < N; ++s)
+        left[s] = shades[s];
+    for (int j = 0; j < 4; ++j)
+    {
+        uint32_t lo[N], hi[N]; // (hi: the next word a bit up, so a shift of 0 takes none of it)
+        for (int s = 0; s < N; ++s)
+            lo[s] = words[s][j], hi[s] = words[s][j + 1] << 1;
+        if (j == 0)
+            DenseRun<N, kStride, 24, 31>(lo, hi, left, a), a += 8 * kStride;
+        else if (j == 3)
+            DenseRun<N, kStride, 0, 8>(lo, hi, left, a);
+        else
+            DenseRun<N, kStride, 0, 31>(lo, hi, left, a), a += 32 * kStride;
+    }
+}
+
 // Estimate's matches and inside counts for one band of blocks, redone for the 32-pixel halves set in `halves`; returns
 // the blocks whose counts changed. Done by halves, as the Wii's CPU works 64-bit words in pairs of instructions.
 uint64_t DepthColors::CountBand(int by, uint32_t halves)
@@ -1006,7 +1145,7 @@ uint64_t DepthColors::CountBand(int by, uint32_t halves)
     // (inside, at the edge words: the lit pixels there less the |d| nearest the edge, side 0 the left word's, side 1
     // the right's; columnIn: each column's lit pixels as a count in its block's byte, counted in from the edge)
     const bool edges[2] = {(halves & 3u) != 0, (halves >> (2 * (kRowWords - 1)) & 3u) != 0};
-    uint32_t litIn[2][2] = {}, columnIn[2][kMaxDisparity] = {};
+    uint32_t litIn[2][2] = {}, edgeRows[2][2][8];
     for (int y = by * 8; y < by * 8 + 8; ++y)
     {
         const uint8_t *l1 = m_bits[0][0][y + kRowPad].data(), *l2 = m_bits[0][1][y + kRowPad].data(),
@@ -1024,7 +1163,8 @@ uint64_t DepthColors::CountBand(int by, uint32_t halves)
                 if (!lw)
                     continue;
 
-                total[2 * k + h] += ByteCounts32(lw);
+                const uint32_t counts = ByteCounts32(lw);
+                total[2 * k + h] += counts;
                 // (the right rows' 5 words these 81 shifts read, loaded once; a shade the left half lacks adds nothing)
                 const int base = 64 * (k + 1) + 32 * h - kMaxDisparity, first = base >> 5;
                 const uint8_t *const right[3] = {r1, r2, r3};
@@ -1040,47 +1180,19 @@ uint64_t DepthColors::CountBand(int by, uint32_t halves)
                     }
 
                 uint32_t *a = &acc[0][2 * k + h];
-                // (a sparse half: add each lit left pixel's same-shade right pixels within reach where they meet -
-                // the same counts, a left pixel having one shade - while that's cheaper than all 81 shifts)
-                const int o = base & 31;
-                uint32_t work = 0;
-                for (int s = 0; s < n; ++s)
+                if (counts * 0x01010101u >> 24 <= kSparseHalf) // (a sparse half: its pixels one by one)
                 {
-                    uint32_t right = 0;
-                    for (int j = 0; j < 5; ++j)
-                        right += Ones32(words[s][j]);
-                    work += Ones32(shades[s]) * (25 + 3 * right);
-                }
-
-                if (work <= static_cast<uint32_t>(kDisparities * (6 * n + 14)))
-                {
-                    for (int s = 0; s < n; ++s)
-                        for (uint32_t l = shades[s]; l; l &= l - 1)
-                        {
-                            const int b = __builtin_ctz(l), from = o + b, to = from + 2 * kMaxDisparity;
-                            const uint32_t one = 1u << (8 * (b >> 3));
-                            for (int j = from >> 5; j <= to >> 5; ++j)
-                            {
-                                uint32_t r = words[s][j];
-                                if (j == from >> 5)
-                                    r &= ~0u << (from & 31);
-                                if (j == to >> 5 && (to & 31) != 31)
-                                    r &= (2u << (to & 31)) - 1;
-                                for (; r; r &= r - 1)
-                                    a[(32 * j + __builtin_ctz(r) - from) * 2 * kRowWords] += one;
-                            }
-                        }
+                    SparseShifts<2 * kRowWords>(words, shades, n, base & 31, a);
                     continue;
                 }
 
-                for (int di = 0; di < kDisparities; ++di)
-                {
-                    const int j = ((base + di) >> 5) - first, sh = (base + di) & 31;
-                    uint32_t m = 0;
-                    for (int s = 0; s < n; ++s)
-                        m |= shades[s] & (sh ? (words[s][j] >> sh) | (words[s][j + 1] << (32 - sh)) : words[s][j]);
-                    a[di * 2 * kRowWords] += ByteCounts32(m);
-                }
+                static_assert(((64 - kMaxDisparity) & 31) == 24, "(DenseShifts' first shift)");
+                if (n == 1)
+                    DenseShifts<1, 2 * kRowWords>(words, shades, a);
+                else if (n == 2)
+                    DenseShifts<2, 2 * kRowWords>(words, shades, a);
+                else
+                    DenseShifts<3, 2 * kRowWords>(words, shades, a);
             }
 
         for (int side = 0; side < 2; ++side)
@@ -1088,17 +1200,12 @@ uint64_t DepthColors::CountBand(int by, uint32_t halves)
             if (!edges[side])
                 continue;
 
-            uint32_t word[2];
             for (int h = 0; h < 2; ++h)
             {
                 const int i = side ? 2 * kRowWords + h : 2 + h;
-                word[h] = Half(l1, i) | Half(l2, i) | Half(l3, i);
-                litIn[side][h] += ByteCounts32(word[h]);
-            }
-            for (int c = 0; c < kMaxDisparity; ++c)
-            {
-                const int p = side ? 63 - c : c; // (the pixel c in from the edge, in the 64 of the edge word)
-                columnIn[side][c] += (word[p >> 5] >> (p & 31) & 1u) << (8 * ((p & 31) >> 3));
+                const uint32_t word = Half(l1, i) | Half(l2, i) | Half(l3, i);
+                litIn[side][h] += ByteCounts32(word);
+                edgeRows[side][h][y - by * 8] = word;
             }
         }
     }
@@ -1108,11 +1215,29 @@ uint64_t DepthColors::CountBand(int by, uint32_t halves)
         if (!edges[side])
             continue;
 
+        // (each column's lit pixels over the band's rows, as 4 bit planes of the edge word's halves)
+        uint32_t plane[2][4];
+        for (int h = 0; h < 2; ++h)
+        {
+            const uint32_t *r = edgeRows[side][h];
+            const auto add = [](uint32_t a, uint32_t b, uint32_t c, uint32_t &carry) {
+                carry = (a & b) | (c & (a ^ b));
+                return a ^ b ^ c;
+            };
+            uint32_t c1, c2, c3, c4, u1;
+            const uint32_t s1 = add(r[0], r[1], r[2], c1), s2 = add(r[3], r[4], r[5], c2), s3 = add(s1, s2, r[6], c3);
+            const uint32_t t1 = add(c1, c2, c3, u1);
+            c4 = s3 & r[7];
+            plane[h][0] = s3 ^ r[7], plane[h][1] = t1 ^ c4, plane[h][2] = u1 ^ (t1 & c4), plane[h][3] = u1 & t1 & c4;
+        }
         uint32_t gone[2] = {};
         for (int c = 0; c < kMaxDisparity; ++c)
         {
             const int p = side ? 63 - c : c, di = side ? kMaxDisparity + 1 + c : kMaxDisparity - 1 - c;
-            gone[p >> 5] += columnIn[side][c];
+            const uint32_t *const b = plane[p >> 5];
+            const int q = p & 31;
+            const uint32_t count = (b[0] >> q & 1) | (b[1] >> q & 1) << 1 | (b[2] >> q & 1) << 2 | (b[3] >> q & 1) << 3;
+            gone[p >> 5] += count << (8 * (q >> 3)); // (the pixel c in from the edge: its column's lit pixels)
             edge[di][0] = litIn[side][0] - gone[0], edge[di][1] = litIn[side][1] - gone[1];
         }
     }
@@ -1121,33 +1246,38 @@ uint64_t DepthColors::CountBand(int by, uint32_t halves)
     for (int half = 0; half < 2 * kRowWords; ++half)
         if (halves >> half & 1)
             selected[selectedCount++] = half;
-    uint32_t differs[2 * kRowWords] = {}; // (per half, the bytes that differ at any disparity)
-    for (int di = 0; di < kDisparities; ++di)
-    {
-        const int d = di - kMaxDisparity;
-        uint8_t *m = &m_matchesAll[(static_cast<size_t>(by) * kDisparities + di) * kBlocksX];
-        uint8_t *in = &m_insideAll[(static_cast<size_t>(by) * kDisparities + di) * kBlocksX];
-        for (int s = 0; s < selectedCount; ++s)
-        {
-            // (4 blocks' counts at a time, a byte each, the first block's lowest)
-            const int half = selected[s], k = half >> 1, bx = 4 * half;
-            const uint32_t nm = acc[di][half];
-            const uint32_t ni = (d < 0 && k == 0) || (d > 0 && k == kRowWords - 1) ? edge[di][half & 1] : total[half];
-            const uint32_t diff = (LoadBytes(m + bx) ^ nm) | (LoadBytes(in + bx) ^ ni);
-            if (!diff)
-                continue;
-            differs[half] |= diff;
-            StoreBytes(m + bx, nm);
-            StoreBytes(in + bx, ni);
-        }
-    }
-
     uint64_t changed = 0;
     for (int s = 0; s < selectedCount; ++s)
     {
+        // (4 blocks' counts at a time, a byte each, the first block's lowest; inside counts are kept only where
+        // CostRow reads them: at disparity 0, and at the edge words where they lose pixels - elsewhere they are
+        // disparity 0's)
+        const int half = selected[s], k = half >> 1, bx = 4 * half;
+        uint8_t *const m = &m_matchesAll[static_cast<size_t>(by) * kDisparities * kBlocksX + bx];
+        uint8_t *const in = &m_insideAll[static_cast<size_t>(by) * kDisparities * kBlocksX + bx];
+        uint32_t diff = 0; // (the bytes that differ at any disparity)
+        // (unrolled: of the few instructions a pass takes, the loop's make a good share)
+#pragma GCC unroll 9
+        for (int di = 0; di < kDisparities; ++di)
+        {
+            const uint32_t now = acc[di][half], was = LoadBytes(m + di * kBlocksX);
+            if (now != was)
+                StoreBytes(m + di * kBlocksX, now), diff |= now ^ was;
+        }
+        const auto inside = [&](int di, uint32_t now) {
+            const uint32_t was = LoadBytes(in + di * kBlocksX);
+            if (now != was)
+                StoreBytes(in + di * kBlocksX, now), diff |= now ^ was;
+        };
+        inside(kMaxDisparity, total[half]);
+        if (k == 0)
+            for (int di = 0; di < kMaxDisparity; ++di)
+                inside(di, edge[di][half & 1]);
+        if (k == kRowWords - 1)
+            for (int di = kMaxDisparity + 1; di < kDisparities; ++di)
+                inside(di, edge[di][half & 1]);
+
         // (a flag per byte that differs, gathered into 4 bits)
-        const int half = selected[s];
-        const uint32_t diff = differs[half];
         const uint32_t flags = ((((diff & 0x7F7F7F7Fu) + 0x7F7F7F7Fu) | diff) & 0x80808080u) >> 7;
         changed |= static_cast<uint64_t>((flags * 0x00204081u) >> 21 & 15u) << (4 * half);
     }
@@ -1155,7 +1285,7 @@ uint64_t DepthColors::CountBand(int by, uint32_t halves)
     return changed;
 }
 
-void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const want[2])
+void DepthColors::Estimate()
 {
     State &state = m_state;
     constexpr uint64_t kAll = (1ull << kBlocksX) - 1;
@@ -1173,8 +1303,8 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     // Costs per block and disparity: how badly the two pictures line up in the 3x3 blocks around it and the 11-block
     // strip through it (text and tile patterns repeat; the strip sees past a repetition). Pixels off screen count
     // kNeutral. A row of blocks at a time, only where the counts around them changed or the costs still settle.
-    static const std::vector<int32_t> kPerMille = [] { // 1000 * 65536 / n: n-ths without dividing
-        std::vector<int32_t> t(1024, 0);
+    static const Vec64<int32_t> kPerMille = [] { // 1000 * 65536 / n: n-ths without dividing
+        Vec64<int32_t> t(1024, 0);
         for (int i = 1; i < 1024; ++i)
             t[i] = 1000 * 65536 / i;
         return t;
@@ -1221,6 +1351,16 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
     m_dirtyRight.fill(0);
     m_countsValid = true;
 
+    // (a bit per block of a row that `test` holds for, built in two words: a 64-bit shift takes several instructions)
+    const auto bitsWhere = [](auto test) {
+        uint32_t low = 0, high = 0;
+        for (int bx = 0; bx < 32; ++bx)
+            low |= static_cast<uint32_t>(test(bx)) << bx;
+        for (int bx = 32; bx < kBlocksX; ++bx)
+            high |= static_cast<uint32_t>(test(bx)) << (bx - 32);
+        return static_cast<uint64_t>(high) << 32 | low;
+    };
+
     auto costRow = [&](int by) {
         CostRowArgs a;
         for (int r = 0; r < 3; ++r)
@@ -1239,39 +1379,35 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
         a.active = kAll;
         if (hadLast)
         {
-            uint64_t unsettled = 0;
-            for (int bx = 0; bx < kBlocksX; ++bx)
-                unsettled |= static_cast<uint64_t>(!m_stable[by * kBlocksX + bx]) << bx;
+            const uint64_t unsettled = bitsWhere([&](int bx) { return !m_stable[by * kBlocksX + bx]; });
             a.active = spread(changed[by], kWideBlocks) | (by > 0 ? spread(changed[by - 1], 1) : 0) |
                        (by + 1 < kBlocksY ? spread(changed[by + 1], 1) : 0) | unsettled;
         }
 
-        int16_t was[kBlocksX][kStride];
-        for (uint64_t m = a.active; m; m &= m - 1)
+        // (a block whose own counts changed hardly ever has its costs come out as they were: it is just not marked
+        // stable, as its costs are worked out again then. Only the others are compared)
+        const uint64_t compared = hadLast ? a.active & ~changed[by] : 0;
+        uint32_t was[kBlocksX][kStride / 2]; // (words: copying them one by one is shorter than a call to memcpy)
+        for (uint64_t m = compared; m; m &= m - 1)
         {
             const int bx = __builtin_ctzll(m);
-            std::memcpy(was[bx], a.cost + static_cast<size_t>(bx) * kStride, sizeof(was[bx]));
+            CopyWords(was[bx], a.cost + static_cast<size_t>(bx) * kStride, kStride / 2);
         }
-        uint64_t hadPixels = 0;
-        for (int bx = 0; bx < kBlocksX; ++bx)
-            hadPixels |= static_cast<uint64_t>(blockPixels[by * kBlocksX + bx] != 0) << bx;
+        const auto hasPixelsIn = [&](int bx) { return blockPixels[by * kBlocksX + bx] != 0; };
+        const uint64_t hadPixels = bitsWhere(hasPixelsIn);
         CostRow(a);
 
         // (a block whose costs came out as they were isn't worked out again until the counts around it change)
-        uint64_t changedHere = 0;
         for (uint64_t m = a.active; m; m &= m - 1)
         {
             const int bx = __builtin_ctzll(m);
             m_stable[by * kBlocksX + bx] =
-                hadLast && std::memcmp(was[bx], a.cost + static_cast<size_t>(bx) * kStride, sizeof(was[bx])) == 0;
-            changedHere |= static_cast<uint64_t>(!m_stable[by * kBlocksX + bx]) << bx;
+                (compared >> bx & 1) && SameWords(was[bx], a.cost + static_cast<size_t>(bx) * kStride, kStride / 2);
         }
+        const uint64_t changedHere = a.active & bitsWhere([&](int bx) { return !m_stable[by * kBlocksX + bx]; });
 
         // (the smoothing takes a block's costs with the main depths' pull, which only blocks with pixels get)
-        uint64_t hasPixels = 0;
-        for (int bx = 0; bx < kBlocksX; ++bx)
-            hasPixels |= static_cast<uint64_t>(blockPixels[by * kBlocksX + bx] != 0) << bx;
-        changedCosts[by] = changedHere | (hadPixels ^ hasPixels);
+        changedCosts[by] = changedHere | (hadPixels ^ bitsWhere(hasPixelsIn));
     };
     for (int by = 0; by < kBlocksY; ++by)
         costRow(by);
@@ -1491,19 +1627,17 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
         const int x = static_cast<int>(LitX(lit)), y = static_cast<int>(LitY(lit));
         {
             const size_t i = static_cast<size_t>(y) * kWidth + x;
-            const unsigned s = shades[0][i] - 1u;
+            const unsigned shadeNow = Shade(0, x, y), s = shadeNow - 1u;
             const int b = (y >> 3) * kBlocksX + (x >> 3);
 
             // (the last disparity and its right pixel, as the keep rule asks; the skip needs them too)
             const int last = m_haveLast ? m_lastDisparity[i] : kUnknown;
-            const bool sameShade = m_haveLast && LastShade(0, i) == shades[0][i];
+            const bool sameShade = m_haveLast && LastShade(0, x, y) == shadeNow;
             bool partnerSame = false;
             if (sameShade && last != kUnknown)
             {
                 const int xr = x + last;
-                partnerSame = xr >= 0 && xr < kWidth
-                              && LastShade(1, static_cast<size_t>(y) * kWidth + xr)
-                                     == shades[1][static_cast<size_t>(y) * kWidth + xr];
+                partnerSame = xr >= 0 && xr < kWidth && LastShade(1, xr, y) == Shade(1, xr, y);
             }
 
             // (picked in the last update under the same keep rule, and ended as the update before did)
@@ -1574,5 +1708,4 @@ void DepthColors::Estimate(const uint8_t *const shades[2], const uint8_t *const 
             m_prevBestValid[b] = 1;
         }
     m_prevPlanes = state.planes;
-    (void)want;
 }

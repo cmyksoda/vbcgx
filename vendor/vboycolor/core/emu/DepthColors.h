@@ -26,26 +26,23 @@ public:
     static uint32_t LitY(uint32_t lit) { return lit >> 12; }
     static unsigned LitShade(uint32_t lit) { return lit & 3; }
     static bool LitWanted(uint32_t lit) { return (lit & 4) != 0; }
-    // An eye's lit pixels column by column: each column's top down as y | shade << 8 | wanted << 10, padded with a 0
-    // to an even number (so equal columns are equal memory), and how many it has. Always in this one order, so the
-    // same pixels are the same picture and comparing pictures takes no full-frame buffers.
-    struct LitColumns
+    // An eye's lit pixels as masks a column at a time: per column, for each 32 rows (row y at MaskBit(y) of word y / 32),
+    // a word per shade 1-3 and one of the pixels that need a depth color, kColumnWords apart. Only the words of the 32-row
+    // groups set in `used` (a group with a lit pixel) are written, so equal masks are the same picture.
+    static constexpr int kColumnWords = 7, kColumnStride = 4 * kColumnWords;
+    // (rows 0-15 of a group at the even bits, 16-31 at the odd ones; MaskRow the other way)
+    static unsigned MaskBit(unsigned y) { return (y & 15) << 1 | (y >> 4 & 1); }
+    static unsigned MaskRow(unsigned bit) { return (bit & 1) << 4 | bit >> 1; }
+    struct LitMasks
     {
-        std::vector<uint16_t> pixels; // (room, written up to size)
-        uint32_t size = 0;
-        std::array<uint8_t, kWidth> count{};
-        // Where the next column goes after `used` pixels, with room for all of it.
-        uint16_t *Room(size_t used)
-        {
-            if (pixels.size() < used + kHeight)
-                pixels.resize(std::max<size_t>(2 * pixels.size(), used + kHeight));
-            return pixels.data() + used;
-        }
+        Vec64<uint32_t> words; // [x * kColumnStride + mask * kColumnWords + group]
+        std::array<uint8_t, kWidth> used{};
+        bool anyWanted = false;
     };
     // Lit pixels (as Lit) one after the other: room made for more before they are written, up to size.
     struct PixelList
     {
-        std::vector<uint32_t> room;
+        Vec64<uint32_t> room;
         size_t size = 0;
         const uint32_t *begin() const { return room.data(); }
         const uint32_t *end() const { return room.data() + size; }
@@ -57,7 +54,7 @@ public:
         }
     };
     // The next Update's lit pixels of an eye, emptied for the caller to write.
-    LitColumns &NextLit(unsigned eye);
+    LitMasks &NextLit(unsigned eye);
     // The wanted pixels among NextLit(0)'s, in its order, filled by the caller too (most lit pixels are a tile's:
     // the passes over the left eye's wanted pixels would walk them all).
     PixelList &NextWanted() { return m_nextWanted; }
@@ -85,12 +82,12 @@ private:
     struct State
     {
         // per block and disparity (kStride apart), as last smoothed from - for the next frame
-        std::vector<int16_t> cost;
-        std::vector<int16_t> best;   // per block: its disparity (an index into the disparities)
+        Vec64<int16_t> cost;
+        Vec64<int16_t> best;   // per block: its disparity (an index into the disparities)
         std::array<int, 4> planes{}; // the frame's main disparities (indices; -1 none)
         bool estimated = false;
     };
-    void Estimate(const uint8_t *const shades[2], const uint8_t *const want[2]);
+    void Estimate();
     uint64_t CountBand(int by, uint32_t halves);
     // (a chain record: 2 walls, the 81 costs, 3 more walls - the last pair reads them - and the lowest; whole cache
     // lines, so a record is claimed in the cache without reading its memory)
@@ -107,39 +104,53 @@ private:
     struct CostRowArgs;
     static void CostRow(const CostRowArgs &a);
 
-    std::vector<Row> m_bits[2][3]; // per eye and shade 1-3: kHeight rows (only what changed is rewritten)
+    Vec64<Row> m_bits[2][3]; // per eye and shade 1-3: kHeight rows (only what changed is rewritten)
     bool m_bitsValid = false;
     // Last Estimate's counts [band][disparity][block]; per eye the blocks changed since (a bit each, per band); per
     // block whether its costs came out as they were (kept while the counts around it hold) and its cheapest disparity.
-    std::vector<uint8_t> m_matchesAll, m_insideAll, m_stable, m_cheapestAt;
+    Vec64<uint8_t> m_matchesAll, m_insideAll, m_stable, m_cheapestAt;
     std::array<uint64_t, kBlocksY> m_dirtyLeft{}, m_dirtyRight{};
     bool m_countsValid = false;
     // To skip a wanted pixel's pick when its surroundings are as at the last pick, per pixel: what it chose (before the
     // flat fills), the update that picked it (m_pickGen counts them), and two bits: its keep rule held (bit 0), its
     // end result matched the update before's (bit 1).
-    std::vector<int16_t> m_pickPrev;
-    std::vector<uint32_t> m_pickAt;
-    std::vector<uint8_t> m_pickBits;
+    Vec64<int16_t> m_pickPrev;
+    Vec64<uint32_t> m_pickAt;
+    Vec64<uint8_t> m_pickBits;
     // The last pick's view of the smoothing: per block its best (where it had one), and the main depths.
-    std::vector<int16_t> m_prevBest;
-    std::vector<uint8_t> m_prevBestValid;
+    Vec64<int16_t> m_prevBest;
+    Vec64<uint8_t> m_prevBestValid;
     std::array<int, 4> m_prevPlanes{};
     uint32_t m_pickGen = 1;
     State m_state;
-    PictureBuffer m_shade[2], m_want[2]; // per pixel, each eye's shade (0: off) and whether it needs a depth color
-    std::vector<uint8_t> m_was[2];       // per pixel that changed in the last update, its shade before (else 0xFF)
-    std::vector<uint32_t> m_changed[2];  // ... the pixels m_was holds
-    int m_wantedCount[2][3] = {};        // per eye and shade 1-3, the lit pixels that need a depth color
-    LitColumns m_nextLit[2], m_lastLit[2];
+    // Per eye the masks of the last update ([eye][m_lastMasks]) and the next ones (the other).
+    LitMasks m_masks[2][2];
+    int m_lastMasks = 0;
     PixelList m_nextWanted, m_lastWanted, m_staleWanted; // (the left eye's wanted pixels among those)
-    unsigned LastShade(unsigned eye, size_t i) const { return m_was[eye][i] != 0xFF ? m_was[eye][i] : m_shade[eye][i]; }
-    std::vector<int16_t> m_disparity;      // the left eye's, per pixel, while Update works them out (kUnknown: none)
-    std::vector<int16_t> m_lastDisparity;  // ... as last worked out (Disparity's; a pixel that hasn't changed keeps it)
+    static unsigned ShadeIn(const LitMasks &m, unsigned x, unsigned y)
+    {
+        const unsigned group = y >> 5, bit = MaskBit(y);
+        if (!(m.used[x] >> group & 1))
+            return 0;
+        const uint32_t *const w = &m.words[x * kColumnStride + group];
+        return (w[0] >> bit & 1) + 2 * (w[kColumnWords] >> bit & 1) + 3 * (w[2 * kColumnWords] >> bit & 1);
+    }
+    // While Update works: an eye's shade at a pixel now and at the last update, and whether a left pixel is wanted.
+    unsigned Shade(unsigned eye, unsigned x, unsigned y) const { return ShadeIn(m_masks[eye][m_lastMasks ^ 1], x, y); }
+    unsigned LastShade(unsigned eye, unsigned x, unsigned y) const { return ShadeIn(m_masks[eye][m_lastMasks], x, y); }
+    bool Wanted(unsigned x, unsigned y) const
+    {
+        const LitMasks &m = m_masks[0][m_lastMasks ^ 1];
+        const unsigned group = y >> 5;
+        return (m.used[x] >> group & 1) && (m.words[x * kColumnStride + 3 * kColumnWords + group] >> MaskBit(y) & 1);
+    }
+    Vec64<int16_t> m_disparity;      // the left eye's, per pixel, while Update works them out (kUnknown: none)
+    Vec64<int16_t> m_lastDisparity;  // ... as last worked out (Disparity's; a pixel that hasn't changed keeps it)
     bool m_haveLast = false;
 
     // The four smoothing chains (left to right, right to left, top down, bottom up) of every block as last worked out,
     // and per line how many blocks from its start still match the costs.
-    std::vector<int16_t, LineAligned<int16_t>> m_chains; // [direction][block][kRecord]
+    Vec64<int16_t> m_chains; // [direction][block][kRecord]
     std::array<std::array<int, kBlocksY>, 2> m_validRow{};
     std::array<std::array<int, kBlocksX>, 2> m_validCol{};
     std::array<bool, kDisparities> m_chainPulled{}; // (the main depths' pull the chains were worked out with)
@@ -147,14 +158,14 @@ private:
 
     // Scratch (kept to avoid reallocating every frame).
     static constexpr int kCandidates = 13;  // (a block's own disparity, its 8 neighbors', 4 main depths)
-    std::vector<uint8_t> m_candidates, m_candidateCount; // per block: Estimate's candidate disparities
-    std::vector<int32_t> m_blockPixels;                   // per block: pixels in the 3x3 blocks around it
+    Vec64<uint8_t> m_candidates, m_candidateCount; // per block: Estimate's candidate disparities
+    Vec64<int32_t> m_blockPixels;                   // per block: pixels in the 3x3 blocks around it
     struct Sample
     {
         int16_t x, y, d;
     };
-    std::vector<int32_t> m_flatLabel, m_area;             // flat fills: per pixel (-1 not flat), an area's pixels
-    std::vector<int32_t> m_flatSeeds;                     // ... the flat pixels, in order (the only ones not -1 after)
-    std::vector<Sample> m_samples;                        // ... the disparities around it
-    std::vector<int> m_scratch;
+    Vec64<int32_t> m_flatLabel, m_area;             // flat fills: per pixel (-1 not flat), an area's pixels
+    Vec64<int32_t> m_flatSeeds;                     // ... the flat pixels, in order (the only ones not -1 after)
+    Vec64<Sample> m_samples;                        // ... the disparities around it
+    Vec64<int> m_scratch;
 };

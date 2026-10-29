@@ -31,6 +31,9 @@ uint32 TIMER_GetRegister(const unsigned int id, char *special, const uint32 spec
 
 void TIMER_SetRegister(const unsigned int id, const uint32 value);
 
+int32 TIMER_Period(void);
+v810_timestamp_t TIMER_QuietUntil(v810_timestamp_t next_timer);
+
 #ifdef __cplusplus
 }
 #endif

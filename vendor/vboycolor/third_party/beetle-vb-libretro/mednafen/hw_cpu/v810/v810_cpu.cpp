@@ -64,6 +64,8 @@ void MDFN_FASTCALL VBWriteWord(v810_timestamp_t &, uint32, uint32);
 #endif
 
 uint32 vb_idle_unsteady;
+extern "C" v810_timestamp_t VB_QuietHorizon(v810_timestamp_t next_event, bool timer_read);
+extern "C" v810_timestamp_t VB_LastEventBefore(v810_timestamp_t at);
 extern "C" v810_timestamp_t vbgo_vip_steady_until(v810_timestamp_t timestamp);
 extern "C" const uint8 *VIP_FBBase(void);
 extern "C" bool VIP_WriteFBWord(uint32 A, uint32 V);
@@ -201,15 +203,15 @@ static inline void SaveRegs(uint32 *saved, const uint32 *p, const uint32 *s)
    saved[32 + ADDTRE] = s[ADDTRE];
 }
 
-/* A pass back to the loop head with no register changed, nothing stored but such
- * a counter and no timer or pad read can only repeat until the next event. */
+/* A pass back to the loop head with no register changed and nothing stored but such a counter can only repeat until
+ * the next event that changes what it reads (timer and pad reads change at their events). */
 v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
 {
    const uint32 head = code - PC_base;
    /* (an event in between may have changed what the loop read before it) */
    if(head == IdleHead && IdleNext == next_event_ts)
    {
-      bool idle = !vb_idle_unsteady && !IPendingCache && SameRegs(IdleRegs, P_REG, S_REG);
+      bool idle = !IPendingCache && SameRegs(IdleRegs, P_REG, S_REG);
       uint32 counter = 0;
       int32 step = 0;
       if(idle && IdleShapeSeen.code != code)
@@ -234,10 +236,12 @@ v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
          return timestamp;
       }
       const v810_timestamp_t d = timestamp - IdleAt, steady = vbgo_vip_steady_until(timestamp);
-      const v810_timestamp_t horizon = steady < next_event_ts ? steady : next_event_ts;
+      const v810_timestamp_t quiet = VB_QuietHorizon(next_event_ts, vb_idle_unsteady != 0);
+      const v810_timestamp_t horizon = steady < quiet ? steady : quiet;
       if(d > 0 && horizon - timestamp > d)
       {
          int32 k = (horizon - 1 - timestamp) / d;
+         bool carryLimited = false;
          if(step)
          {
             v810_timestamp_t unused = 0;
@@ -246,12 +250,17 @@ v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
             const uint32 adds = step > 0 ? (0xFFFFFFFFu - value) / step : value / -step;
             if((uint32)k > adds)
                k = adds;
+            carryLimited = (uint32)k == adds;
             ::VBWriteWord(unused, counter & ~3u, value + (uint32)(k * step));
          }
          timestamp += k * d;
+         /* (the events skipped over are handled together at the horizon's; the carry limit can cut k short:
+          * the loop may then exit before the horizon) */
+         if(!carryLimited && horizon > next_event_ts)
+            next_event_ts = horizon;
       }
-      /* (the next pass reaches the horizon, so it isn't looked at; the one after starts afresh, keeping d one pass) */
-      IdleQuiet = 1;
+      /* (the pass that reaches the horizon arms the check again, so d stays one pass) */
+      IdleQuiet = 0;
       IdleHead = ~0u;
       IdleAt = timestamp;
       vb_idle_unsteady = 0;
@@ -263,6 +272,60 @@ v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
    IdleNext = next_event_ts;
    vb_idle_unsteady = 0;
    return timestamp;
+}
+
+/* (the idle checks look back at one pass: none survives a frame, a state load or a reset) */
+void V810::ForgetIdle(void)
+{
+   IdleHead = ~0u;
+   WaitAt = nullptr;
+   WaitNotice = EventNotices = 0;
+   memset(WaitRegs, 0, sizeof(WaitRegs));
+   vb_idle_unsteady = 0;
+}
+
+/* A WAIT's loop: straight store-free code from its target to it. The most cycles it takes, or -1. */
+static int32 WaitBody(const uint8 *code, uint32 arg1)
+{
+   int32 at = (int32)(sign_9(arg1) & 0xFFFFFFFE), cycles = 0;
+   if(at >= 0 || at < -64)
+      return -1;
+   while(at < 0)
+   {
+      const unsigned op = LoadU16_LE((const uint16 *)(code + at)) >> 10;
+      if(!(kStoreFreeOps >> op & 1))
+         return -1;
+      cycles += op == 0x33 || op == 0x3B ? 5 : op >= 0x30 ? 3 : 1;
+      at += op >= 0x28 ? 4 : 2;
+   }
+   return at ? -1 : cycles;
+}
+
+/* Where a taken WAIT sends the cycle count: the next event, or further when the loop's last pass changed nothing and
+ * saw one event only, at its start; then the loop can only repeat at each event that changes nothing it reads. */
+v810_timestamp_t V810::WaitTarget(v810_timestamp_t timestamp, const uint8 *code, uint32 arg1)
+{
+   v810_timestamp_t to = next_event_ts;
+   if(WaitBodyFor != code)
+      WaitBodyFor = code, WaitBodyCycles = WaitBody(code, arg1);
+   if(WaitBodyCycles < 0)
+   {
+      WaitAt = nullptr; /* (a loop that can't be skipped: the compiled WAIT does only this, with no call) */
+      return to;
+   }
+   if(code == WaitAt && EventNotices == WaitNotice + 1 && !IPendingCache && SameRegs(WaitRegs, P_REG, S_REG))
+   {
+      v810_timestamp_t q = VB_QuietHorizon(to, vb_idle_unsteady != 0);
+      /* (it must wake at q as it would have: no event within one pass before; nor SBOUT changing in between) */
+      if(q > to && (VB_LastEventBefore(q) + 3 + WaitBodyCycles >= q || vbgo_vip_steady_until(timestamp) < q))
+         q = to;
+      next_event_ts = to = q;
+   }
+   WaitAt = code;
+   WaitNotice = EventNotices;
+   SaveRegs(WaitRegs, P_REG, S_REG);
+   vb_idle_unsteady = 0;
+   return to;
 }
 
 V810::V810()
@@ -295,7 +358,8 @@ V810::V810()
 V810::~V810()
 {
 #ifdef GEKKO
-   free(BlockArena);
+   free(BlockPool);
+   free(JitNotes);
 #endif
 }
 
@@ -496,9 +560,15 @@ void V810::Reset()
 
    lastop = 0;
 
+   /* (as Exception does: a reset mid-instruction, or a new V810's heap junk, must not reach the next bit string) */
    in_bstr = false;
+   have_src_cache = false;
+   have_dst_cache = false;
+   src_cache = 0;
+   dst_cache = 0;
 
    RecalcIPendingCache();
+   ForgetIdle();
 #ifdef GEKKO
    FlushBlocks();
 #endif
@@ -509,6 +579,7 @@ bool V810::Init(V810_Emu_Mode mode, bool vb_mode)
    EmuMode = mode;
    VBMode = vb_mode;
    IdleShapeSeen.code = nullptr;
+   WaitBodyFor = nullptr;
 #ifdef GEKKO
    FlushBlocks();
 #endif
@@ -775,13 +846,14 @@ void V810::Run_Fast(int32 MDFN_FASTCALL (*event_handler)(const v810_timestamp_t 
 
 #ifdef GEKKO
 #include "v810_blocks.inc"
+#include "v810_jitpages.inc"
 #include "v810_jit.inc"
 #endif
 
 v810_timestamp_t V810::Run(int32 MDFN_FASTCALL (*event_handler)(const v810_timestamp_t timestamp))
 {
    Running = true;
-   IdleHead = ~0u;
+   ForgetIdle();
 
    {
       if(EmuMode == V810_EMU_MODE_FAST)
@@ -1488,6 +1560,7 @@ int V810::StateAction(StateMem *sm, int load, int data_only)
       next_event_ts = std::max<int64>(v810_timestamp, std::min<int64>(0x7FFFFFFF, (int64)v810_timestamp + next_event_ts_delta));
 
       RecalcIPendingCache();
+      ForgetIdle();
 
       SetPC(PC_tmp);
       if(EmuMode == V810_EMU_MODE_ACCURATE)

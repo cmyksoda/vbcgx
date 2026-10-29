@@ -13,6 +13,13 @@ int GuiSound::defaultSfxVolume = 100;
 GuiSound* GuiSound::playingOGG = nullptr;
 GuiSound* GuiSound::activeMusic = nullptr;
 
+// (the menu music plays a fifth louder than its setting says; a voice's volume tops out at 255)
+static int VoiceVolume(int volume, int typeVol, bool music)
+{
+	const int vol = 255 * (volume / 100.0) * (typeVol / 100.0) * (music ? 1.2 : 1.0);
+	return vol < 255 ? vol : 255;
+}
+
 GuiSound::GuiSound() { }
 
 GuiSound::GuiSound(const uint8_t * s, int32_t l, SOUND t)
@@ -42,7 +49,7 @@ GuiSound::~GuiSound()
 void GuiSound::play()
 {
 	int typeVol = loop ? defaultMusicVolume : defaultSfxVolume;
-	int vol = 255 * (volume / 100.0) * (typeVol / 100.0);
+	int vol = VoiceVolume(volume, typeVol, loop);
 
 	switch(type)
 	{
@@ -148,7 +155,7 @@ void GuiSound::setVolume(int vol)
 		return;
 
 	int typeVol = loop ? defaultMusicVolume : defaultSfxVolume;
-	int newvol = 255 * (volume / 100.0) * (typeVol / 100.0);
+	int newvol = VoiceVolume(volume, typeVol, loop);
 
 	switch(type)
 	{

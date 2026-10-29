@@ -167,6 +167,11 @@ uint32_t ShadeColorizer::ColorOf(uint32_t pixel) const
 void ShadeColorizer::PrepareColumns(const uint32_t *clut)
 {
     static_assert(kColumns == VBGO_TT_WIDTH, "PrepareColumns");
+    // (the same table under the same colors as last time: everything below would come out as it is)
+    if (m_columnsVersion == m_version && std::equal(m_columnClut.begin(), m_columnClut.end(), clut))
+        return;
+    m_columnsVersion = m_version;
+    std::copy(clut, clut + m_columnClut.size(), m_columnClut.begin());
     for (size_t i = 0; i < m_columnColors.size(); ++i)
         m_columnColors[i] = ColorOf(clut[i]);
     m_uniform = true;
@@ -177,7 +182,37 @@ void ShadeColorizer::PrepareColumns(const uint32_t *clut)
         std::copy(m_columnColors.begin(), m_columnColors.begin() + 4, m_quadOf.begin());
         for (unsigned b = 0; b < 256; ++b)
             for (unsigned r = 0; r < 4; ++r)
-                m_quad[b][r] = m_quadOf[b >> (r * 2) & 3];
+                m_quad[r * 256 + b] = m_quadOf[b >> (r * 2) & 3];
+    }
+}
+
+// The cell's 8 columns of 4 colors per byte (column k's rows 0-3 and 4-7 at pair + k * 56): row pointers made once, since
+// each store then takes one register instead of a multiply or a chain of adds.
+inline __attribute__((always_inline)) void ShadeColorizer::ColorizeUniform(const uint8_t *pair, uint8_t *dst, size_t rowBytes,
+                                                                           bool claim) const
+{
+    uint8_t *row[8];
+    for (unsigned r = 0; r < 8; ++r, dst += rowBytes)
+        row[r] = dst;
+#if defined(__PPC__) || defined(__powerpc__)
+    if (claim) // (whole lines about to be written: not read first)
+        for (unsigned r = 0; r < 8; ++r)
+            __asm__ volatile("dcbz 0,%0" : : "r"(row[r]) : "memory");
+#else
+    (void)claim;
+#endif
+    for (unsigned k = 0; k < 8; ++k)
+    {
+        // Lane I: (one address per byte: else GCC rebuilds it for each of the 4 rows' tables)
+        const uint32_t *lo = &m_quad[pair[k * 56]], *hi = &m_quad[pair[k * 56 + 1]];
+#if defined(__PPC__) || defined(__powerpc__)
+        __asm__("" : "+r"(lo), "+r"(hi));
+#endif
+        for (unsigned r = 0; r < 4; ++r)
+        {
+            std::memcpy(row[r] + k * 4, &lo[r * 256], 4);
+            std::memcpy(row[4 + r] + k * 4, &hi[r * 256], 4);
+        }
     }
 }
 
@@ -185,20 +220,7 @@ void ShadeColorizer::ColorizeCell(const uint8_t *bits, unsigned x, unsigned y, u
 {
     if (m_uniform && !(y & 3))
     {
-#if defined(__PPC__) || defined(__powerpc__)
-        for (unsigned row = 0; row < 8; ++row)
-            // (whole lines about to be written: not read first)
-            if (!(reinterpret_cast<uintptr_t>(dst + row * rowBytes) & 31))
-                __asm__ volatile("dcbz 0,%0" : : "r"(dst + row * rowBytes) : "memory");
-#endif
-        for (unsigned k = 0; k < 8; ++k)
-            for (unsigned half = 0; half < 2; ++half)
-            {
-                const std::array<uint32_t, 4> &four = m_quad[bits[(x + k) * 56 + (y >> 2) + half]];
-                uint8_t *at = dst + half * 4 * rowBytes + k * 4;
-                for (unsigned r = 0; r < 4; ++r)
-                    std::memcpy(at + r * rowBytes, &four[r], 4);
-            }
+        ColorizeUniform(bits + x * 56 + (y >> 2), dst, rowBytes, !((reinterpret_cast<uintptr_t>(dst) | rowBytes) & 31));
         return;
     }
     for (unsigned row = 0; row < 8; ++row, dst += rowBytes)
@@ -210,6 +232,25 @@ void ShadeColorizer::ColorizeCell(const uint8_t *bits, unsigned x, unsigned y, u
 #endif
         for (unsigned k = 0; k < 8; ++k)
             std::memcpy(dst + k * 4, &m_columnColors[(x + k) * 4 + (bits[(x + k) * 56 + at] >> shift & 3)], 4);
+    }
+}
+
+void ShadeColorizer::ColorizeCells(const uint8_t *bits, unsigned x, uint32_t bands, uint8_t *dst, size_t rowBytes) const
+{
+    if (!m_uniform)
+    {
+        for (; bands; bands &= bands - 1)
+        {
+            const unsigned band = static_cast<unsigned>(__builtin_ctz(bands));
+            ColorizeCell(bits, x, band * 8, dst + band * 8 * rowBytes, rowBytes);
+        }
+        return;
+    }
+    const bool claim = !((reinterpret_cast<uintptr_t>(dst) | rowBytes) & 31);
+    for (; bands; bands &= bands - 1)
+    {
+        const unsigned band = static_cast<unsigned>(__builtin_ctz(bands));
+        ColorizeUniform(bits + x * 56 + band * 2, dst + band * 8 * rowBytes, rowBytes, claim);
     }
 }
 

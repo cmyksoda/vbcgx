@@ -357,6 +357,38 @@ void MDFN_FASTCALL VBWriteWord(v810_timestamp_t &timestamp, uint32 A, uint32 V)
    MemWrite16(timestamp, A | 2, V >> 16);
 }
 
+extern "C" int32 VIP_QuietUntil(int32 next_vip);
+static INLINE int32 CalcNextTS(void);
+
+/* Until when the next events only count VIP columns and timer ticks (timer_read: a loop reads the timer, so each tick
+ * counts), which can then be handled together at the first one that does more; next_event when it's stale. */
+extern "C" v810_timestamp_t VB_QuietHorizon(v810_timestamp_t next_event, bool timer_read)
+{
+   if(next_event != CalcNextTS())
+      return next_event;
+   int32 q = VIP_QuietUntil(next_vip_ts);
+   const int32 t = timer_read ? next_timer_ts : TIMER_QuietUntil(next_timer_ts);
+   if(t < q)
+      q = t;
+   if(next_input_ts < q)
+      q = next_input_ts;
+   return q < next_event ? next_event : q;
+}
+
+/* The last time before at that an event falls due (a VIP column, timer tick or controller bit). */
+extern "C" v810_timestamp_t VB_LastEventBefore(v810_timestamp_t at)
+{
+   int32 last = -0x7FFFFFFF - 1;
+   const int32 period = TIMER_Period();
+   if(next_vip_ts < at)
+      last = next_vip_ts + 259 * ((at - 1 - next_vip_ts) / 259);
+   if(next_timer_ts < at && period && next_timer_ts + period * ((at - 1 - next_timer_ts) / period) > last)
+      last = next_timer_ts + period * ((at - 1 - next_timer_ts) / period);
+   if(next_input_ts < at && next_input_ts > last)
+      last = next_input_ts;
+   return last;
+}
+
 static void FixNonEvents(void)
 {
    if(next_vip_ts & 0x40000000)

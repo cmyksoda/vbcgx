@@ -207,3 +207,17 @@ void TIMER_SetRegister(const unsigned int id, const uint32 value)
 
    }
 }
+
+/* The first tick from next_timer on that does more than count down (no reload, zero or status change before it). */
+v810_timestamp_t TIMER_QuietUntil(v810_timestamp_t next_timer)
+{
+   if(!(TimerControl & TC_TENABLE) || ReloadPending || TimerCounter <= 1 || TimerStatus || TimerStatusShadow)
+      return next_timer;
+   return next_timer + (int32)(TimerCounter - 1) * ((TimerControl & TC_TCLKSEL) ? 400 : 2000);
+}
+
+/* Cycles between ticks while the timer runs, else 0. */
+int32 TIMER_Period(void)
+{
+   return (TimerControl & TC_TENABLE) ? ((TimerControl & TC_TCLKSEL) ? 400 : 2000) : 0;
+}

@@ -353,8 +353,8 @@ namespace
 
     // ---- Coloring ----
     TileColorPack g_pack;
-    ColorPackRenderer g_renderer;
-    ShadeColorizer g_colorizer;
+    alignas(64) ColorPackRenderer g_renderer; // (64-byte aligned like the statics depth reads: see FB in vip.c)
+    alignas(64) ShadeColorizer g_colorizer;
     ShadeRgb g_background{};
     bool g_shadeColors = false; // Auto or Multicolor (else a brightness scheme)
     std::array<ShadeRgb, 5> g_stops{}; // Gradient
@@ -400,7 +400,7 @@ namespace
     // The two colored pictures: the left eye only, each row padded by a cache line (a column's rows spread over the
     // cache sets), kept in the program's own memory - on the Wii MEM1, not wherever earlier games left the heap.
     constexpr size_t kPictureRowBytes = (VBGO_TT_WIDTH + 8) * 4, kPictureBytes = kPictureRowBytes * VBGO_TT_HEIGHT;
-    alignas(32) uint8_t g_pictureStore[2][kPictureBytes];
+    alignas(64) uint8_t g_pictureStore[2][kPictureBytes];
     bool g_pictureStoreUsed[2];
     template <typename T>
     struct PictureStore : LineAligned<T>
@@ -726,6 +726,12 @@ namespace
                 for (unsigned y = band * 8; y < band * 8 + 8 && y < h; ++y)
                     g_colorizer.Colorize(bits[0], first * 8, y, count * 8, &colored[y * rowBytes + first * 32]);
             };
+            auto shadeCellColumn = [&](unsigned first, uint32_t bands) {
+                const uint32_t whole = bands & ((1u << (h / 8)) - 1); // (a band cut off by the picture's height goes by rows)
+                g_colorizer.ColorizeCells(bits[0], first * 8, whole, &colored[first * 32], rowBytes);
+                for (uint32_t cut = bands & ~whole; cut; cut &= cut - 1)
+                    shadeCells(static_cast<unsigned>(__builtin_ctz(cut)), first, 1);
+            };
             if (painting)
             {
                 const uint32_t eyeOffset[2] = {0, w - VBGO_TT_WIDTH};
@@ -735,8 +741,10 @@ namespace
                         g_colorizer.ColorizeColumn(bits[0], x, first, std::min(first + count, h) - first, &colored[first * rowBytes + x * 4],
                                                    rowBytes);
                 };
-                g_renderer.Paint(colored.data(), static_cast<uint32_t>(rowBytes / 4), eyeOffset, g_background,
-                                 {shadeCells, shadeColumn, g_colorizer.Version()});
+                const Picture &other = g_colored[shown ^ 1];
+                g_renderer.Paint(colored.data(), other.size() == colored.size() ? other.data() : nullptr,
+                                 static_cast<uint32_t>(rowBytes / 4), eyeOffset, g_background,
+                                 {shadeCells, shadeColumn, g_colorizer.Version(), shadeCellColumn});
             }
             else
                 shadeRows(0, h);
@@ -857,11 +865,12 @@ extern "C"
         // The loaded frame buffers weren't seen drawn by the tile tracker. Rewind and run-ahead load nearly the same
         // pixels, whose tags still fit (forgetting them drops the pack's colors); a buffer that changed a lot loses
         // its tags until the game redraws it.
-        constexpr size_t kBufferBytes = 0x6000; // (FB[fb][lr]: 384 columns of 64 bytes)
+        constexpr size_t kBufferBytes = 0x6000; // (FB[fb][lr]: 32 bands of 384 columns, 2 bytes each)
         static std::vector<uint8_t> before(kBufferBytes * 4);
         std::memcpy(before.data(), vbgo_vip_framebuffers(), before.size());
         const bool ok = beetle_retro_unserialize(data, size);
         g_repaint = true;
+        vbgo_tiletrack_forget_motion();
         const uint8_t *after = vbgo_vip_framebuffers();
         for (unsigned b = 0; ok && b < 4; ++b)
         {

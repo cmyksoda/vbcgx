@@ -12,7 +12,10 @@ enum { JIT_EXIT_STOPPED = 0, JIT_EXIT_BRANCH = 1, JIT_EXIT_INTERPRET = 2, JIT_EX
 /* JitStub[JIT_STUB_ENTER](P_REG, &timestamp, code) runs compiled code; the exit leaves the next PC in JitTarget. */
 enum { JIT_STUB_ENTER, JIT_STUB_LEAVE, JIT_STUB_LEAVE_TS, JIT_STUB_EVENTS, JIT_STUB_INTERPRET, JIT_STUB_INTERPRET_FIRST,
        JIT_STUB_BRANCH, JIT_STUB_IDLE, JIT_STUB_READ8, JIT_STUB_READ16, JIT_STUB_READ32, JIT_STUB_WRITE8,
-       JIT_STUB_WRITE16, JIT_STUB_WRITE32, JIT_STUBS };
+       JIT_STUB_WRITE16, JIT_STUB_WRITE32, JIT_STUB_WAIT, JIT_STUBS };
+/* The code buffer is pages: hot code, then the cold code that goes with it (slow paths, exits), so what runs sits packed
+ * together. A page is as far as a conditional branch reaches. */
+enum { JIT_PAGE_WORDS = 32 * 1024 / 4, JIT_HOT_WORDS = 18 * 1024 / 4 };
 
 namespace
 {
@@ -54,6 +57,17 @@ const uint8 kBlockKinds[128] = {
    BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE,
 };
 
+enum { PAGE_FREE, PAGE_WRITING, PAGE_LIVE, PAGE_PROBATION };
+enum { JIT_BYTES = 2 * 1024 * 1024 };
+/* (in the DOL's own memory: MEM1, the faster to fetch code from) */
+uint32 JitCode[JIT_BYTES / 4] __attribute__((aligned(32)));
+static_assert(JIT_BYTES % (JIT_PAGE_WORDS * 4) == 0 && JIT_HOT_WORDS < JIT_PAGE_WORDS, "JitCode pages");
+
+inline uint32 BranchWord(const uint32 *at, const void *to, unsigned link)
+{
+   return 18u << 26 | ((uint32)((const uint8 *)to - (const uint8 *)at) & 0x03FFFFFC) | link;
+}
+
 /* Compiled code by ROM address, for register jumps (v810_jit.inc), filled as RunBlock dispatches blocks. */
 struct JitLookupEntry
 {
@@ -71,31 +85,38 @@ inline unsigned BlockOpLength(unsigned kind)
 
 void V810::FlushBlocks(void)
 {
+   static_assert(JIT_BYTES == JIT_PAGES * JIT_PAGE_WORDS * 4, "JIT_PAGES");
+   static_assert(JIT_PAGES <= 256 && JIT_LINK_NOTES < 65536, "the sizes of JitAge and JitLinkNote");
    memset(BlockSlot, 0, sizeof(BlockSlot));
-   BlockArenaUsed = 0;
+   BlockPoolUsed = 0;
+   BlockFreed = NULL;
+   JitNotesUsed = JitNotesFreed = 0;
+   JitNotesStale = false;
+   memset(JitPages, 0, sizeof(JitPages));
+   JitAged = JitFreePages = 0;
+   for(unsigned page = JIT_PAGES; page-- > 1;)
+      JitFreePage[JitFreePages++] = page;
+   JitWritePage = 0;
+   JitPages[0].state = PAGE_WRITING;
+   JitStubEnd = 0;
    JitCodeUsed = 0;
+   JitColdUsed = JIT_HOT_WORDS;
    JitLinkSite = NULL;
    JitResumeAt = NULL;
    memset(JitLookup, 0, sizeof(JitLookup));
 }
 
-V810::Block *V810::FindBlock(uint32 pc, bool decode)
+V810::Block *V810::FindBlock(uint32 pc)
 {
-   Block **slot = &BlockSlot[(pc >> 1) & (BLOCK_SLOTS - 1)];
-   for(Block *found = *slot; found; found = found->next)
+   for(Block *found = BlockSlot[(pc >> 1) & (BLOCK_SLOTS - 1)]; found; found = found->next)
       if(found->pc == pc && found->code == PC_ptr)
          return found;
-   if(!decode)
-      return NULL;
-   if(!BlockArena && !(BlockArena = (uint8 *)malloc(BLOCK_ARENA)))
-      return NULL;
-   const size_t most = sizeof(Block) + (BLOCK_MAX_OPS - 1) * sizeof(BlockOp);
-   if(BlockArenaUsed + most > BLOCK_ARENA)
-   {
-      FlushBlocks();
-      slot = &BlockSlot[(pc >> 1) & (BLOCK_SLOTS - 1)];
-   }
-   Block *block = (Block *)(BlockArena + BlockArenaUsed);
+   return NULL;
+}
+
+const V810::Decoded *V810::DecodeBlock(uint32 pc)
+{
+   Decoded *const block = &BlockDecoded;
    const uint8 *code = PC_ptr;
    unsigned n = 0;
    while(n < BLOCK_MAX_OPS)
@@ -135,11 +156,6 @@ V810::Block *V810::FindBlock(uint32 pc, bool decode)
    block->pc = pc;
    block->code = PC_ptr;
    block->count = n;
-   block->jit = NULL;
-   block->jitTried = 0;
-   block->next = *slot;
-   BlockArenaUsed += (sizeof(Block) + (n - 1) * sizeof(BlockOp) + 7) & ~(size_t)7;
-   *slot = block;
    return block;
 }
 
@@ -148,6 +164,13 @@ v810_timestamp_t V810::JitIdleLoop(V810 *cpu, v810_timestamp_t timestamp, uint32
 {
    cpu->SetPC(target);
    return cpu->IdleLoop(timestamp, cpu->PC_ptr);
+}
+
+/* WaitTarget for a compiled WAIT (it moves next_event_ts itself). */
+void V810::JitWaitTarget(V810 *cpu, v810_timestamp_t timestamp, uint32 pc, uint32 arg1)
+{
+   cpu->SetPC(pc);
+   cpu->WaitTarget(timestamp, cpu->PC_ptr, arg1);
 }
 
 /* Runs compiled code from PC, if there is any (the interpreter loop checked that no event is due and no interrupt
@@ -165,17 +188,23 @@ int V810::RunBlock(v810_timestamp_t &timestamp)
       /* (the interpreter's last op jumped, or an interrupt or exception was taken) */
       if(!BlockEntryOk && PC_ptr != BlockExpect)
          BlockEntryOk = true;
-      Block *const block = FindBlock(block_pc, BlockEntryOk);
+      Block *block = FindBlock(block_pc);
       if(!block)
       {
-         BlockExpect = PC_ptr + ((LoadU16_LE((const uint16 *)PC_ptr) >> 10) >= 0x28 ? 4 : 2);
-         return 0;
+         const Decoded *const decoded = BlockEntryOk && JitPools() ? DecodeBlock(block_pc) : NULL;
+         if(decoded)
+         {
+            void *const jit = CompileBlock(decoded);
+            block = AddBlock(decoded, jit);
+         }
+         if(!block)
+         {
+            BlockExpect = PC_ptr + ((LoadU16_LE((const uint16 *)PC_ptr) >> 10) >= 0x28 ? 4 : 2);
+            return 0;
+         }
       }
-      if(!block->jitTried)
-      {
-         block->jitTried = 1;
-         block->jit = CompileBlock(block);
-      }
+      else if(block->jit)
+         JitTouch(block);
       if(!block->jit)
       {
          BlockEntryOk = true; /* (whatever the interpreter's op does, it goes the same way every time) */
@@ -185,12 +214,7 @@ int V810::RunBlock(v810_timestamp_t &timestamp)
       if(block->code == &FastMap[block_pc >> V810_FAST_MAP_SHIFT][block_pc]) /* (as a jump there finds it) */
          JitLookup[(block_pc >> 1) & (JIT_LOOKUP_SIZE - 1)] = JitLookupEntry{block_pc, code};
       if(JitLinkSite && JitLinkTarget == block_pc)
-      {
-         /* (the branch that came here now jumps straight into this block's code) */
-         *JitLinkSite = 0x48000000 | ((uint32)((uint8 *)code - (uint8 *)JitLinkSite) & 0x03FFFFFC);
-         DCFlushRange(JitLinkSite, 4);
-         ICInvalidateRange(JitLinkSite, 4);
-      }
+         JitLink(JitLinkSite, code); /* (the branch that came here now jumps straight into this block's code) */
    }
    JitLinkSite = NULL;
    const uint32 exit = ((uint32 (*)(uint32 *, v810_timestamp_t *, void *))JitStub[JIT_STUB_ENTER])(P_REG, &timestamp, code);

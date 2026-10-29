@@ -98,34 +98,32 @@ function(vbgo_generate_patched_vip VB_CORE_DIR OUT_DIR)
     # The frame buffers, for the libretro core's state loading (see
     # vbgo_tiletrack_forget_buffer).
     _vbgo_replace_once(VIP
-        [=[static uint8 FB[2][2][0x6000];]=]
-        [=[static uint8 FB[2][2][0x6000];
+        [=[static uint8 FB[2][2][0x6000] __attribute__((aligned(64)));]=]
+        [=[static uint8 FB[2][2][0x6000] __attribute__((aligned(64)));
 const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBoyGo */]=]
         "vip.c (the frame buffers)")
     # Displayed column -> output tags (side-by-side is the only 3D mode the
     # frontend uses; this function is what writes it).
     _vbgo_replace_once(VIP
         [=[   const int eye = dest_lr & 1;
-   const uint8 *fb_source = &FB[fb][lr][64 * Column];
 ]=]
         [=[   const int eye = dest_lr & 1;
-   const uint8 *fb_source = &FB[fb][lr][64 * Column];
 
    vbgo_tiletrack_display_column(fb, lr, dest_lr, Column, DisplayActive_arg); /* VirtualBoyGo */
 ]=]
         "vip.c (CopyFBColumnToTarget_SideBySide_BASE)")
     # Games drawing straight into the framebuffer with the CPU: no tile there.
     _vbgo_replace_once(VIP
-        [=[            FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF] = V;]=]
+        [=[            FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)] = V;]=]
         [=[         {
-            FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF] = V;
+            FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)] = V;
             vbgo_tiletrack_cpu_fb_write((A >> 15) & 1, (A >> 16) & 1, A & 0x7FFF, 1); /* VirtualBoyGo */
          }]=]
         "vip.c (VIP_Write8 framebuffer store)")
     _vbgo_replace_once(VIP
-        [=[            StoreU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF], V);]=]
+        [=[            StoreU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)], V);]=]
         [=[         {
-            StoreU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][A & 0x7FFF], V);
+            StoreU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)], V);
             vbgo_tiletrack_cpu_fb_write((A >> 15) & 1, (A >> 16) & 1, A & 0x7FFF, 2); /* VirtualBoyGo */
          }]=]
         "vip.c (VIP_Write16 framebuffer store)")
