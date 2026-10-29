@@ -443,7 +443,6 @@ static void StartPass(unsigned fb, const uint16_t *chr_ram, const uint16_t *dram
    }
    else if (s_prev_valid)
    {
-      /* (a word of 32 flags at a time) */
       for (c = 0; c < 2048; c += 32)
       {
          uint32_t bits = 0;
