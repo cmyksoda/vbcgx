@@ -2,6 +2,8 @@
 
 VBoy Color GX is a Wii port of [VBoy Color](https://github.com/yuk27/VBoyColor), a Virtual Boy emulator that adds color. It uses a modified version of Tantric's [FCE Ultra GX](https://github.com/dborth/fceugx) frontend for a clean, familiar way to browse and load games.
 
+***You can download the forwarder for this emulator [here!](https://github.com/cmyksoda/vboy-color-gx-forwarder-channel)***
+
 ![The VBoy Color GX main screen, with a game selected and its cover art on the right](images/main.png)
 
 ![Virtual Boy Wario Land in VBoy Color GX, with Aspect Ratio Correction set to Maintain Aspect Ratio](images/wario.png)
@@ -15,6 +17,12 @@ VBoy Color GX is a Wii port of [VBoy Color](https://github.com/yuk27/VBoyColor),
 - **WiiFlow Lite plugin** for starting games straight from WiiFlow.
 - **Controllers:** Wii Remote + Nunchuk, Classic Controller, Wii U Pro Controller, GameCube controller, and the Wii U GamePad (in vWii).
 
+## Installing
+
+Copy the `apps/vbcgx/` and `vbcgx/` folders to the root of your SD card or USB device, then put your games in `vbcgx/roms/`.
+
+For WiiFlow Lite, also copy the `wiiflow/` folder to the root of your SD card and turn on the "Virtual Boy" plugin in WiiFlow's settings. The plugin finds your games in `sd:/vbcgx/roms/`.
+
 ## Building
 
 VBoy Color GX builds with devkitPPC and [libogc2](https://github.com/extremscorner/libogc2) (not devkitPro's libogc), plus Tantric's fork of [libsmb2](https://github.com/dborth/libsmb2). The easiest way is the libogc2 container, which `tools/build-wii.sh` runs with [Podman](https://podman.io/):
@@ -26,12 +34,6 @@ tools/build-wii.sh
 ```
 
 The first build also downloads and builds libsmb2. The result is `executables/vbcgx-wii.dol`. To lay it out with the SD card folders, run `python3 tools/package.py`; the zip lands in `dist/`.
-
-## Installing
-
-Copy the `apps/vbcgx/` and `vbcgx/` folders to the root of your SD card or USB device, then put your games in `vbcgx/roms/`.
-
-For WiiFlow Lite, also copy the `wiiflow/` folder to the root of your SD card and turn on the "Virtual Boy" plugin in WiiFlow's settings. The plugin finds your games in `sd:/vbcgx/roms/`.
 
 ## Credits
 
