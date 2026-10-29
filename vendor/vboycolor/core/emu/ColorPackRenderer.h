@@ -163,7 +163,7 @@ private:
     std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_painted{};
     std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_depthCells{}; // (bit per left-eye cell PaintDepth last painted into)
     // [eye][buffer][column * bands + band]: a column's bands together (in the renderer, off the heap: MEM1 on the Wii)
-    // (Lane I: line-aligned - Paint claims lines of them whole)
+    // (line-aligned - Paint claims lines of them whole)
     alignas(32) std::array<std::array<std::array<BandColumn, (VBGO_TT_HEIGHT / 8) * VBGO_TT_WIDTH>, 2>, 2>
         m_bandColumns;
     // [eye][buffer][column]: a bit per band whose BandColumn has a run; only those are read, the rest of first is stale
@@ -245,7 +245,7 @@ private:
     bool m_auto = false, m_packShown = true;
     uint32_t m_autoWorlds = 0, m_autoWorldsUsed = ~0u;
     unsigned m_autoMaxLevel = 0;
-    // Lane I: (a ramp beside its colors as frame words, by shade 1-3: runs point at rgb, so the words are a cast away)
+    // (a ramp beside its colors as frame words, by shade 1-3: runs point at rgb, so the words are a cast away)
     struct RampColors
     {
         AutoColors::Ramp rgb{};
@@ -256,7 +256,7 @@ private:
         return reinterpret_cast<const RampColors *>(ramp)->words;
     }
     std::array<RampColors, 32> m_autoLayer{};
-    std::array<RampColors, 4> m_spriteRamps{}; // Lane I: (AutoColors::kSpriteRamps)
+    std::array<RampColors, 4> m_spriteRamps{}; // (AutoColors::kSpriteRamps)
     // Figures: background layers no bigger than kFigureSize pixels across (lately) - characters some games draw on
     // layers of their own - colored like sprites, so they stand out from the scenery (bit per world).
     static constexpr int kFigureSize = 128;
@@ -349,7 +349,7 @@ private:
         bool plain = false;
         bool flat = false; // (the tile is one color on every pixel - see Slot::flatPalettes)
         int16_t band = -1; // (slow: the row of grid cells its markers and tile are for)
-        uint8_t kind = 0;  // Lane I: (PlainKind at full fade by tile and ramp - see FullFadeKind)
+        uint8_t kind = 0;  // (PlainKind at full fade by tile and ramp - see FullFadeKind)
         uint32_t pairSlot = 0;                         // (as Band::pairSlots keeps it, 0: none)
     };
     struct CachedRun
@@ -473,7 +473,7 @@ private:
     unsigned PaintDepth(uint8_t *frame, uint32_t fbWidth, const uint32_t eyeOffset[2], const vbgo_tt_eye_view view[2],
                         const bool have[2], const int bg[3]);
     DepthColors m_depth;
-    bool m_depthLight = false; // Lane F: (the last PaintDepth didn't need Update)
+    bool m_depthLight = false; // (the last PaintDepth didn't need Update)
 
     bool m_settled = false;
     bool m_pairsChecked = false; // (the last Paint ran EstimatePairs)

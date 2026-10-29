@@ -212,7 +212,7 @@ typedef struct
     * */
    const uint64_t *motion_cells;
    uint32_t motion_noted;
-   /* Lane F: a bit per band drawn (or kept) with background color 0: every lit pixel shown there is a tile's, tagged
+   /* A bit per band drawn (or kept) with background color 0: every lit pixel shown there is a tile's, tagged
     * with its pixel value, but in the cells the CPU wrote into since (cpu_cells: per band, a bit per 8 columns). */
    uint32_t clean_bands;
    const uint64_t *cpu_cells;
@@ -246,7 +246,7 @@ extern const uint8_t *vbgo_tt_blank;
 extern uint8_t vbgo_tt_fill_cells[8192];
 /* Bumped by the core whenever its shades-to-colors table changes. */
 extern uint32_t vbgo_tt_clut_serial;
-/* Lane F: the VIP's background color (BKCOL) as the block about to begin is drawn. */
+/* The VIP's background color (BKCOL) as the block about to begin is drawn. */
 extern uint8_t vbgo_tt_bkcol;
 
 /* Sprites have no cell: their cell is which OBJ drew the pixel (the same in both eyes). */
@@ -394,7 +394,7 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
 bool vbgo_tiletrack_keep_block(void);
 /* The same for only some of its cells (bit per 8 columns), the rest drawn again. */
 bool vbgo_tiletrack_keep_cells(uint64_t cells);
-/* Lane G: for a block the VIP copies from the other buffer, whose drawing it would make again: takes that pass's tags
+/* For a block the VIP copies from the other buffer, whose drawing it would make again: takes that pass's tags
  * for it. False if they're gone (the block must be drawn after all). */
 bool vbgo_tiletrack_adopt_block(unsigned fb);
 /* Before drawing the block begun last (rather than keeping it); compare: tell

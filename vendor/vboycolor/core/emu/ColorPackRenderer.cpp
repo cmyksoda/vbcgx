@@ -190,7 +190,7 @@ enum class PlainKind { kAllOwn, kRampOnly, kMixed, kAny, kCell };
 template <PlainKind kKind>
 using PlainKindTag = std::integral_constant<PlainKind, kKind>;
 
-// Lane I: (a plain run's kind at full fade, by its tile's colors and its ramp)
+// (a plain run's kind at full fade, by its tile's colors and its ramp)
 inline PlainKind FullFadeKind(const TileColorPack::Tile *tile, const AutoColors::Ramp *ramp)
 {
     return tile->mask == ~0ull       ? PlainKind::kAllOwn
@@ -198,7 +198,7 @@ inline PlainKind FullFadeKind(const TileColorPack::Tile *tile, const AutoColors:
                                      : PlainKind::kMixed;
 }
 
-// Lane I: (a color as the frame's B, G, R bytes in one word, its alpha byte 0 - see StoreFrameRgb)
+// (a color as the frame's B, G, R bytes in one word, its alpha byte 0 - see StoreFrameRgb)
 constexpr uint32_t FrameRgb(const AutoColors::Rgb &rgb)
 {
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -213,7 +213,7 @@ constexpr uint32_t kFrameAlpha = 0x000000FFu;
 #else
 constexpr uint32_t kFrameAlpha = 0xFF000000u;
 #endif
-// Lane I: (dst[0..2] = B, G, R as the byte stores wrote them, the alpha byte as it was)
+// (dst[0..2] = B, G, R as the byte stores wrote them, the alpha byte as it was)
 inline void StoreFrameRgb(uint8_t *dst, uint32_t rgb)
 {
     uint32_t word;
@@ -519,7 +519,7 @@ void ColorPackRenderer::UpdateAutoColors()
 {
     // Each background layer's ramp by its depth (higher worlds are drawn first, farther back) among all layers drawn
     // since the game started, so a layer keeps its colors. (Figures, see m_figureWorlds, are colored like sprites.)
-    for (unsigned p = 0; p < 4; ++p) // Lane I
+    for (unsigned p = 0; p < 4; ++p)
     {
         m_spriteRamps[p].rgb = AutoColors::kSpriteRamps[p];
         for (unsigned s = 0; s < 3; ++s)
@@ -543,7 +543,7 @@ void ColorPackRenderer::UpdateAutoColors()
         m_autoLayer[w].rgb = AutoColors::LayerRamp(
             farthest > nearest ? static_cast<float>(farthest - w) / (farthest - nearest) : 0.5f);
         for (unsigned s = 0; s < 3; ++s)
-            m_autoLayer[w].words[s + 1] = FrameRgb(m_autoLayer[w].rgb[s]); // Lane I
+            m_autoLayer[w].words[s + 1] = FrameRgb(m_autoLayer[w].rgb[s]);
     }
 }
 
@@ -860,7 +860,7 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, con
     if (m_auto)
     {
         const bool spriteRamp = sprite || (m_figureWorlds >> colors & 1);
-        run.ramp = spriteRamp ? &m_spriteRamps[palette].rgb : &m_autoLayer[colors].rgb; // Lane I: (see RampColors)
+        run.ramp = spriteRamp ? &m_spriteRamps[palette].rgb : &m_autoLayer[colors].rgb; // (see RampColors)
     }
     if (c.pack)
     {
@@ -928,7 +928,7 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, con
     if (pairOf >= 0 && m_pairs[pairOf].estimated)
         m_pairs[pairOf].wantedAt = m_frame;
     run.plain = !run.slow && !run.flash && !run.cell;
-    if (!eye) // Lane I: (only the left eye paints)
+    if (!eye) // (only the left eye paints)
         run.kind = static_cast<uint8_t>(FullFadeKind(run.tile, run.ramp));
     return run;
 }
@@ -1392,7 +1392,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             {
                 const int i = sources[k], gx = i % kGridW, gy = i / kGridW;
                 const ContextGroupBits &bits = here[i];
-                // Lane I: (a source of one word of groups - nearly all - ORs in just that word)
+                // (a source of one word of groups - nearly all - ORs in just that word)
                 unsigned word = 0, words = 0;
                 for (unsigned j = 0; j < ContextGroupBits::kWords; ++j)
                     if (bits.w[j])
@@ -2712,7 +2712,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         // kCopyLit of its pixels does; a band whose copies save under kCopyPays doesn't pay for noting its motion)
         std::array<int32_t, kBands> saved{};
         uint32_t paysBands = 0;
-        // Lane I: (the bands of the cell column walked so far that painted an automatic color: their autoCells bits are
+        // (the bands of the cell column walked so far that painted an automatic color: their autoCells bits are
         // set once per cell - nothing reads them until the next Paint)
         uint32_t autoBands = 0;
         auto noteAutoCells = [&](unsigned c) {
@@ -2864,7 +2864,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 auto paintRows = [&](auto kind, const TileColorPack::Tile *tile, const AutoColors::Ramp *ramp)
                                      __attribute__((always_inline)) {
                     constexpr PlainKind kKind = decltype(kind)::value;
-                    // Lane I
                     const uint32_t *const rampWords = kKind == PlainKind::kRampOnly ? RampWords(ramp) : nullptr;
                     const uint32_t maskLo = static_cast<uint32_t>(tile->mask);
                     const uint32_t maskHi = static_cast<uint32_t>(tile->mask >> 32);
@@ -2888,7 +2887,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                             const unsigned shade = (rawPixel >> 24) & 3;
                             if (!shade)
                                 continue;
-                            StoreFrameRgb(dst, rampWords[shade]); // Lane I
+                            StoreFrameRgb(dst, rampWords[shade]);
                             flags |= kAutoColumnHi;
                             continue;
                         }
@@ -3056,7 +3055,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         // stay in the run (most tiles need no per-pixel look at which pixels are painted: all or none).
                         const TileColorPack::Tile *const tile = cur->tile;
                         const AutoColors::Ramp *const ramp = cur->ramp;
-                        // Lane I: (a slow run's tile goes by where it is: its kind too)
+                        // (a slow run's tile goes by where it is: its kind too)
                         const PlainKind kind =
                             cur->slow ? FullFadeKind(tile, ramp) : static_cast<PlainKind>(cur->kind);
                         if (!plainRows)
@@ -3113,12 +3112,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     write(i, rgb, rawPixel >> 26);
                 }
 
-                autoBands |= static_cast<uint32_t>((flags & kAutoColumnHi) != 0) << b; // Lane I
+                autoBands |= static_cast<uint32_t>((flags & kAutoColumnHi) != 0) << b;
                 if (!kept)
                 {
                     if (counted)
                     {
-                        // Lane I: (an even band shares its line with the next, which if not kept is written later or
+                        // (an even band shares its line with the next, which if not kept is written later or
                         // left inactive, and nothing reads an inactive one: the line is claimed whole, not fetched)
                         if (!(b & 1) && !(keptHere >> (b + 1) & 1))
                             ClearLine32(reinterpret_cast<uint8_t *>(&here));
@@ -3448,7 +3447,7 @@ static void GatherLit(const uint8_t *eyeBits, const uint32_t *eyeClut, const vbg
     // (bit per band whose 8x8 cell here may hold tags: elsewhere every tag is 0, never drawn - and of those the bands
     // reached, and reached in part)
     uint32_t taggedBands = 0, taggedReached = 0, taggedPartial = 0;
-    uint32_t cleanGroups = 0; // Lane F: (bit per 32 rows of these 8 columns whose every lit pixel is a tile's)
+    uint32_t cleanGroups = 0; // (bit per 32 rows of these 8 columns whose every lit pixel is a tile's)
     for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
     {
         const uint32_t *column = have ? view.columns[x] : nullptr;
@@ -3468,7 +3467,7 @@ static void GatherLit(const uint8_t *eyeBits, const uint32_t *eyeClut, const vbg
                                << g;
         }
         if (!kMasks && column && cleanGroups == (1u << (VBGO_TT_HEIGHT / 32)) - 1)
-            continue; // Lane F: (nothing wanted, no masks: nothing to do)
+            continue; // (nothing wanted, no masks: nothing to do)
 
         const EyeColumn eyeColumn(eyeBits, eyeClut, x);
         unsigned lit = 0; // (the pixel values this column shows in a shade that's on)
@@ -3501,7 +3500,7 @@ static void GatherLit(const uint8_t *eyeBits, const uint32_t *eyeClut, const vbg
         // (32 rows at a time, as two words of 16 pixels: a bit per pixel of each value at the even bits)
         for (uint32_t g = 0; g < VBGO_TT_HEIGHT / 32; ++g)
         {
-            // Lane F: (every lit pixel of clean bands is a tile's: none wanted, and without masks nothing to do)
+            // (every lit pixel of clean bands is a tile's: none wanted, and without masks nothing to do)
             const bool clean = column && (cleanGroups >> g & 1);
             if (!kMasks && clean)
                 continue;
@@ -3614,7 +3613,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
     bool any = false, rightWanted = false;
     unsigned brightest = 0;
     m_depthCells.fill(0);
-    // Lane F: (the masks only matter to Update: after a frame that didn't need it, the wanted pixels come first)
+    // (the masks only matter to Update: after a frame that didn't need it, the wanted pixels come first)
     const bool light = m_depthLight;
     const auto gather = [&](bool masks) {
         any = rightWanted = false;

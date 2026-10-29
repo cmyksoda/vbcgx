@@ -444,7 +444,7 @@ static uint64 WorldDirty; /* (BlockChange: the cells only a world's change cover
 static uint32 WorldBlockChangedAt[28][32]; /* (per block: the worlds whose change covers it) */
 static uint32 ChangedWorlds; /* (BlockChange: the worlds changed there since it was drawn) */
 static bool SpritesChanged; /* (BlockChange: and its sprites, or their characters) */
-/* Lane G: (BlockChange: background characters changed since, with nothing else of the backgrounds - then only the cells
+/* (BlockChange: background characters changed since, with nothing else of the backgrounds - then only the cells
  * their map entries place them in are drawn again; see ChrCells) */
 static bool BgChrChanged;
 static uint32 ChangedBgChr[2048 / 32];
@@ -758,7 +758,7 @@ static int BlockChange(const BlockInputs *block)
    int i, change = 0, wholeWorld;
    bool worldsSame = false;
    WorldDirty = 0;
-   BgChrChanged = false; /* Lane G */
+   BgChrChanged = false;
    if(!block->valid || GlobalChangedAt > block->drawnAt)
       return 2;
    wholeWorld = WorldChangedAt[DrawingBlock] > block->drawnAt;
@@ -791,7 +791,7 @@ static int BlockChange(const BlockInputs *block)
          const int c = i * 32 + __builtin_ctz(m);
          if(ChrChangedAt[c] > block->passAt)
          {
-            /* Lane G: (a background's character: which ones, for ChrCells) */
+            /* (a background's character: which ones, for ChrCells) */
             if(block->bgChr[i] >> (c & 31) & 1)
             {
                if(!BgChrChanged)
@@ -810,7 +810,7 @@ static int BlockChange(const BlockInputs *block)
       change = 1;
    for(i = 0; i < 48 && !worldsSame && WorldCellMaxAt[DrawingBlock] > block->drawnAt; i++)
       WorldDirty |= (uint64)(WorldCellChangedAt[DrawingBlock][i] > block->drawnAt) << i;
-   /* Lane G: (with a world changed too, drawn whole as before) */
+   /* (with a world changed too, drawn whole as before) */
    if(BgChrChanged && (wholeWorld || WorldDirty))
    {
       WorldDirty = 0;
@@ -1087,7 +1087,7 @@ static void StopRepeating(int fb)
    PassAlreadyCopied = false;
 }
 
-/* Lane G: whether the other buffer's drawing of this block still stands: nothing it read changed since (as for a
+/* Whether the other buffer's drawing of this block still stands: nothing it read changed since (as for a
  * BlockChange of 0, but attributes written and back count as changed), the cheapest tests first. */
 static NO_INLINE bool OtherBlockCurrent(void)
 {
@@ -1117,7 +1117,7 @@ static NO_INLINE bool OtherBlockCurrent(void)
    return !(SptChangedAt > other->drawnAt && ObjListsHash(DrawingBlock) != other->objs);
 }
 
-/* Lane G: a block to draw whole that the other buffer drew from what is still there: its pixels and what they read
+/* A block to draw whole that the other buffer drew from what is still there: its pixels and what they read
  * are copied, as a repeated pass's are (out of line: the drawing loop keeps its registers). */
 static NO_INLINE bool AdoptOtherBlock(BlockInputs *block)
 {
@@ -1775,7 +1775,7 @@ static INLINE bool MayTag(uint32 chr)
 }
 
 /* Cells plus the ones background world w could tag in the block being drawn, as DrawBG would walk its map (a
- * source character at a time), until they're all of them; ~0 for an affine world. Lane G: with chr, the ones its map
+ * source character at a time), until they're all of them; ~0 for an affine world. With chr, the ones its map
  * entries place a character of chr in instead, noting nothing as read. */
 static uint64 WorldCellsNow(unsigned w, uint64 cells, const uint32 *chr)
 {
@@ -1878,7 +1878,7 @@ static uint64 ChangedWorldCells(uint32 changed, uint64 cells)
    return cells;
 }
 
-/* Lane G: the cells of the block being drawn where the worlds, as when it was drawn, place a character of ChangedBgChr;
+/* The cells of the block being drawn where the worlds, as when it was drawn, place a character of ChangedBgChr;
  * ~0 with an affine world, or nearly every cell (then drawing it whole costs less). */
 static uint64 ChrCells(void)
 {
@@ -2462,11 +2462,11 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   PassAlreadyCopied = false;
                }
                const vbgo_tt_serials serials = { ChrChangedAt, ObjEntryChangedAt, DrawSerial, SerialEpoch };
-               vbgo_tt_bkcol = BKCOL; /* Lane F */
+               vbgo_tt_bkcol = BKCOL;
                vbgo_tiletrack_begin_block(DrawingBuffers[0], CHR_RAM, DRAM, DrawingBlock, DrawingFB, &JPLT_Cache[0][0], &serials);
                int change = BlockChange(block);
                bool adopted = false;
-               if((change == 2 || change == 3) && AdoptOtherBlock(block)) /* Lane G */
+               if((change == 2 || change == 3) && AdoptOtherBlock(block))
                   adopted = true, change = 0;
                if(change == 3 && block->valid)
                {
@@ -2500,14 +2500,14 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   const bool hadDrawing = block->valid;
                   uint64 same = 0, unchanged = change == 0 ? all : 0, dirty = all, spriteDirty = all;
                   bool partial = false;
-                  /* Lane G: (drawn aside and compared only where the block's last drawing came out nearly as before:
+                  /* (drawn aside and compared only where the block's last drawing came out nearly as before:
                    * comparing a cell costs about what painting it again does) */
                   static uint8 LastSame[2][28];
                   uint64 chrDirty = 0;
                   int c;
                   if(change == 1 && BgChrChanged)
                   {
-                     /* Lane G: (only the cells they show drawn again, if a run or two: each drawing walks every world
+                     /* (only the cells they show drawn again, if a run or two: each drawing walks every world
                       * and sprite; else whole as before, and not tried again for a while) */
                      static uint8 ChrSkip[2][28];
                      uint8 *const skip = &ChrSkip[DrawingFB][DrawingBlock];
@@ -2521,12 +2521,12 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      now.objs = GatherBlockSprites(DrawingBlock, &now);
                      spriteDirty = SpriteChangedCells(block, block->sprites, block->drawnAt, block->passAt, &now) & all;
                      dirty = (spriteDirty | WorldDirty | chrDirty) & all;
-                     if(BgChrChanged && __builtin_popcountll(dirty & ~(dirty << 1)) > 2) /* Lane G */
+                     if(BgChrChanged && __builtin_popcountll(dirty & ~(dirty << 1)) > 2)
                         dirty = all;
                      unchanged = ~dirty & all;
                      /* (the cells it covers drawn again, the rest kept) */
                      partial = hadDrawing && dirty != all && vbgo_tiletrack_keep_cells(unchanged);
-                     if(BgChrChanged && !partial) /* Lane G */
+                     if(BgChrChanged && !partial)
                         change = 2, unchanged = 0;
                   }
                   if(partial)
@@ -2600,7 +2600,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      for(c = 0; c < 48; c++)
                         if(!partial || (dirty >> c & 1))
                            same |= (uint64)!differs[c] << c;
-                  if(!partial) /* Lane G */
+                  if(!partial)
                      LastSame[DrawingFB][DrawingBlock] = (uint8)__builtin_popcountll(same);
                   {
                      const uint32 fresh = NewContent();

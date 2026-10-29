@@ -203,7 +203,7 @@ inline __attribute__((always_inline)) void ShadeColorizer::ColorizeUniform(const
 #endif
     for (unsigned k = 0; k < 8; ++k)
     {
-        // Lane I: (one address per byte: else GCC rebuilds it for each of the 4 rows' tables)
+        // (one address per byte: else GCC rebuilds it for each of the 4 rows' tables)
         const uint32_t *lo = &m_quad[pair[k * 56]], *hi = &m_quad[pair[k * 56 + 1]];
 #if defined(__PPC__) || defined(__powerpc__)
         __asm__("" : "+r"(lo), "+r"(hi));

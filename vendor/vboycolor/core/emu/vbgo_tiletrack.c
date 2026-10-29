@@ -13,7 +13,7 @@ static const uint8_t s_no_blank[2048];
 const uint8_t *vbgo_tt_blank = s_no_blank;
 uint8_t vbgo_tt_fill_cells[8192];
 uint32_t vbgo_tt_clut_serial = 1;
-uint8_t vbgo_tt_bkcol; /* Lane F */
+uint8_t vbgo_tt_bkcol;
 
 /* Tags in the VB's own frame buffer layout - [slot][eye][column * VBGO_TT_COLUMN + row]. Each frame buffer shows one
  * slot's; a pass repeating the other buffer's (vbgo_tiletrack_share_pass) shares its slot: a third is always free. */
@@ -92,7 +92,7 @@ static uint64_t s_motion_cells[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 /* Per slot, the blocks (a bit each) whose drawing in its latest pass was given motion records. */
 static uint32_t s_motion_noted[VBGO_TT_SLOTS];
 
-/* Lane F: per slot and block, whether it was drawn (or kept) with background color 0, which no colorizer lights;
+/* Per slot and block, whether it was drawn (or kept) with background color 0, which no colorizer lights;
  * cleared when a state is loaded, its frame buffer's pixels then not those its tags were drawn with. */
 static uint8_t s_band_bk0[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 /* ... and the cells (bit per 8 columns) the CPU has written into since. */
@@ -342,7 +342,7 @@ static void ForgetBlocks(void)
    memset(s_cell_worlds, 0xFF, sizeof(s_cell_worlds));
    memset(s_motion, 0, sizeof(s_motion));
    memset(s_motion_cells, 0, sizeof(s_motion_cells));
-   memset(s_band_bk0, 0, sizeof(s_band_bk0)); /* Lane F */
+   memset(s_band_bk0, 0, sizeof(s_band_bk0));
 }
 
 /* The tiles as last hashed, with their hashes and blank flags. */
@@ -524,7 +524,7 @@ void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr)
    memset(s_cell_worlds[s_slot[fb & 1]], 0xFF, sizeof(s_cell_worlds[0]));
    memset(s_motion[s_slot[fb & 1]], 0, sizeof(s_motion[0]));
    memset(s_motion_cells[s_slot[fb & 1]], 0, sizeof(s_motion_cells[0]));
-   memset(s_band_bk0[s_slot[fb & 1]], 0, sizeof(s_band_bk0[0])); /* Lane F */
+   memset(s_band_bk0[s_slot[fb & 1]], 0, sizeof(s_band_bk0[0]));
    s_cpu[fb & 1] = 1;
 }
 
@@ -532,7 +532,7 @@ void vbgo_tiletrack_forget_motion(void)
 {
    memset(s_motion, 0, sizeof(s_motion));
    memset(s_motion_cells, 0, sizeof(s_motion_cells));
-   memset(s_band_bk0, 0, sizeof(s_band_bk0)); /* Lane F */
+   memset(s_band_bk0, 0, sizeof(s_band_bk0));
 }
 
 void vbgo_tiletrack_set_fill_mode(int mode)
@@ -642,7 +642,6 @@ bool vbgo_tiletrack_keep_block(void)
    return s_block_was != 0;
 }
 
-/* Lane G */
 bool vbgo_tiletrack_adopt_block(unsigned fb)
 {
    int to, from;
@@ -1227,7 +1226,6 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
       /* (a word: 16 pixels of a column, 8 in each of two blocks - the bytes' work below, at once) */
       const unsigned column = offset / 64, row = (offset % 64) * 4, block = row / 8;
       uint32_t *const tags = &s_tags[slot][lr & 1][column * VBGO_TT_COLUMN + row];
-      /* Lane F */
       s_cpu_cells[slot][block] |= 1ull << (column / 8), s_cpu_cells[slot][block + 1] |= 1ull << (column / 8);
       if (s_tagged[slot][block] >> (column / 8) & 1)
          memset(tags, 0, 8 * sizeof(*tags));
@@ -1254,7 +1252,7 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
       if (column >= VBGO_TT_WIDTH)
          continue;
       if (row / 8 < VBGO_TT_BLOCKS)
-         s_cpu_cells[slot][row / 8] |= 1ull << (column / 8); /* Lane F */
+         s_cpu_cells[slot][row / 8] |= 1ull << (column / 8);
       /* (a cell that may hold no tag has all of them 0 already) */
       if (row / 8 >= VBGO_TT_BLOCKS || (s_tagged[slot][row / 8] >> (column / 8) & 1))
          for (p = 0; p < 4; p++)
@@ -1298,7 +1296,7 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view)
    for (x = 0; x < VBGO_TT_BLOCKS; x++)
    {
       view->band_key[x] = s_band_pass[slot][x] == s_stamp[slot] ? VBGO_TT_BAND_REACHED : 0;
-      view->clean_bands |= (uint32_t)(s_band_pass[slot][x] == s_stamp[slot] && s_band_bk0[slot][x]) << x; /* Lane F */
+      view->clean_bands |= (uint32_t)(s_band_pass[slot][x] == s_stamp[slot] && s_band_bk0[slot][x]) << x;
    }
 
    view->hashes = s_hash[slot];
