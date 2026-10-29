@@ -8,7 +8,7 @@ VBoy Color GX is a Wii port of [VBoy Color](https://github.com/yuk27/VBoyColor),
 
 ## Features
 
-- **Full speed** almost everywhere in every official Virtual Boy release.[^1]
+- **Full speed** almost everywhere in every official Virtual Boy release, now including every room of *Virtual Boy Wario Land*.[^1]
 - **Lots of color options:** each game's own color pack, automatic colors, multicolor palettes, gradients, and tints (presets or your own).
 - **240p** for crisp pixels on CRT televisions, plus 480p and 480i.
 - **Save states, screenshots, and cover art** through the GX frontend.
@@ -57,4 +57,4 @@ VBoy Color GX doesn't include any games. Virtual Boy is a trademark of Nintendo,
 
 *This project was made with AI assistance. For more information, see [my AI usage statement](https://github.com/cmyksoda/cmyksoda/blob/main/AI_USAGE.md).*
 
-[^1]: Speeds were measured on a Wii and on a Wii U in Wii mode, over the first minute of each game (its title screen, opening and demo). Some spots in real play can still slow down, like parts of Virtual Boy Wario Land after the first room, and so can two scenes outside gameplay: Mario Clash's opening movie, only slightly (at its slowest about 50 frames per second on a Wii and 48 on a Wii U, against the Virtual Boy's 50.27), and the house picture at the start of Innsmouth no Yakata. Reports of other slow spots are welcome.
+[^1]: Speeds were measured on a Wii and on a Wii U in Wii mode, over the first minute of each game (its title screen, opening and demo). Two scenes outside gameplay can still slow down: Mario Clash's opening movie, only slightly (at its slowest about 50 frames per second on a Wii and 48 on a Wii U, against the Virtual Boy's 50.27), and the house picture at the start of Innsmouth no Yakata. Reports of other slow spots are welcome.
