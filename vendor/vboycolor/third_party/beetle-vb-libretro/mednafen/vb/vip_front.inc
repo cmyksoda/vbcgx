@@ -449,12 +449,16 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
     VbgoFrontSkipped += (final_x - start_x + 8) >> 3;
     continue;
    }
-   if(n && (hbias || (sy >> 3) != (SourceY >> 3)))
+   if(n && (sy >> 3) != (SourceY >> 3))
     break;
    if(hbias)
    {
+    /* (rows shifted alike draw the same columns: one chunk, as a normal world's) */
+    const uint16 shifted = srcX + (int16)DRAM[(a->param_base + ((row_y * 2) | lr)) & 0xFFFF];
+    if(n && shifted != row_srcX)
+     break;
     USE_ROW(a->param_base + ((row_y * 2) | lr));
-    row_srcX += (int16)DRAM[(a->param_base + ((row_y * 2) | lr)) & 0xFFFF];
+    row_srcX = shifted;
    }
    SourceY = sy;
    if(!n)
