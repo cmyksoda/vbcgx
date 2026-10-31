@@ -3246,8 +3246,15 @@ static int MenuVBOptions(bool colors)
     auto layoutVideoRows = [&]() {
         for (int i = 0; i < 6; ++i)
             snprintf(options.name[i], 100, "%s", EmuSettings.videoFixedRatio && (i == 1 || i == 3) ? "" : videoNames[i]);
+#ifdef __WIIU__
+        options.name[0][0] = 0; // (the Wii U picks its own output from the system settings)
+#endif
     };
+#ifdef __WIIU__
+    auto is240p = []() { return false; }; // (the Wii's mode, from a shared settings.xml, doesn't apply here)
+#else
     auto is240p = []() { return EmuSettings.videoMode == VIDEOMODE_ORIGINAL_240P || EmuSettings.videoMode == VIDEOMODE_240P_PAL; };
+#endif
     if (colors)
         layoutColorRows();
     else {
