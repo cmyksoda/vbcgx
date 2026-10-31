@@ -10,7 +10,7 @@ VBoy Color GX is a Wii port of [VBoy Color](https://github.com/yuk27/VBoyColor),
 
 ## Features
 
-- **Full speed** almost everywhere in every official Virtual Boy release, now including every room of *Virtual Boy Wario Land*.[^1]
+- **Full speed** in most scenes of every official Virtual Boy release.[^1]
 - **Lots of color options:** each game's own color pack, automatic colors, multicolor palettes, gradients, and tints (presets or your own).
 - **240p** for crisp pixels on CRT televisions, plus 480p and 480i.
 - **Save states, screenshots, and cover art** through the GX frontend.
