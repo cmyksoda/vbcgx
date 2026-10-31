@@ -169,7 +169,6 @@ struct SEmuSettings
     int tintRed, tintGreen, tintBlue; // the custom color, hundredths (0-100, steps of 5)
     bool colorPacks;
 
-	int		wiimoteOrientation;
 	int		exitAction;
 	int		musicVolume;
 	int		sfxVolume;

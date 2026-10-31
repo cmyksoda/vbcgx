@@ -3856,7 +3856,6 @@ static int MenuSettingsMenu()
 #else
 	options.name[i++][0] = 0; // Exit Action not available on this platform
 #endif
-	sprintf(options.name[i++], "Wiimote Orientation");
 	sprintf(options.name[i++], "Music Volume");
 	sprintf(options.name[i++], "Sound Effects Volume");
 	sprintf(options.name[i++], "Language");
@@ -3920,24 +3919,18 @@ static int MenuSettingsMenu()
 				#endif
 				break;
 			case 1:
-				EmuSettings.wiimoteOrientation++;
-				if(EmuSettings.wiimoteOrientation >= WIIMOTE_ORIENTATION_LENGTH)
-					EmuSettings.wiimoteOrientation = WIIMOTE_ORIENTATION_VERTICAL;
-				platform->getInput()->setWiimoteOrientation(EmuSettings.wiimoteOrientation);
-				break;
-			case 2:
 				EmuSettings.musicVolume += 10;
 				if(EmuSettings.musicVolume > 100)
 					EmuSettings.musicVolume = 0;
 				GuiSound::setDefaultVolume(VOLUME_TYPE::MUSIC, EmuSettings.musicVolume);
 				break;
-			case 3:
+			case 2:
 				EmuSettings.sfxVolume += 10;
 				if(EmuSettings.sfxVolume > 100)
 					EmuSettings.sfxVolume = 0;
 				GuiSound::setDefaultVolume(VOLUME_TYPE::SFX, EmuSettings.sfxVolume);
 				break;
-			case 4:
+			case 3:
 				EmuSettings.language++;
 
 				if(EmuSettings.language == LANG_TRAD_CHINESE) // skip (not supported)
@@ -3945,12 +3938,12 @@ static int MenuSettingsMenu()
 				else if(EmuSettings.language >= LANG_LENGTH)
 					EmuSettings.language = LANG_JAPANESE;
 				break;
-			case 5:
+			case 4:
 				EmuSettings.previewImage++;
 				if(EmuSettings.previewImage >= PREVIEWIMAGE_LENGTH)
 					EmuSettings.previewImage = PREVIEWIMAGE_SCREENSHOT;
 				break;
-			case 6:
+			case 5:
 				EmuSettings.hideSramSaving = !EmuSettings.hideSramSaving;
 				break;
 		}
@@ -3974,60 +3967,54 @@ static int MenuSettingsMenu()
 			else
 				sprintf (options.value[0], "Reboot");
 
-			options.name[1][0] = 0; // Wiimote
-			options.name[2][0] = 0; // Music
-			options.name[3][0] = 0; // Sound Effects
+			options.name[1][0] = 0; // Music
+			options.name[2][0] = 0; // Sound Effects
 			#endif
 
-			if (EmuSettings.wiimoteOrientation == WIIMOTE_ORIENTATION_HORIZONTAL)
-				sprintf (options.value[1], "Horizontal");
-			else
-				sprintf (options.value[1], "Vertical");
-
 			if(EmuSettings.musicVolume > 0)
-				sprintf(options.value[2], "%d%%", EmuSettings.musicVolume);
+				sprintf(options.value[1], "%d%%", EmuSettings.musicVolume);
+			else
+				sprintf(options.value[1], "Mute");
+
+			if(EmuSettings.sfxVolume > 0)
+				sprintf(options.value[2], "%d%%", EmuSettings.sfxVolume);
 			else
 				sprintf(options.value[2], "Mute");
 
-			if(EmuSettings.sfxVolume > 0)
-				sprintf(options.value[3], "%d%%", EmuSettings.sfxVolume);
-			else
-				sprintf(options.value[3], "Mute");
-
 			if (EmuSettings.hideSramSaving)
-				sprintf (options.value[6], "On");
+				sprintf (options.value[5], "On");
 			else
-				sprintf (options.value[6], "Off");
+				sprintf (options.value[5], "Off");
 
 			switch(EmuSettings.language)
 			{
-				case LANG_JAPANESE:			sprintf(options.value[4], "Japanese"); 	break;
-				case LANG_ENGLISH:			sprintf(options.value[4], "English"); 	break;
-				case LANG_GERMAN:			sprintf(options.value[4], "German"); 	break;
-				case LANG_FRENCH:			sprintf(options.value[4], "French"); 	break;
-				case LANG_SPANISH:			sprintf(options.value[4], "Spanish"); 	break;
-				case LANG_ITALIAN:			sprintf(options.value[4], "Italian"); 	break;
-				case LANG_DUTCH:			sprintf(options.value[4], "Dutch"); 	break;
-				case LANG_SIMP_CHINESE:		sprintf(options.value[4], "Chinese (Simplified)"); 	break;
-				case LANG_TRAD_CHINESE:		sprintf(options.value[4], "Chinese (Traditional)"); break;
-				case LANG_KOREAN:			sprintf(options.value[4], "Korean"); 	break;
-				case LANG_PORTUGUESE:		sprintf(options.value[4], "Portuguese"); break;
-				case LANG_BRAZILIAN_PORTUGUESE: sprintf(options.value[4], "Brazilian Portuguese"); break;
-				case LANG_CATALAN:			sprintf(options.value[4], "Catalan"); 	break;
-				case LANG_TURKISH:			sprintf(options.value[4], "Turkish"); 	break;
-				case LANG_SWEDISH:			sprintf(options.value[4], "Swedish"); 	break;
+				case LANG_JAPANESE:			sprintf(options.value[3], "Japanese"); 	break;
+				case LANG_ENGLISH:			sprintf(options.value[3], "English"); 	break;
+				case LANG_GERMAN:			sprintf(options.value[3], "German"); 	break;
+				case LANG_FRENCH:			sprintf(options.value[3], "French"); 	break;
+				case LANG_SPANISH:			sprintf(options.value[3], "Spanish"); 	break;
+				case LANG_ITALIAN:			sprintf(options.value[3], "Italian"); 	break;
+				case LANG_DUTCH:			sprintf(options.value[3], "Dutch"); 	break;
+				case LANG_SIMP_CHINESE:		sprintf(options.value[3], "Chinese (Simplified)"); 	break;
+				case LANG_TRAD_CHINESE:		sprintf(options.value[3], "Chinese (Traditional)"); break;
+				case LANG_KOREAN:			sprintf(options.value[3], "Korean"); 	break;
+				case LANG_PORTUGUESE:		sprintf(options.value[3], "Portuguese"); break;
+				case LANG_BRAZILIAN_PORTUGUESE: sprintf(options.value[3], "Brazilian Portuguese"); break;
+				case LANG_CATALAN:			sprintf(options.value[3], "Catalan"); 	break;
+				case LANG_TURKISH:			sprintf(options.value[3], "Turkish"); 	break;
+				case LANG_SWEDISH:			sprintf(options.value[3], "Swedish"); 	break;
 			}
 
 			switch(EmuSettings.previewImage)
 			{
 				case 0:
-					sprintf(options.value[5], "Screenshots");
+					sprintf(options.value[4], "Screenshots");
 					break;
 				case 1:
-					sprintf(options.value[5], "Covers");
+					sprintf(options.value[4], "Covers");
 					break;
 				case 2:
-					sprintf(options.value[5], "Artwork");
+					sprintf(options.value[4], "Artwork");
 					break;
 			}
 

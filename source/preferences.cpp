@@ -181,9 +181,6 @@ preparePrefsData ()
 
 	createXMLSection("Menu", "Menu Settings");
 
-#if defined(HW_RVL) || defined(__WIIU__)
-	createXMLSetting("wiimoteOrientation", "Wiimote Orientation", toStr(EmuSettings.wiimoteOrientation));
-#endif
 	createXMLSetting("exitAction", "Exit Action", toStr(EmuSettings.exitAction));
 	createXMLSetting("musicVolume", "Music Volume", toStr(EmuSettings.musicVolume));
 	createXMLSetting("sfxVolume", "Sound Effects Volume", toStr(EmuSettings.sfxVolume));
@@ -285,7 +282,6 @@ static void loadXMLController(uint32_t controller[], const char * name)
 }
 
 void ApplySettings() {
-	platform->getInput()->setWiimoteOrientation(EmuSettings.wiimoteOrientation);
 	GuiSound::setDefaultVolume(VOLUME_TYPE::MUSIC, EmuSettings.musicVolume);
 	GuiSound::setDefaultVolume(VOLUME_TYPE::SFX, EmuSettings.sfxVolume);
 	platform->getVideo()->startMenuVideo();
@@ -350,7 +346,6 @@ decodePrefsData ()
 
 	// Menu Settings
 
-	loadXMLSetting(&EmuSettings.wiimoteOrientation, "wiimoteOrientation");
 	loadXMLSetting(&EmuSettings.exitAction, "exitAction");
 	loadXMLSetting(&EmuSettings.musicVolume, "musicVolume");
 	loadXMLSetting(&EmuSettings.sfxVolume, "sfxVolume");
@@ -437,8 +432,6 @@ void FixInvalidSettings()
 		EmuSettings.videoFixedRatio = 0;
 	if(!(EmuSettings.videoMode >= VIDEOMODE_AUTO && EmuSettings.videoMode < VIDEOMODE_LENGTH) || !VideoModeAvailable(EmuSettings.videoMode))
 		EmuSettings.videoMode = VIDEOMODE_AUTO;
-	if(!(EmuSettings.wiimoteOrientation >= WIIMOTE_ORIENTATION_VERTICAL && EmuSettings.wiimoteOrientation < WIIMOTE_ORIENTATION_LENGTH))
-		EmuSettings.wiimoteOrientation = WIIMOTE_ORIENTATION_VERTICAL;
 }
 
 /****************************************************************************
@@ -504,7 +497,6 @@ void DefaultSettings()
 	EmuSettings.tintRed = 100, EmuSettings.tintGreen = 0, EmuSettings.tintBlue = 0;
     EmuSettings.colorPacks = true;
 
-	EmuSettings.wiimoteOrientation = WIIMOTE_ORIENTATION_VERTICAL;
 	EmuSettings.autoloadGame = false;
 #ifdef HW_RVL
 	EmuSettings.exitAction = EXITACTION_WII_AUTO;
