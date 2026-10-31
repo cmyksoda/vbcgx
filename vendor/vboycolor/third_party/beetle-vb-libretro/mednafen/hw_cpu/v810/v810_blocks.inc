@@ -4,6 +4,14 @@
 /* (libogc's; the core is built without its headers) */
 extern "C" void DCFlushRange(void *start, uint32 length);
 extern "C" void ICInvalidateRange(void *start, uint32 length);
+#ifdef __WIIU__
+/* (the frontend's: on the Wii U, compiled code lives in Cafe OS's codegen area, which is writable or runnable, never
+ * both at once) */
+uint32 *WutCodegenAcquire(size_t wanted);
+void WutCodegenBeginWrite();
+void WutCodegenMarkDirty(const void *p, size_t n);
+void WutCodegenEndWrite();
+#endif
 
 /* How compiled code ends (v810_jit.inc): an interrupt is due before an op (it can go on there, at JitResumeAt), the
  * event handler it ran ended the frame (likewise), the interpreter must run the next op, or at a branch to
@@ -60,9 +68,29 @@ const uint8 kBlockKinds[128] = {
 
 enum { PAGE_FREE, PAGE_WRITING, PAGE_LIVE, PAGE_PROBATION };
 enum { JIT_BYTES = 2 * 1024 * 1024 };
+#ifdef __WIIU__
+uint32 *JitCode; /* (from vbgo_jit_attach; without it every block is left to the interpreter) */
+#else
 /* (in the DOL's own memory: MEM1, the faster to fetch code from) */
 uint32 JitCode[JIT_BYTES / 4] __attribute__((aligned(32)));
+#endif
 static_assert(JIT_BYTES % (JIT_PAGE_WORDS * 4) == 0 && JIT_HOT_WORDS < JIT_PAGE_WORDS, "JitCode pages");
+
+/* Code is written while a JitWriting is alive (they nest), and each write is JIT_SYNC'd before it runs. */
+struct JitWriting
+{
+#ifdef __WIIU__
+   JitWriting() { WutCodegenBeginWrite(); }
+   ~JitWriting() { WutCodegenEndWrite(); }
+#endif
+};
+
+/* (a macro, so the Wii's code is what it was before the Wii U came along, byte for byte) */
+#ifdef __WIIU__
+#define JIT_SYNC(from, bytes) WutCodegenMarkDirty(from, bytes)
+#else
+#define JIT_SYNC(from, bytes) (DCFlushRange(from, bytes), ICInvalidateRange(from, bytes))
+#endif
 
 inline uint32 BranchWord(const uint32 *at, const void *to, unsigned link)
 {
@@ -83,6 +111,16 @@ inline unsigned BlockOpLength(unsigned kind)
    return (kind >= BK_MOVEA && kind <= BK_ST_W) || kind == BK_JR || kind == BK_JAL ? 4 : 2;
 }
 } // namespace
+
+#ifdef __WIIU__
+/* Called once from the thread that runs the game: the codegen area is that thread's core's alone. */
+bool vbgo_jit_attach(void)
+{
+   if(!JitCode)
+      JitCode = WutCodegenAcquire(JIT_BYTES);
+   return JitCode != NULL;
+}
+#endif
 
 void V810::FlushBlocks(void)
 {

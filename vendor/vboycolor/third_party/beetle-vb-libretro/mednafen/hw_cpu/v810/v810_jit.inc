@@ -182,11 +182,16 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          return NULL;
    if(!JitWorkRam)
       return NULL;
+#ifdef __WIIU__
+   if(!JitCode)
+      return NULL;
+#endif
    const unsigned n = block->count;
    static_assert(JIT_STUBS <= sizeof(JitStub) / sizeof(JitStub[0]), "JitStub");
    static_assert(JIT_LOOKUP_SIZE == 4096 && sizeof(JitLookupEntry) == 8, "BK_JMP's index into JitLookup");
 
    const size_t page = JitWritePage;
+   JitWriting writing;
    uint32 *const flushFrom = JitCode + JitCodeUsed, *const coldFrom = JitCode + JitColdUsed;
    PpcWriter w(flushFrom, JitCode + page * JIT_PAGE_WORDS + JIT_HOT_WORDS),
        away(coldFrom, JitCode + (page + 1) * JIT_PAGE_WORDS);
@@ -1294,9 +1299,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
    }
    JitCodeUsed = w.at - JitCode;
    JitColdUsed = away.at - JitCode;
-   DCFlushRange(flushFrom, (w.at - flushFrom) * 4);
-   ICInvalidateRange(flushFrom, (w.at - flushFrom) * 4);
-   DCFlushRange(coldFrom, (away.at - coldFrom) * 4);
-   ICInvalidateRange(coldFrom, (away.at - coldFrom) * 4);
+   JIT_SYNC(flushFrom, (w.at - flushFrom) * 4);
+   JIT_SYNC(coldFrom, (away.at - coldFrom) * 4);
    return start;
 }

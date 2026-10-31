@@ -64,9 +64,9 @@ void V810::JitLink(uint32 *site, void *code)
    const unsigned from = JitPageOf(site), to = JitPageOf(code);
    if(from != to && !JitNoteLink(site, to))
       return;
+   JitWriting writing;
    *site = BranchWord(site, code, 0);
-   DCFlushRange(site, 4);
-   ICInvalidateRange(site, 4);
+   JIT_SYNC(site, 4);
 }
 
 bool V810::JitNoteLink(uint32 *site, unsigned target)
@@ -148,6 +148,7 @@ void V810::JitProbate(unsigned page)
 {
    JitPage &probated = JitPages[page];
    probated.state = PAGE_PROBATION;
+   JitWriting writing;
    for(size_t n = probated.notes; n;)
    {
       JitLinkNote &note = JitNotes[n - 1];
@@ -156,8 +157,7 @@ void V810::JitProbate(unsigned page)
       {
          uint32 *const site = JitCode + note.site;
          *site = BranchWord(site, JitStub[JIT_STUB_BRANCH], 1);
-         DCFlushRange(site, 4);
-         ICInvalidateRange(site, 4);
+         JIT_SYNC(site, 4);
       }
       note.next = JitNotesFreed;
       JitNotesFreed = n;

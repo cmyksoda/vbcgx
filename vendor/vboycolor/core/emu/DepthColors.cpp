@@ -505,6 +505,12 @@ void DepthColors::Update()
 }
 
 #ifdef GEKKO
+#ifdef __WIIU__
+#define GQR7_SPR "903" // (UGQR7: Cafe OS runs games in user mode, where GQR7 itself traps)
+#else
+#define GQR7_SPR "919"
+#endif
+
 // Estimate's smoothing along a line of blocks with paired singles: two disparities at a time, as floats loaded from
 // and stored to int16 (GQR7). Every value is a small integer, so the float sums and mins are exact.
 void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, int step, int count,
@@ -516,8 +522,8 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
     if (before)
         low[0] = low[1] = before[kLowAt];
     unsigned gqr7; // (loads and stores signed 16-bit, unscaled; put back after)
-    __asm__ volatile("mfspr %0, 919" : "=r"(gqr7));
-    __asm__ volatile("mtspr 919, %0\n\tisync" : : "r"(0x00070007u) : "memory");
+    __asm__ volatile("mfspr %0, " GQR7_SPR : "=r"(gqr7));
+    __asm__ volatile("mtspr " GQR7_SPR ", %0\n\tisync" : : "r"(0x00070007u) : "memory");
 
     for (int k = 0; k < count; ++k)
     {
@@ -650,7 +656,7 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
             rec[kLowAt] = low[0];
         }
     }
-    __asm__ volatile("mtspr 919, %0\n\tisync" : : "r"(gqr7) : "memory");
+    __asm__ volatile("mtspr " GQR7_SPR ", %0\n\tisync" : : "r"(gqr7) : "memory");
 }
 #else
 void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, int step, int count,
