@@ -991,79 +991,81 @@ uint64_t vbgo_tiletrack_world_cells_were(uint32_t worlds)
    return cells;
 }
 
-/* Cell c's bits (at `at`) of note_motion's masks, without branches: given the drawing's new version (the rest are
- * kept), and per offset (worlds0, worlds1) shown only by worlds that moved by it, now and in the other pass. */
-#define VBGO_MOTION_BITS(c, at)                                                                             \
-   do                                                                                                       \
-   {                                                                                                        \
-      const uint32_t shown = vbgo_tt_wcells[c] & ~still, then = was_worlds[c];                              \
-      fresh_bits |= (uint32_t)(version[c] == fresh) << (at);                                                \
-      now0 |= (uint32_t)((shown != 0) & ((shown & ~worlds0) == 0)) << (at);                                 \
-      src0 |= (uint32_t)((then & ~worlds0) == 0) << (at);                                                   \
-      if (n > 1)                                                                                            \
-      {                                                                                                     \
-         now1 |= (uint32_t)((shown != 0) & ((shown & ~worlds1) == 0)) << (at);                              \
-         src1 |= (uint32_t)((then & ~worlds1) == 0) << (at);                                                \
-      }                                                                                                     \
-   } while (0)
+/* Whether slot `from` holds its latest pass's tags in band `band` (its own, not another slot's). */
+static int BandOfPass(int from, int band)
+{
+   return band >= 0 && band < VBGO_TT_BLOCKS && !(s_lazy[from] >> band & 1) && s_band_pass[from][band] == s_stamp[from];
+}
 
-unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, const int8_t *dx, const uint64_t *bad)
+/* Slot `from`'s cells of a band (bit per 8 columns) shown only by `group`'s worlds, with no sprite's or fill's tag. */
+static uint64_t CellsShownBy(int from, int band, uint32_t group)
+{
+   const uint32_t *const was_worlds = s_cell_worlds[from][band];
+   uint64_t cells = 0;
+   unsigned c;
+   for (c = 0; c < VBGO_TT_CELLS; c++)
+      cells |= (uint64_t)((was_worlds[c] & ~group) == 0) << c;
+   return cells & ~(s_obj_cells[from][band] | s_filled_cells[from][band]);
+}
+
+unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, const int8_t *dx, const int8_t *dy,
+                                    const uint64_t *bad)
 {
    const unsigned b = s_block_no;
    const int slot = s_block_slot;
-   int from, d[2];
-   const uint32_t *version, *was, *was_worlds, fresh = s_versions;
-   uint32_t todo = moved, worlds0 = 0, worlds1 = 0, half[2];
-   uint64_t bad_here[2] = { 0, 0 }, now[2], src[2], cells[2], all = 0, claimed;
+   int from, d[2], e[2];
+   const uint32_t *version, fresh = s_versions;
+   uint32_t todo = moved, groups[2] = { 0, 0 }, half[2];
+   uint64_t bad_here[2] = { 0, 0 }, cells[2] = { 0, 0 }, base = 0, all = 0, claimed;
    uint64_t unmade = 0; /* (cells of `all` given no record) */
    vbgo_tt_motion *rec;
    unsigned g, n, c, k, made = 0;
    if (!vbgo_tt_on || slot < 0 || b >= VBGO_TT_BLOCKS || s_last_fb < 0 || !fresh)
       return 0;
    from = s_slot[s_last_fb ^ 1];
-   if (from == slot || !s_have[s_last_fb ^ 1] || (s_lazy[from] >> b & 1) || s_band_pass[from][b] != s_stamp[from])
+   if (from == slot || !s_have[s_last_fb ^ 1])
       return 0;
-   version = s_cell_version[slot][b], was = s_cell_version[from][b], was_worlds = s_cell_worlds[from][b];
+   version = s_cell_version[slot][b];
    rec = s_motion[slot][b];
 
    /* (the offsets, up to two (the rest record nothing), each with its worlds) */
    for (n = 0; todo && n < 2; n++)
    {
       uint32_t w, group = still;
-      d[n] = dx[__builtin_ctz(todo)];
+      d[n] = dx[__builtin_ctz(todo)], e[n] = dy[__builtin_ctz(todo)];
       for (w = todo; w; w &= w - 1)
-         if (dx[__builtin_ctz(w)] == d[n])
+         if (dx[__builtin_ctz(w)] == d[n] && dy[__builtin_ctz(w)] == e[n])
             group |= 1u << __builtin_ctz(w), bad_here[n] |= bad[__builtin_ctz(w)];
       todo &= ~group;
-      if (n)
-         worlds1 = group;
-      else
-         worlds0 = group;
+      groups[n] = group;
    }
-   {
-      uint32_t fresh_bits = 0, now0 = 0, src0 = 0, now1 = 0, src1 = 0;
-      for (c = 0; c < 32; c++)
-         VBGO_MOTION_BITS(c, c);
-      now[0] = now0, src[0] = src0, now[1] = now1, src[1] = src1, cells[0] = fresh_bits;
-      fresh_bits = now0 = src0 = now1 = src1 = 0;
-      for (; c < VBGO_TT_CELLS; c++)
-         VBGO_MOTION_BITS(c, c - 32);
-      now[0] |= (uint64_t)now0 << 32, src[0] |= (uint64_t)src0 << 32;
-      now[1] |= (uint64_t)now1 << 32, src[1] |= (uint64_t)src1 << 32;
-      cells[0] |= (uint64_t)fresh_bits << 32;
-   }
+   for (c = 0; c < VBGO_TT_CELLS; c++)
+      base |= (uint64_t)(version[c] == fresh) << c;
+   base &= ~(s_obj_cells[slot][b] | s_filled_cells[slot][b]);
 
-   /* (per offset: source columns in cell k0, and in k1 too where they span two) */
    {
-      const uint64_t base = cells[0] & ~(s_obj_cells[slot][b] | s_filled_cells[slot][b]);
-      const uint64_t from_other = s_obj_cells[from][b] | s_filled_cells[from][b];
+      /* (per offset, the cells shown only by worlds that moved by it) */
+      uint64_t only[2] = { 0, 0 };
+      for (c = 0; c < VBGO_TT_CELLS; c++)
+      {
+         const uint32_t shown = vbgo_tt_wcells[c] & ~still;
+         only[0] |= (uint64_t)((shown != 0) & ((shown & ~groups[0]) == 0)) << c;
+         only[1] |= (uint64_t)((shown != 0) & ((shown & ~groups[1]) == 0)) << c;
+      }
       for (g = 0; g < n; g++)
       {
-         const int k0 = d[g] >> 3, k1 = (d[g] + 7) >> 3;
-         const uint64_t from_cells = src[g] & ~from_other;
-         uint64_t ok = now[g] & base & ~bad_here[g];
-         ok &= k0 >= 0 ? from_cells >> k0 : from_cells << -k0;
-         ok &= k1 >= 0 ? from_cells >> k1 : from_cells << -k1;
+         /* (source rows in band b0, and in b1 too where they span two; columns in cell k0, and k1 too) */
+         const int top = (int)b * 8 + e[g], b0 = top >> 3, b1 = (top + 7) >> 3, k0 = d[g] >> 3, k1 = (d[g] + 7) >> 3;
+         uint64_t ok = only[g] & base & ~bad_here[g];
+         int j;
+         if (top < 0 || !BandOfPass(from, b0) || !BandOfPass(from, b1))
+            ok = 0;
+         for (j = 0; j < (b1 != b0 ? 2 : 1) && ok; j++)
+         {
+            const uint64_t from_cells = CellsShownBy(from, j ? b1 : b0, groups[g]);
+            ok &= k0 >= 0 ? from_cells >> k0 : from_cells << -k0;
+            ok &= k1 >= 0 ? from_cells >> k1 : from_cells << -k1;
+         }
          cells[g] = ok, all |= ok;
       }
    }
@@ -1080,11 +1082,13 @@ unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, const int8_t
       for (k = 0; k < 2; k++)
          for (; half[k]; half[k] &= half[k] - 1)
          {
-            int sx;
             uint32_t was0, was1;
+            int sx, top;
             c = k * 32 + (unsigned)__builtin_ctz(half[k]);
-            sx = (int)c * 8 + d[g];
-            was0 = was[(unsigned)sx >> 3], was1 = was[(unsigned)(sx + 7) >> 3];
+            sx = (int)c * 8 + d[g], top = (int)b * 8 + e[g];
+            /* (its first and last source cells: the other two, if any, the renderer checks) */
+            was0 = s_cell_version[from][top >> 3][(unsigned)sx >> 3];
+            was1 = s_cell_version[from][(top + 7) >> 3][(unsigned)(sx + 7) >> 3];
             if (!was0 || !was1) /* (the other pass's cells it shows need versions) */
             {
                unmade |= 1ull << c;
@@ -1095,6 +1099,7 @@ unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, const int8_t
             rec[c].from[1] = was1;
             rec[c].stamp = s_stamp[from];
             rec[c].dx = (int8_t)d[g];
+            rec[c].dy = (int8_t)e[g];
             made++;
          }
    }
@@ -1102,7 +1107,6 @@ unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, const int8_t
    s_motion_noted[slot] |= (uint32_t)(made != 0) << b;
    return made;
 }
-#undef VBGO_MOTION_BITS
 
 bool vbgo_tiletrack_pass_reusable(unsigned src_fb)
 {

@@ -84,7 +84,7 @@ private:
     // Left-eye bands kept from the buffer's last Paint: same drawing version and paint state, no
     // ambiguous tiles. Slow runs' columns are painted again (their surroundings move); the band's
     // bookkeeping is kept, except each column's first run start, which depends on the band above.
-    static constexpr uint64_t kNoKey = ~0ull;
+    static constexpr uint64_t kNoKey = ~0ull, kKeyBits = 0xFFFFFFFFFFFFull;
     // (left eye: kOneRun - no run starts after the first pixel counted; kAutoColumn - a pixel in an automatic ramp's
     // color)
     static constexpr uint64_t kSlowColumn = 1ull << 58, kOneRun = 1ull << 59, kAutoColumn = 1ull << 60;
@@ -95,7 +95,8 @@ private:
     {
         // first pixel counted: run key | row in band << 48 | fade level << 52 | kSlowColumn | kOneRun | kAutoColumn
         uint64_t first = kNoKey;
-        uint64_t last = kNoKey; // the last one's run key
+        // the last one's run key (kKeyBits) | (left eye) a bit per row starting a run after the first << 48
+        uint64_t last = kNoKey;
     };
     // What the kept walk of a column adds to the frame's layer extents and brightness: its bands' first runs that
     // differ from the last run of the band before (made while all its bands are kept; 0 once one is painted)

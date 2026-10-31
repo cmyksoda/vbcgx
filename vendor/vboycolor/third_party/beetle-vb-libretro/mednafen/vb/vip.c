@@ -936,28 +936,31 @@ static uint64 RowColsSince(uint32 r, uint32 since)
    return row->since[1] <= since ? row->cols[0] | row->cols[1] : ~0ull;
 }
 
-/* The cells (bit per 8 columns) of the block being drawn where background world a (left eye, as wide as the screen)
- * may show a map entry written since serial `since`. */
+/* The cells (bit per 8 columns) of the block being drawn where background world a (left eye, read as if as wide as the
+ * screen) may show a map entry written since serial `since` (an H-bias world's rows each at their own offset). */
 static uint64 WorldCellsWritten(const uint16 *a, uint32 since)
 {
+   const bool hbias = ((a[0] >> 12) & 3) == 1;
    const uint32 scx = (a[0] >> 10) & 3, scy = (a[0] >> 8) & 3;
    const uint32 xmask = (512u << scx) - 1, ymask = (512u << scy) - 1;
    const uint16 gy = sign_11_to_s16(a[3]), height = a[8] & 0x3FF;
    const uint16 gp = ParallaxDisabled ? 0 : sign_9_to_s16(a[2]), mp = ParallaxDisabled ? 0 : sign_9_to_s16(a[5]);
    const int32 dest = (int16)sign_10_to_s16((uint16)(sign_11_to_s16(a[1]) - gp));
    /* (screen x shows the map's pixel column (x + off) & xmask) */
-   const uint32 off = (uint32)((int32)(int16)(uint16)(a[4] - mp) - dest);
+   const uint32 row_off = (uint32)((int32)(int16)(uint16)(a[4] - mp) - dest);
    uint64 cells = 0;
    int last_row = -1, y;
    for(y = 0; y < 8; y++)
    {
       const uint16 row_y = DrawingBlock * 8 + y - gy;
-      uint32 sy, base, page, pages[2];
+      uint32 sy, base, page, pages[2], off = row_off;
       int k;
       if(row_y > height)
          continue;
       sy = (uint32)(int32)(int16)(uint16)(a[6] + row_y) & ymask;
-      if((int)(sy >> 3) == last_row)
+      if(hbias)
+         off += (uint32)(int32)(int16)DRAM[((a[9] & 0xFFF0) + row_y * 2) & 0xFFFF];
+      else if((int)(sy >> 3) == last_row)
          continue;
       last_row = sy >> 3;
       base = ((a[0] & 0xF) << 12) | (((sy >> 3) & 0x3F) * 0x40) | (((sy << 3) & ~0xFFFu) << scx);
@@ -983,8 +986,14 @@ static uint64 WorldCellsWritten(const uint16 *a, uint32 since)
    return cells;
 }
 
+/* Whether 8 rows (or columns) from first are all inside a window's span lo..hi (1), all outside it (0), or neither. */
+static INLINE int WindowSide(int first, int lo, int hi)
+{
+   return first >= lo && first + 7 <= hi ? 1 : first + 7 < lo || first > hi ? 0 : -1;
+}
+
 /* VirtualBoyGo: after a block is drawn whole, which of its left eye's cells show only what the other buffer's last pass
- * drew in the block, moved sideways (vbgo_tiletrack_note_motion): known from what drawing reads, not by comparing. */
+ * drew, moved by the camera (vbgo_tiletrack_note_motion): known from what drawing reads, not by comparing. */
 static void NoteBlockMotion(void)
 {
    /* (a block whose last noting made few records, or whose records haven't paid in the renderer lately, is noted again
@@ -992,7 +1001,7 @@ static void NoteBlockMotion(void)
    static bool Few[28];
    const BlockInputs *const src = &Blocks[!DrawingFB][DrawingBlock];
    const uint16 *const cur = &DRAM[0x1D800 >> 1];
-   int8_t dx[32];
+   int8_t dx[32], dy[32];
    uint64_t bad[32];
    uint32 worlds = 0, moved = 0, still = 0;
    int c;
@@ -1016,29 +1025,81 @@ static void NoteBlockMotion(void)
    {
       const int w = __builtin_ctz(worlds);
       const uint16 *const a = cur + w * 16, *const s = src->worlds + w * 16;
-      const int16 d = (int16)(a[4] - s[4]);
+      const int16 d = (int16)(a[4] - s[4]), e = (int16)(a[6] - s[6]);
+      uint32 since = src->drawnAt;
       int k, same = a[0] == s[0];
       for(k = 1; k <= 10 && same; k++)
-         same = k == 4 || a[k] == s[k];
-      if(!same || ((a[0] >> 12) & 3) || (a[0] & 0x80))
+         same = k == 4 || k == 6 || a[k] == s[k];
+      if(!same || ((a[0] >> 12) & 3) > 1)
          continue;
       if(!(a[0] & 0x8000))
       {
-         still |= 1u << w;
+         if(!e && !(a[0] & 0x80) && !(a[0] & 0x3000))
+            still |= 1u << w;
          continue;
       }
+      if(d < -127 || d > 127 || e < -127 || e > 127)
+         continue;
+      bad[w] = 0;
+      if(e)
       {
-         const uint16 gp = ParallaxDisabled ? 0 : sign_9_to_s16(a[2]);
-         const int32 dest = (int16)sign_10_to_s16((uint16)(sign_11_to_s16(a[1]) - gp));
-         if(d < -127 || d > 127 || dest > 0 || dest + (int16)sign_11_to_s16(a[7]) < 383)
+         /* (its rows from other blocks of that pass, as each of them drew it: the window's rows edge neither) */
+         const int gy = (int16)sign_11_to_s16(a[3]), gh = a[8] & 0x3FF;
+         const int top = (int)DrawingBlock * 8 + e, here = WindowSide((int)DrawingBlock * 8, gy, gy + gh);
+         int j;
+         if(top < 0 || top + 7 > 223 || here < 0 || here != WindowSide(top, gy, gy + gh))
+            continue;
+         for(j = 0; j < 2 && same; j++)
+         {
+            const BlockInputs *const sb = &Blocks[!DrawingFB][(top + 7 * j) >> 3];
+            same = sb->valid && GlobalChangedAt <= sb->drawnAt && sb->passAt == src->passAt;
+            for(k = 0; k <= 10 && same; k++)
+               same = sb->worlds[w * 16 + k] == s[k];
+            if(same && sb->drawnAt < since)
+               since = sb->drawnAt;
+         }
+         if(!same)
             continue;
       }
+      if(a[0] & 0x1000)
+      {
+         /* (an H-bias world's lines stay with the screen's rows: each row's offset must be its source row's, neither
+          * written since - their lines then shift with the rest) */
+         const int gy = (int16)sign_11_to_s16(a[3]), gh = a[8] & 0x3FF;
+         int y;
+         for(y = 0; y < 8 && same; y++)
+         {
+            const uint16 row_y = DrawingBlock * 8 + y - gy, from_y = row_y + e;
+            const uint32 at = (a[9] & 0xFFF0) + row_y * 2, from_at = (a[9] & 0xFFF0) + from_y * 2;
+            if(row_y > gh)
+               continue;
+            same = from_y <= gh && DRAM[at & 0xFFFF] == DRAM[from_at & 0xFFFF] &&
+                   RowChangedAt[(at & 0xFFFF) >> 6] <= since && RowChangedAt[(from_at & 0xFFFF) >> 6] <= since;
+         }
+         if(!same)
+            continue;
+      }
+      if(d)
+      {
+         /* (cells whose columns, or their source's, the window's left eye edge passes through) */
+         const uint16 gp = ParallaxDisabled ? 0 : sign_9_to_s16(a[2]);
+         const int x0 = (int16)sign_10_to_s16((uint16)(sign_11_to_s16(a[1]) - gp)), x1 = x0 + (int16)sign_11_to_s16(a[7]);
+         for(c = 0; c < 48; c++)
+         {
+            const int here = WindowSide(c * 8, x0, x1);
+            bad[w] |= (uint64)(here < 0 || here != WindowSide(c * 8 + d, x0, x1)) << c;
+         }
+      }
       dx[w] = (int8_t)d;
-      bad[w] = WorldCellsWritten(a, src->drawnAt);
+      dy[w] = (int8_t)e;
+      bad[w] |= WorldCellsWritten(a, since);
+      /* (an overplane's entry shows wherever its map doesn't reach: written since, it changed them all) */
+      if((a[0] & 0x80) && RowChangedAt[(a[10] & 0xFFFF) >> 6] > since)
+         bad[w] = ~0ull;
       moved |= 1u << w;
    }
    if(moved)
-      Few[DrawingBlock] = vbgo_tiletrack_note_motion(moved, still, dx, bad) < 4;
+      Few[DrawingBlock] = vbgo_tiletrack_note_motion(moved, still, dx, dy, bad) < 4;
 }
 
 static void BeginPass(void)
