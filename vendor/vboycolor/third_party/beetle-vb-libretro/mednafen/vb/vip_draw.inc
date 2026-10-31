@@ -724,8 +724,8 @@ static inline __attribute__((always_inline)) int VbgoBackTile(uint8 *px, uint32_
  return tagged;
 }
 
-/* One ordinary background world's rows of the block, for one eye, a character at a time: what DrawBG draws row by row, pixel for
- * pixel and tag for tag, but the up to 8 rows that share a map row read each map entry once. */
+/* One ordinary or H-bias background world's rows of the block, for one eye, a character at a time: what DrawBG draws row by row,
+ * pixel for pixel and tag for tag, but the up to 8 rows that share a map row (and an H-bias shift) read each map entry once. */
 static VBGO_NOINLINE void DrawBGBlock(uint8 *fb_eye, unsigned block_no, bool lr, const VbgoWorldAttr *a)
 {
  const uint16 *CHR16 = CHR_RAM;
@@ -757,7 +757,14 @@ static VBGO_NOINLINE void DrawBGBlock(uint8 *fb_eye, unsigned block_no, bool lr,
  if(final_x > ClipX1)
   final_x = ClipX1;
  if(start_x > final_x)
+ {
+  /* (DrawBG's caller reads an H-bias row's shift even so) */
+  for(y = 0; a->bgm == 1 && y < 8; y++)
+   if((uint16)((block_no * 8 + y) - a->gy) <= a->window_height)
+    USE_ROW(a->param_base + (((uint16)((block_no * 8 + y) - a->gy) * 2) | lr));
   return;
+ }
+ SourceX -= (uint32)(int32)(int16)srcX; /* (what the window and the clip add to a row's source x) */
 
  while(y < 8)
  {
@@ -766,6 +773,7 @@ static VBGO_NOINLINE void DrawBGBlock(uint8 *fb_eye, unsigned block_no, bool lr,
   uint16_t *crow[8];
   unsigned sy7[8];
   int n = 0;
+  uint16 row_srcX = srcX;
   uint32 SourceY = 0, BGMap_Base, used_chr = 0xFFFF;
   int32 x;
   uint32 sx;
@@ -776,10 +784,19 @@ static VBGO_NOINLINE void DrawBGBlock(uint8 *fb_eye, unsigned block_no, bool lr,
    break;
   for(; y < 8 && (uint16)((block_no * 8 + y) - a->gy) <= a->window_height; y++)
   {
-   const uint16 srcY = a->my + ((uint16)(block_no * 8 + y) - a->gy);
+   const uint16 row_y = (uint16)((block_no * 8 + y) - a->gy);
+   const uint16 srcY = a->my + row_y;
    const uint32 sy = ((uint32)(int32)(int16)srcY) & SourceY_Mask;
    if(n && (sy >> 3) != (SourceY >> 3))
     break;
+   if(a->bgm == 1)
+   {
+    const uint16 shifted = srcX + (int16)DRAM[(a->param_base + ((row_y * 2) | lr)) & 0xFFFF];
+    if(n && shifted != row_srcX)
+     break;
+    USE_ROW(a->param_base + ((row_y * 2) | lr));
+    row_srcX = shifted;
+   }
    SourceY = sy;
    tgt[n] = fb_eye + y * 512;
    trow[n] = vbgo_tt_row(tgt[n]);
@@ -796,7 +813,7 @@ static VBGO_NOINLINE void DrawBGBlock(uint8 *fb_eye, unsigned block_no, bool lr,
   }
 
   x = start_x;
-  sx = SourceX;
+  sx = (uint32)(int32)(int16)row_srcX + SourceX;
   while(x <= final_x)
   {
    unsigned cell, offset, run, i;
@@ -1001,7 +1018,7 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
     }
    }
   }
-  else if(bgm == 0 && !over && vbgo_tt_on)
+  else if(bgm <= 1 && !over && vbgo_tt_on)
   {
    for(lr = 0; lr < 2; lr++)
     if(lron[lr])
