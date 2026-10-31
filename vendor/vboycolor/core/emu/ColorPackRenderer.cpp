@@ -1192,6 +1192,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             for (unsigned i = 0; i < 2048 / 32; ++i)
                 anyBits |= markerSlots[i];
             const bool any = anyBits != 0;
+            uint32_t spriteSlots[2048 / 32], boundSlots[2048 / 32];
+            const bool bound = MarkerSlotKinds(spriteSlots, boundSlots);
             // Band by band, where the drawing used a marker's tile (a grid cell's pixels still in column
             // order); kept cells as they came out when they were last painted.
             for (uint32_t band = 0; band < static_cast<uint32_t>(kBands); ++band)
@@ -1226,9 +1228,18 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         continue;
                 }
                 const uint32_t bandKey = v.band_key[band];
-                // (without layer-bound groups only sprites' markers count: cells without a sprite add none)
+                // (where no tile the band uses has layer-bound markers only sprites' markers count: cells without a
+                // sprite add none)
+                bool boundHere = bound;
+                if (bound && v.band_chr)
+                {
+                    uint32_t used = 0;
+                    for (unsigned i = 0; i < 2048 / 32; ++i)
+                        used |= v.band_chr[band * (2048 / 32) + i] & boundSlots[i];
+                    boundHere = used != 0;
+                }
                 const uint64_t spriteCells =
-                    m_layerBound.Any() || !v.tagged || !v.obj_cells ? ~0ull : v.obj_cells[band] & v.tagged[band];
+                    boundHere || !v.tagged || !v.obj_cells ? ~0ull : v.obj_cells[band] & v.tagged[band];
                 for (uint32_t gx = 0; gx < static_cast<uint32_t>(kGridW); ++gx)
                 {
                     // (an untagged cell's tags are all 0)
