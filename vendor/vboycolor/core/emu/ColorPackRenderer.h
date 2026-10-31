@@ -430,6 +430,8 @@ private:
     bool LateMarkersCovered() const;
     void CopyMarkers(unsigned to, unsigned from);
     std::array<ContextGroupBits, 2048> m_slotMarkers{}; // per slot: the context groups its tile is a marker of
+    // The marker slots (bit per slot) with sprites' groups, and with layer-bound ones: whether any has the latter.
+    bool MarkerSlotKinds(uint32_t (&sprite)[2048 / 32], uint32_t (&bound)[2048 / 32]) const;
     std::array<bool, 2048> m_slotHasMarkers{};
     // (ResolveSlots' compact copies of the slots' hashes and flags, bit per slot: a frame's checks stay in cache)
     std::array<uint32_t, 2048> m_slotHashes{};

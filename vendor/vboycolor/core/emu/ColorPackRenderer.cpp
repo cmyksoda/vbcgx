@@ -743,6 +743,24 @@ int ColorPackRenderer::LeftX(const uint64_t tag, int x, unsigned eye, unsigned y
     return x - m_rightShift[world];
 }
 
+bool ColorPackRenderer::MarkerSlotKinds(uint32_t (&sprite)[2048 / 32], uint32_t (&bound)[2048 / 32]) const
+{
+    bool any = false;
+    for (unsigned i = 0; i < 2048 / 32; ++i)
+    {
+        sprite[i] = m_markerSlots[i], bound[i] = 0;
+        for (uint32_t s = m_layerBound.Any() ? m_markerSlots[i] : 0; s; s &= s - 1)
+        {
+            const unsigned chr = i * 32 + static_cast<unsigned>(__builtin_ctz(s));
+            if (!(m_slotMarkers[chr] & ~m_layerBound).Any())
+                sprite[i] &= ~(1u << (chr & 31));
+            if ((m_slotMarkers[chr] & m_layerBound).Any())
+                bound[i] |= 1u << (chr & 31), any = true;
+        }
+    }
+    return any;
+}
+
 void ColorPackRenderer::Near(int x, int y, unsigned world, ContextGroupBits &near, ContextGroupBits &close)
 {
     // Layer-bound markers on this pixel's layer within reach, this frame and the last two (in left-eye terms),
@@ -1764,21 +1782,25 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
             if (keepRight[b] & (v.band_key[b] ? rightBands[b].unreached : ~rightBands[b].unreached))
                 return false;
-        // (without layer-bound groups only sprites' marker pixels add markers, each at its left-eye cell: added here as
-        // the walk would, kept cells too - the walk reads those again)
-        const bool spriteMarks = !m_layerBound.Any() && v.tagged && v.obj_cells;
-        for (unsigned b = 0; markers && !spriteMarks && b < static_cast<unsigned>(kBands); ++b)
+        // (sprites' marker pixels add markers, each at its left-eye cell: added here as the walk would, kept cells too
+        // - the walk reads those again; a background tile's layer-bound ones also set a cell's layer: walked instead)
+        const bool spriteMarks = v.tagged && v.obj_cells;
+        uint32_t spriteSlots[2048 / 32], boundSlots[2048 / 32];
+        const bool bound = MarkerSlotKinds(spriteSlots, boundSlots);
+        for (unsigned b = 0; markers && (!spriteMarks || bound) && b < static_cast<unsigned>(kBands); ++b)
         {
+            const uint32_t *slots = spriteMarks ? boundSlots : m_markerSlots;
             uint32_t used = 0;
             for (unsigned i = 0; i < 2048 / 32; ++i)
-                used |= v.band_chr[b * (2048 / 32) + i] & m_markerSlots[i];
+                used |= v.band_chr[b * (2048 / 32) + i] & slots[i];
             for (unsigned x = 0; used && x < VBGO_TT_WIDTH; ++x)
                 if (const uint32_t *column = v.columns[x])
                     for (unsigned y = b * 8; y < b * 8 + 8; ++y)
                     {
                         const uint32_t lo = column[y];
                         const unsigned chr = VBGO_TAG_CHAR(lo);
-                        if (!vbgo_tag_drawn(lo, v.band_key[b]) || !m_slotHasMarkers[chr])
+                        if (!vbgo_tag_drawn(lo, v.band_key[b]) || !m_slotHasMarkers[chr] ||
+                            (spriteMarks && VBGO_TAG_IS_OBJ(lo)))
                             continue;
                         if ((m_slotMarkers[chr] & (VBGO_TAG_IS_OBJ(lo) ? ~m_layerBound : m_layerBound)).Any())
                         {
@@ -1802,7 +1824,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         {
             uint32_t used = 0;
             for (unsigned i = 0; spriteMarks && markers && i < 2048 / 32; ++i)
-                used |= v.band_chr[b * (2048 / 32) + i] & m_markerSlots[i];
+                used |= v.band_chr[b * (2048 / 32) + i] & spriteSlots[i];
             const uint32_t bandKey = v.band_key[b];
             const uint64_t spriteCells = v.tagged && v.obj_cells ? v.obj_cells[b] & v.tagged[b] : kAllCells;
             for (uint64_t cells = bandKey ? spriteCells : 0; cells && (used || spriteWorlds); cells &= cells - 1)
@@ -1827,7 +1849,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         {
                             runLo = lo;
                             runDrawn = vbgo_tag_drawn(lo, bandKey);
-                            runMarks = used && m_slotHasMarkers[VBGO_TAG_CHAR(lo)];
+                            runMarks = used && (spriteSlots[VBGO_TAG_CHAR(lo) >> 5] >> (lo & 31) & 1);
                             runWorld = 1u << VBGO_TAG_WORLD(lo);
                         }
                         const bool marks = runMarks, pair = (spriteWorlds & runWorld) != 0;
@@ -1842,7 +1864,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                             if (lx >= 0 && lx < VBGO_TT_WIDTH)
                             {
                                 const unsigned cell = b * kGridW + (static_cast<unsigned>(lx) >> 3);
-                                markers[cell] |= m_slotMarkers[VBGO_TAG_CHAR(lo)]; // (no layer-bound groups)
+                                markers[cell] |= m_slotMarkers[VBGO_TAG_CHAR(lo)] & ~m_layerBound;
                                 NoteMarkerCell(cell);
                                 doneLo = lo & kRunMaskLo, doneHi = hi;
                             }
