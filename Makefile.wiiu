@@ -29,7 +29,7 @@ EXECUTABLES	:=	executables
 SOURCES		:=	source source/libgui source/utils source/utils/sz \
 				source/drivers source/drivers/wut source/drivers/wut/shaders
 INCLUDES	:=	source vendor/vboycolor/third_party/beetle-vb-libretro/libretro-common/include vendor/vboycolor/core
-DATA		:=	data/images data/sounds data/fonts data/lang
+DATA		:=	data/images_hd data/sounds data/fonts data/lang
 
 #---------------------------------------------------------------------------------
 # options for code generation

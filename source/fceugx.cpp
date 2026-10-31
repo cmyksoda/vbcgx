@@ -55,6 +55,11 @@ int main(int argc, char **argv)
     PlatformConfig config;
     config.canvasWidth = 640;
     config.canvasHeight = 480;
+#ifdef __WIIU__
+    // (data/images_hd: drawn for 1920x1080, which is 3x the 640x480 menu across and 2.25x down)
+    config.assetScaleX = 3.0f;
+    config.assetScaleY = 2.25f;
+#endif
     platform->init(config);
     platform->setSaveHandler(SaveAppData);
 #ifdef __WIIU__
