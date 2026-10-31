@@ -15,7 +15,13 @@
 
 #include "drivers/InputDriver.h"
 #include "drivers/FileSystemDriver.h"
+#ifdef __WIIU__
+#include <stdint.h>
+typedef uint32_t u32; // (libogc's names, which the shared code uses)
+typedef int64_t s64;
+#else
 #include <gccore.h>
+#endif
 
 #define APPNAME			"VBoy Color GX"
 #define APPVERSION		"1.2.0"

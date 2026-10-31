@@ -11,3 +11,6 @@ AGENTS.*
 CLAUDE.*
 
 __pycache__/
+build_wiiu/
+build-core-wiiu/
+build_wiiu-log/

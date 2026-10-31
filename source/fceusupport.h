@@ -8,7 +8,10 @@
  * FCEU Support Functions
  ****************************************************************************/
 #pragma once
+#include <stdint.h>
+#ifndef __WIIU__
 #include <gccore.h>
+#endif
 #include <libretro.h>
 extern bool romLoaded;
 extern unsigned char *nesrom;

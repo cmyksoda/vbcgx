@@ -21,9 +21,16 @@
 #include "libgui/Gui.h"
 #include "drivers/Platform.h"
 #include "drivers/Thread.h"
+#ifdef __WIIU__
+#include "drivers/Logger.h"
+#include "drivers/wut/WutPlatform.h"
+static WutPlatform platformInstance;
+bool vbgo_jit_attach(void);
+#else
 #include "drivers/ogc/wii/WiiPlatform.h"
 #include "drivers/ogc/wii/mem2.h"
 static WiiPlatform platformInstance;
+#endif
 Platform *platform = &platformInstance;
 AppRequest appRequest = AppRequest::NONE;
 char appPath[MAXPATHLEN] = {};
@@ -50,6 +57,11 @@ int main(int argc, char **argv)
     config.canvasHeight = 480;
     platform->init(config);
     platform->setSaveHandler(SaveAppData);
+#ifdef __WIIU__
+    // (this thread runs the game, and the recompiler's code area belongs to the core it claims it from)
+    if (!vbgo_jit_attach())
+        LOG_WARN("[JIT] no codegen area: every game runs in the interpreter");
+#endif
     InitFileOpThreads();
     MountAllFAT();
     GuiImageData::setDecodeScratch(malloc(IMAGE_DECODE_SCRATCH_SIZE), IMAGE_DECODE_SCRATCH_SIZE);
@@ -61,7 +73,9 @@ int main(int argc, char **argv)
     ApplySettings();
     platform->getVideo()->startMenuVideo();
     if (argc && argv[0]) CreateAppPath(argv[0]);
+#ifndef __WIIU__
     InitMem2Manager();
+#endif
     savebuffer = (unsigned char *)memalign(FILE_BUFFER_ALIGN, SAVEBUFFERSIZE);
     browserList = (BROWSERENTRY *)memalign(32, sizeof(BROWSERENTRY) * MAX_BROWSER_SIZE);
     nesrom = (unsigned char *)memalign(FILE_BUFFER_ALIGN, 16 * 1024 * 1024);
