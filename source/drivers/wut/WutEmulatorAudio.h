@@ -10,6 +10,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <coreinit/spinlock.h>
 #include <coreinit/time.h>
 #include <sndcore2/voice.h>
 #include "../EmulatorAudioDriver.h"
@@ -37,13 +38,17 @@ class WutEmulatorAudio : public EmulatorAudioDriver
 		void shutdown();
 
 		//! AX app-frame callback (fires every ~3ms). Retires played samples
-		//! from the ring and applies underrun/restart hysteresis.
+		//! from the ring, and stops the voices once they reach the silence after a dry queue.
 		void onAppFrame();
 
 	private:
 		void configureVoice(AXVoice* v, int16_t* ringBuf, bool isLeft);
 		void startVoices();
 		void stopVoices();
+		void copyIn(uint32_t pos, const int32_t* buffer, uint32_t count);
+		void writeTail(uint32_t pos);
+		void easeIn(uint32_t pos, uint32_t count);
+		void flush(uint32_t pos, uint32_t count);
 
 		AXVoice* voiceL = nullptr;
 		AXVoice* voiceR = nullptr;
@@ -53,21 +58,26 @@ class WutEmulatorAudio : public EmulatorAudioDriver
 		// The Virtual Boy's 50.27 Hz frames are paced by sound: playSound waits while this many samples are queued
 		static constexpr uint32_t MAX_QUEUED_SAMPLES = 4000;
 
+		// Past the newest sample the ring holds a tail: a fade to zero, then silence for the
+		// voices to stop in, a few AX frames after a dry queue reaches it
+		static constexpr uint32_t FADE_SAMPLES = 64;
+		static constexpr uint32_t TAIL_SAMPLES = 1024;
+		static_assert(MAX_QUEUED_SAMPLES + TAIL_SAMPLES <= RING_SAMPLES, "the tail must never reach unplayed samples");
+
 		alignas(32) int16_t ringL[RING_SAMPLES];
 		alignas(32) int16_t ringR[RING_SAMPLES];
 
-		// Software-owned queue depth: playSound() (producer, called from the
-		// emulation loop) increments this, and the AX frame callback
-		// (consumer) decrements it by one frame period per tick.
+		// Shared by playSound (the emulation loop) and onAppFrame (AX), only under this lock
+		OSSpinLock lock;
 		uint32_t writePos = 0;
-		volatile uint32_t queuedFrames = 0;
-		volatile bool voiceRunning = false;
-		volatile OSTime lastDrain = 0;
+		// Samples the voices have yet to play; below zero, how far they have played into the tail
+		int32_t queued = 0;
+		uint32_t easeInLeft = 0;
+		bool voiceRunning = false;
+		OSTime lastDrain = 0;
+
 		bool stallLogged = false;
 		int samplerate = 0;
-
-		// Hysteresis thresholds, derived from the real AX frame size so
-		// they stay correct if the renderer mode ever changes.
-		uint32_t minFrames = 0;   // stop the voices once buffered content drops below this (starving)
-		uint32_t loadFrames = 0;  // don't restart until buffered back up to this
+		uint32_t frameSamples = 0; // what AX plays per frame
+		uint32_t loadFrames = 0;   // a stopped queue restarts once it holds this many
 };
