@@ -1881,7 +1881,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             return (worldsDrawn >> k & 1) && left[k] <= x0 && right[k] >= x1 &&
                    (!(top[k] > b * 8 || bottom[k] < b * 8 + 7) || right[k] - left[k] >= kSizedByWidth);
         };
-        auto covered = [&](unsigned w, int b, int x0, int x1) __attribute__((noinline)) {
+        auto covered = [&](unsigned w, int b, int x0, int x1) {
             const int p = pairs ? m_pairOfRight[w] : -1;
             return reached(w, b, x0, x1) && (p < 0 || (wanted >> p & 1));
         };
