@@ -84,7 +84,7 @@ private:
     // Left-eye bands kept from the buffer's last Paint: same drawing version and paint state, no
     // ambiguous tiles. Slow runs' columns are painted again (their surroundings move); the band's
     // bookkeeping is kept, except each column's first run start, which depends on the band above.
-    static constexpr uint64_t kNoKey = ~0ull;
+    static constexpr uint64_t kNoKey = ~0ull, kKeyBits = 0xFFFFFFFFFFFFull;
     // (left eye: kOneRun - no run starts after the first pixel counted; kAutoColumn - a pixel in an automatic ramp's
     // color)
     static constexpr uint64_t kSlowColumn = 1ull << 58, kOneRun = 1ull << 59, kAutoColumn = 1ull << 60;
@@ -95,7 +95,8 @@ private:
     {
         // first pixel counted: run key | row in band << 48 | fade level << 52 | kSlowColumn | kOneRun | kAutoColumn
         uint64_t first = kNoKey;
-        uint64_t last = kNoKey; // the last one's run key
+        // the last one's run key (kKeyBits) | (left eye) a bit per row starting a run after the first << 48
+        uint64_t last = kNoKey;
     };
     // What the kept walk of a column adds to the frame's layer extents and brightness: its bands' first runs that
     // differ from the last run of the band before (made while all its bands are kept; 0 once one is painted)
@@ -460,7 +461,7 @@ private:
     std::vector<ContextGroupBits> m_nearSprites;
     // (Paint's scratch for those)
     std::array<ContextGroupBits, kGridW * kGridH> m_gridRows, m_gridCloseRows, m_gridHere;
-    std::vector<uint16_t> m_spreadCells; // (the cells those reached last frame; all of them if m_spreadAll)
+    std::array<uint64_t, kGridH> m_spreadRows{}; // (per row, a bit per cell those reached last frame; all if m_spreadAll)
     // With layer-bound groups only sprites' context tiles ask, so the cells
     // with markers are kept and a cell's groups worked out when asked (once a frame).
     std::vector<std::pair<uint16_t, ContextGroupBits>> m_spriteSources;
@@ -470,7 +471,6 @@ private:
     std::array<uint32_t, kGridW * kGridH> m_spriteNearAt{};
     void SpriteNear(unsigned i, ContextGroupBits &near, ContextGroupBits &close);
     bool m_spreadAll = true;
-    std::array<uint8_t, kGridW * kGridH> m_spreadMark{};
     std::vector<ContextGroupBits> m_closeSprites; // (the same, within one cell)
 
     // Auto mode, what no tile drew (the game's CPU wrote it into the frame

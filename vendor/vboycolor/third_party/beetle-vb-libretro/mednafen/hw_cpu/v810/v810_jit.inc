@@ -79,6 +79,7 @@ public:
    void Extsb(unsigned ra, unsigned rs) { X(rs, ra, 0, 954); }
    void Extsh(unsigned ra, unsigned rs) { X(rs, ra, 0, 922); }
    void Lwzx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 23); }
+   void Lhzx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 279); }
    void Lbzx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 87); }
    void Lhbrx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 790); }
    void Lwbrx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 534); }
@@ -112,6 +113,7 @@ public:
    void Mfctr(unsigned rt) { Mfspr(rt, 9); }
    void Mtctr(unsigned rs) { Mtspr(9, rs); }
    void Blr() { Word(0x4E800020); }
+   void Bclr(unsigned bo, unsigned bi) { Word(19u << 26 | bo << 21 | bi << 16 | 16u << 1); }
    void Blrl() { Word(0x4E800021); }
    /* b / bl to code already written */
    void BTo(const uint32 *to, unsigned link = 0) { Word(BranchWord(at, to, link)); }
@@ -451,6 +453,21 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       for(unsigned k = 0; k < 6; ++k)
       {
          JitStub[JIT_STUB_READ8 + k] = w.at;
+         if(k >= 3)
+         {
+            /* A store's first cycle, its address's alignment and its value's width: here, not at every store. */
+            uint32 *const bdz = w.Bdz();
+            w.Patch(bdz, w.at);
+            if(k == 3)
+               w.Rlwinm(5, 5, 0, 24, 31);
+            else if(k == 4)
+            {
+               w.Rlwinm(4, 4, 0, 0, 30);
+               w.Rlwinm(5, 5, 0, 16, 31);
+            }
+            else
+               w.Rlwinm(4, 4, 0, 0, 29);
+         }
          if(k < 3)
          {
             /* A frame buffer read has no side effects: its bytes straight from FB, no call. */
@@ -520,6 +537,31 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          w.Lwz(0, 20, 1);
          w.Mtlr(0);
          w.Addi(1, 1, 16);
+         w.Blr();
+      }
+      for(unsigned word = 0; word < 2; ++word)
+      {
+         /* CR0 EQ if a halfword or word write leaves VIP DRAM (region 0, 0x20000 - 0x3FFFF) as it was: it changes
+          * nothing VIP_Write16 tracks (games copy their unchanged maps and sprites in every frame). */
+         JitStub[JIT_STUB_SAME16 + word] = w.at;
+         w.Rlwinm(0, 4, 15, 22, 31);
+         w.Cmplwi(0, 1);
+         w.Bclr(BO_FALSE, CR_EQ);
+         w.Rlwinm(6, 4, 0, 15, word ? 29 : 30);
+         w.Imm32(7, (uint32)(uintptr_t)VIP_DramBase());
+         if(word)
+         {
+            /* (its first halfword is its low one: in DRAM's halfwords as the Wii loads them, the high one) */
+            w.Lwzx(0, 7, 6);
+            w.Rlwinm(6, 5, 16, 0, 31);
+            w.Cmpw(0, 6);
+         }
+         else
+         {
+            w.Lhzx(0, 7, 6);
+            w.Rlwinm(6, 5, 0, 16, 31);
+            w.Cmpw(0, 6);
+         }
          w.Blr();
       }
       while((w.at - JitCode) & 7)
@@ -1034,7 +1076,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
             w.Sthbrx(5, JR_RAM, 7);
          else
             w.Stwbrx(5, JR_RAM, 7);
-         uint32 *onward = NULL;
+         uint32 *onward = NULL, *const cycles = w.at;
          for(int path = 0; path < 2; ++path)
          {
             if(path)
@@ -1043,12 +1085,11 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
                Cold();
                w.Patch(slow, w.at);
                if(clear)
-                  w.Rlwinm(4, 4, 0, 0, 31 - clear);
-               if(op.kind == BK_ST_B)
-                  w.Rlwinm(5, 5, 0, 24, 31);
-               else if(op.kind == BK_ST_H)
-                  w.Rlwinm(5, 5, 0, 16, 31);
-               FirstCycle();
+               {
+                  /* (VIP DRAM left as it was: the work RAM path's cycles; a call keeps each store's code short) */
+                  w.BTo(JitStub[word ? JIT_STUB_SAME32 : JIT_STUB_SAME16], 1);
+                  w.Patch(w.Bc(BO_TRUE, CR_EQ), cycles);
+               }
                w.BTo(JitStub[op.kind == BK_ST_B   ? JIT_STUB_WRITE8
                              : op.kind == BK_ST_H ? JIT_STUB_WRITE16
                                                   : JIT_STUB_WRITE32],

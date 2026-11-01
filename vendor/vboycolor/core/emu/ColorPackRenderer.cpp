@@ -390,7 +390,7 @@ uint8_t ColorPackRenderer::MakeSummary(ColumnSummary &summary, const BandColumn 
                     summary.bottom[i] = std::max<uint8_t>(summary.bottom[i], static_cast<uint8_t>(row));
             }
         }
-        runKey = here.last;
+        runKey = here.last & kKeyBits;
     }
     return 1;
 }
@@ -1409,10 +1409,14 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 std::fill(m_closeSprites.begin(), m_closeSprites.end(), ContextGroupBits{});
             }
             else
-                for (const uint16_t i : m_spreadCells)
-                    m_nearSprites[i] = m_closeSprites[i] = ContextGroupBits{};
+                for (int y = 0; y < kGridH; ++y)
+                    for (uint64_t cells = m_spreadRows[y]; cells; cells &= cells - 1)
+                    {
+                        const int i = y * kGridW + __builtin_ctzll(cells);
+                        m_nearSprites[i] = m_closeSprites[i] = ContextGroupBits{};
+                    }
             m_spreadAll = false;
-            m_spreadCells.clear();
+            m_spreadRows.fill(0);
             for (int k = 0; k < sourceCount; ++k)
             {
                 const int i = sources[k], gx = i % kGridW, gy = i / kGridW;
@@ -1423,27 +1427,28 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     if (bits.w[j])
                         word = j, ++words;
                 const uint64_t only = bits.w[word];
+                const int x0 = std::max(0, gx - kContextReach), x1 = std::min(kGridW - 1, gx + kContextReach);
+                const uint64_t span = ((2ull << x1) - 1) & ~((1ull << x0) - 1);
                 for (int y = std::max(0, gy - kContextReach); y <= std::min(kGridH - 1, gy + kContextReach); ++y)
-                    for (int x = std::max(0, gx - kContextReach); x <= std::min(kGridW - 1, gx + kContextReach); ++x)
+                {
+                    ContextGroupBits *const row = &m_nearSprites[y * kGridW];
+                    m_spreadRows[y] |= span;
+                    if (words <= 1)
+                        for (int x = x0; x <= x1; ++x)
+                            row[x].w[word] |= only;
+                    else
+                        for (int x = x0; x <= x1; ++x)
+                            row[x] |= bits;
+                }
+                for (int y = std::max(0, gy - 1); y <= std::min(kGridH - 1, gy + 1); ++y)
+                    for (int x = std::max(0, gx - 1); x <= std::min(kGridW - 1, gx + 1); ++x)
                     {
-                        const int t = y * kGridW + x;
-                        if (!m_spreadMark[t])
-                            m_spreadMark[t] = 1, m_spreadCells.push_back(static_cast<uint16_t>(t));
-                        const bool close = std::abs(x - gx) <= 1 && std::abs(y - gy) <= 1;
                         if (words <= 1)
-                        {
-                            m_nearSprites[t].w[word] |= only;
-                            if (close)
-                                m_closeSprites[t].w[word] |= only;
-                            continue;
-                        }
-                        m_nearSprites[t] |= bits;
-                        if (close)
-                            m_closeSprites[t] |= bits;
+                            m_closeSprites[y * kGridW + x].w[word] |= only;
+                        else
+                            m_closeSprites[y * kGridW + x] |= bits;
                     }
             }
-            for (const uint16_t i : m_spreadCells)
-                m_spreadMark[i] = 0;
         }
         else
         {
@@ -1917,7 +1922,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             return (worldsDrawn >> k & 1) && left[k] <= x0 && right[k] >= x1 &&
                    (!(top[k] > b * 8 || bottom[k] < b * 8 + 7) || right[k] - left[k] >= kSizedByWidth);
         };
-        auto covered = [&](unsigned w, int b, int x0, int x1) __attribute__((noinline)) {
+        auto covered = [&](unsigned w, int b, int x0, int x1) {
             const int p = pairs ? m_pairOfRight[w] : -1;
             return reached(w, b, x0, x1) && (p < 0 || (wanted >> p & 1));
         };
@@ -2330,9 +2335,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                             if (first != runKey)
                                 countRun(first, x, b * 8 + (here.first >> 48 & 7),
                                          static_cast<unsigned>(here.first >> 52 & 63), nullptr, 0);
-                            runKey = here.last;
-                            runHi = vbgo_tag_key_hi(here.last);
-                            runLo = vbgo_tag_lo(here.last) & kRunMaskLo;
+                            runKey = here.last & kKeyBits;
+                            runHi = vbgo_tag_key_hi(runKey);
+                            runLo = vbgo_tag_lo(runKey) & kRunMaskLo;
                             runSetUp = false;
                             continue;
                         }
@@ -2506,7 +2511,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                                          (contextCompared && !(reach[b] >> c & 1)));
         }
 
-        // (a cell's kept near / close groups are clear unless it or the frame has any: the frame's are m_spreadCells,
+        // (a cell's kept near / close groups are clear unless it or the frame has any: the frame's are m_spreadRows,
         // or every cell if it spread everywhere - only those cells are looked at)
         auto contextCell = [&](unsigned b, unsigned c) {
             CellMarks &cell = bands[b].marks[c];
@@ -2530,13 +2535,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             else
             {
                 std::memcpy(contextSame, keptCell, sizeof(contextSame));
-                uint64_t todo[kBands];
                 for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-                    todo[b] = bands[b].nearAny;
-                for (const uint16_t i : m_spreadCells)
-                    todo[i / kGridW] |= 1ull << (i % kGridW);
-                for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-                    for (uint64_t w = todo[b]; w; w &= w - 1)
+                    for (uint64_t w = bands[b].nearAny | m_spreadRows[b]; w; w &= w - 1)
                         contextCell(b, static_cast<unsigned>(__builtin_ctzll(w)));
             }
         }
@@ -2550,13 +2550,14 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         const size_t rowBytes = static_cast<size_t>(fbWidth) * 4;
 
         // Cells the camera only moved since the other buffer's pass, as the other picture shows them (see
-        // vbgo_tt_motion): copied with their columns' bookkeeping where painting would come out the same - a single run
-        // down each column (its start is all the kept walk replays), nothing slow, ambiguous or faded from copies.
+        // vbgo_tt_motion): copied where painting would come out the same - nothing slow, ambiguous or faded from copies -
+        // with their columns' bookkeeping as painting them would make it.
         const int otherBuffer = buffer ^ 1;
         const std::array<Band, kBands> &from = m_bands[0][otherBuffer];
         const auto &fromColumns = m_bandColumns[0][otherBuffer];
         const auto &fromActive = m_bandsActive[0][otherBuffer];
-        uint32_t copyBands = 0; // (bands whose cells may be copied)
+        uint32_t copyBands = 0;   // (bands whose cells may be copied)
+        uint32_t sourceBands = 0; // (bands of the other picture painted as this one is)
         std::array<uint32_t, kBands> fromMoved{}; // (per band, the worlds whose colors moved since the other picture's)
         uint64_t recorded = 0; // (whether some band's cell may have a motion record)
         for (unsigned b = 0; v.motion_cells && b < static_cast<unsigned>(kBands); ++b)
@@ -2571,79 +2572,210 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             const uint32_t *ambiguous = pack ? m_ambiguousSlots : kNoSlots;
             for (unsigned b = 0; sameColors && b < static_cast<unsigned>(kBands); ++b)
             {
+                if (from[b].state == m_paintState && from[b].clut == v.clut)
+                {
+                    sourceBands |= 1u << b;
+                    fromMoved[b] = WorldsMovedSince(from[b].worldsState);
+                }
                 if (!v.motion_cells[b])
                     continue;
                 uint32_t ambiguousHere = 0;
                 for (unsigned i = 0; i < 2048 / 32; ++i)
                     ambiguousHere |= v.band_chr[b * (2048 / 32) + i] & ambiguous[i];
-                if (from[b].state != m_paintState || from[b].clut != v.clut || ambiguousHere || !v.band_key[b])
+                if (ambiguousHere || !v.band_key[b])
                     continue;
                 copyBands |= 1u << b;
-                fromMoved[b] = WorldsMovedSince(from[b].worldsState);
             }
         }
         const bool claimRows = !((reinterpret_cast<uintptr_t>(frame) | rowBytes | eyeOffset[0] * 4) & 31);
         uint32_t heldBands = v.motion_noted; // (bands given records by the pass, or with a record that holds)
-        auto copyCell = [&](unsigned b, unsigned c) {
+
+        // (a copied column's runs after its first are counted into its cell, and layer pairs' tiles noted, as painting
+        // does; copies need every column's colors the same, so one table serves all)
+        const EyeColumn copyColors(eyeBits, eyeClut, 0);
+        const LitRows copyLit(copyColors);
+        auto notePair = [&](unsigned b, unsigned c, uint32_t tag) {
+            const int pair = pairs ? m_pairOfLeft[VBGO_TAG_WORLD(tag)] : -1;
+            if (pair >= 0)
+            {
+                NoteLeftPair(VBGO_TAG_CHAR(tag), 1u << pair);
+                notePairSlot(bands[b].pairSlots, static_cast<uint64_t>(c) << 32 | VBGO_TAG_CHAR(tag) | 1u << pair << 11);
+            }
+        };
+        // (a copied cell's later run starts, as countRun counts them into its sums: a world's in a row gathered and
+        // written once - min, max and or come out the same in any order)
+        struct CopiedStarts
+        {
+            unsigned colors = ~0u, left = 7, right = 0, top = 7, bottom = 0, level = 0;
+        };
+        auto flushStarts = [&](CopiedStarts &s, CellSums &sums, unsigned at) __attribute__((always_inline)) {
+            if (s.colors != ~0u)
+            {
+                uint16_t &extent = sums.extent[s.colors][at];
+                if (!(sums.worlds[at] >> s.colors & 1))
+                {
+                    sums.worlds[at] |= 1u << s.colors;
+                    extent = static_cast<uint16_t>(s.left << 9 | s.right << 6 | s.top << 3 | s.bottom);
+                }
+                else
+                {
+                    const unsigned e = extent;
+                    extent = static_cast<uint16_t>(std::min(s.left, e >> 9) << 9 | std::max(s.right, e >> 6 & 7) << 6 |
+                                                   std::min(s.top, e >> 3 & 7) << 3 | std::max(s.bottom, e & 7));
+                }
+            }
+            s.colors = ~0u, s.left = 7, s.right = 0, s.top = 7, s.bottom = 0;
+        };
+        auto countStarts = [&](uint32_t x, unsigned b, uint32_t starts, CopiedStarts &s)
+                               __attribute__((always_inline)) {
+            const uint32_t *tags = v.columns[x] + b * 8;
+            const uint32_t eyeBand = eyeBits[x * 56 + b * 2] | eyeBits[x * 56 + b * 2 + 1] << 8;
+            const bool notePairs = pairs;
+            const unsigned cx = x & 7;
+            for (; starts; starts &= starts - 1)
+            {
+                const uint32_t j = static_cast<uint32_t>(__builtin_ctz(starts)), tag = tags[j];
+                if (notePairs)
+                    notePair(b, x >> 3, tag);
+                s.level = std::max<unsigned>(s.level, copyColors.at(eyeBand, j) >> 26);
+                if (VBGO_TAG_IS_OBJ(tag))
+                    continue;
+                const unsigned colors = m_worlds[VBGO_TAG_WORLD(tag)].colors;
+                if (colors != s.colors)
+                {
+                    flushStarts(s, bands[b].cells, x >> 3);
+                    s.colors = colors;
+                }
+                s.left = std::min(s.left, cx), s.right = std::max(s.right, cx);
+                s.top = std::min(s.top, j), s.bottom = std::max(s.bottom, j);
+            }
+        };
+
+        auto copyCell = [&](unsigned b, unsigned c) __attribute__((always_inline)) {
             const vbgo_tt_motion &motion = v.motion[b * kGridW + c];
             if (!motion.version || motion.version != v.cell_version[b * kGridW + c] ||
                 motion.stamp != m_paintedStamp[otherBuffer])
                 return false;
-            heldBands |= 1u << b;
-            const unsigned sx = c * 8 + motion.dx, c0 = sx >> 3, c1 = (sx + 7) >> 3;
-            const Band &source = from[b];
-            if (source.version[c0] != motion.from[0] || source.version[c1] != motion.from[1] ||
-                m_unfadedCell[otherBuffer][b][c0] || m_unfadedCell[otherBuffer][b][c1] ||
-                ((source.unreached >> c0 | source.unreached >> c1) & 1) ||
-                (fromMoved[b] && (CellWorlds(v, b, c) & fromMoved[b])))
+            // (from the other picture's cells c0 - c1 of bands b0 - b1: the record holds the first and last ones'
+            // versions, and a nonzero version of the others is their pass's too)
+            const unsigned sx = c * 8 + motion.dx, top = b * 8 + motion.dy;
+            const unsigned c0 = sx >> 3, c1 = (sx + 7) >> 3, b0 = top >> 3, b1 = (top + 7) >> 3;
+            const uint32_t sources = 1u << b0 | 1u << b1;
+            if ((sourceBands & sources) != sources)
                 return false;
-            uint64_t marks = 0; // (the source columns' flags together)
+            heldBands |= 1u << b;
+            uint32_t moved = 0, autoStale = 0; // (the sources' worlds moved since, and whether their ramps went stale)
+            for (uint32_t s = sources; s; s &= s - 1)
+            {
+                const unsigned sb = static_cast<unsigned>(__builtin_ctz(s));
+                moved |= fromMoved[sb];
+                autoStale |= from[sb].autoState != m_paintAuto;
+            }
+            const auto &unfadedFrom = m_unfadedCell[otherBuffer];
+            if (from[b0].version[c0] != motion.from[0] || from[b1].version[c1] != motion.from[1] ||
+                !from[b0].version[c1] || !from[b1].version[c0] || unfadedFrom[b0][c0] || unfadedFrom[b0][c1] ||
+                unfadedFrom[b1][c0] || unfadedFrom[b1][c1] ||
+                (((from[b0].unreached | from[b1].unreached) >> c0 | (from[b0].unreached | from[b1].unreached) >> c1) & 1))
+                return false;
+            if (moved && (CellWorlds(v, b, c) & moved))
+                return false;
+            // (the source columns' flags: nothing slow, and the ramps an automatic color came from still as they were)
+            const uint32_t *const activeFrom = &fromActive[sx];
+            const BandColumn *const upperFrom = &fromColumns[sx * kBands + b0];
+            const BandColumn *const lowerFrom = &fromColumns[sx * kBands + b1];
+            uint32_t marks = 0; // (the firsts' high words)
             for (unsigned k = 0; k < 8; ++k)
-                if (fromActive[sx + k] >> b & 1)
-                {
-                    const uint64_t first = fromColumns[(sx + k) * kBands + b].first;
-                    if ((first & kSlowColumn) || !(first & kOneRun))
-                        return false;
-                    marks |= first;
-                }
-            if ((marks & kAutoColumn) && source.autoState != m_paintAuto)
+                marks |= (activeFrom[k] >> b0 & 1 ? static_cast<uint32_t>(upperFrom[k * kBands].first >> 32) : 0) |
+                         (activeFrom[k] >> b1 & 1 ? static_cast<uint32_t>(lowerFrom[k * kBands].first >> 32) : 0);
+            if ((marks & kSlowColumnHi) || ((marks & kAutoColumnHi) && autoStale))
                 return false;
 
+            BandColumn *const hereAt = &bandColumns[c * 8 * kBands + b];
+            uint32_t *const activeAt = &bandsActive[c * 8];
+            const uint32_t bandBit = 1u << b;
+            std::memset(&summaryState[c * 8], 0, 8);
+            const unsigned shift = top & 7; // (the rows of band b0 above the cell's first)
+            const bool notePairs = pairs;
             uint32_t noted = ~0u; // (the last column's pair and tile: noting them again changes nothing)
+            CopiedStarts startSums;
             for (unsigned k = 0; k < 8; ++k)
             {
                 const unsigned x = c * 8 + k;
-                const BandColumn &column = fromColumns[(sx + k) * kBands + b];
-                bandColumns[x * kBands + b] = column;
-                bandsActive[x] = (bandsActive[x] & ~(1u << b)) | (fromActive[sx + k] & 1u << b);
-                summaryState[x] = 0;
-                // (a left picture's run: its pair slot and tile, as setting it up and counting its first pixel note
-                // them)
-                const int pair =
-                    pairs && (fromActive[sx + k] >> b & 1) ? m_pairOfLeft[VBGO_TAG_WORLD(column.first)] : -1;
-                if (pair >= 0 && (VBGO_TAG_CHAR(column.first) | static_cast<uint32_t>(pair) << 11) != noted)
+                BandColumn &here = hereAt[k * kBands];
+                if (!shift)
                 {
-                    const unsigned chr = VBGO_TAG_CHAR(column.first);
-                    noted = chr | static_cast<uint32_t>(pair) << 11;
-                    NoteLeftPair(chr, 1u << pair);
-                    notePairSlot(bands[b].pairSlots, static_cast<uint64_t>(c) << 32 | chr | 1u << pair << 11);
+                    // (the same rows: the source column's bookkeeping, its later runs counted again here)
+                    const BandColumn &column = upperFrom[k * kBands];
+                    here = column;
+                    const uint32_t on = activeFrom[k] >> b0 & 1;
+                    activeAt[k] = (activeAt[k] & ~bandBit) | on << b;
+                    if (!on)
+                        continue;
+                    const int pair = notePairs ? m_pairOfLeft[VBGO_TAG_WORLD(column.first)] : -1;
+                    if (pair >= 0 && (VBGO_TAG_CHAR(column.first) | static_cast<uint32_t>(pair) << 11) != noted)
+                    {
+                        const unsigned chr = VBGO_TAG_CHAR(column.first);
+                        noted = chr | static_cast<uint32_t>(pair) << 11;
+                        NoteLeftPair(chr, 1u << pair);
+                        notePairSlot(bands[b].pairSlots, static_cast<uint64_t>(c) << 32 | chr | 1u << pair << 11);
+                    }
+                    if (const uint32_t starts = static_cast<uint32_t>(column.last >> 48))
+                        countStarts(x, b, starts, startSums);
+                    continue;
                 }
+                // (rows from two bands: counted by this column's tags, runs starting where the sources' did - but a
+                // source's first row here is the column's first, and band b1's first starts one if its key is new)
+                const uint32_t *column = v.columns[x];
+                if (!column)
+                    continue;
+                const uint32_t *tags = column + b * 8;
+                const uint32_t eyeBand = eyeBits[x * 56 + b * 2] | eyeBits[x * 56 + b * 2 + 1] << 8;
+                uint32_t f = 0, lit = copyLit(eyeBand); // (f: the first row counted - a lit shade and a tag - or 8)
+                while (f < 8 && !((lit & 1) && tags[f]))
+                    ++f, lit >>= 2;
+                if (f == 8)
+                {
+                    activeAt[k] &= ~bandBit;
+                    continue;
+                }
+                const BandColumn &upper = upperFrom[k * kBands], &lower = lowerFrom[k * kBands];
+                const bool upperActive = activeFrom[k] >> b0 & 1, lowerActive = activeFrom[k] >> b1 & 1;
+                uint32_t starts = upperActive ? static_cast<uint32_t>(upper.last >> 48) >> shift : 0;
+                if (lowerActive)
+                {
+                    starts |= (static_cast<uint32_t>(lower.last >> 48) & ((1u << shift) - 1)) << (8 - shift);
+                    const uint32_t lowerFirst = static_cast<uint32_t>(lower.first >> 48 & 7);
+                    if (lowerFirst < shift && upperActive && f < 8 - shift &&
+                        (lower.first & kKeyBits) != (upper.last & kKeyBits))
+                        starts |= 1u << (lowerFirst + 8 - shift);
+                }
+                starts &= ~(1u << f);
+                const uint16_t *cells = v.cells[x] + vbgo_tt_cell_at(b * 8);
+                const uint32_t l = starts ? 31 - static_cast<uint32_t>(__builtin_clz(starts)) : f;
+                const uint32_t flags = (starts ? 0 : kOneRunHi) |
+                                       ((upperActive ? upper.first : 0) | (lowerActive ? lower.first : 0)) >> 32 &
+                                           kAutoColumnHi;
+                here.first = static_cast<uint64_t>(cells[vbgo_tt_cell_at(f)] | f << 16 |
+                                                   (copyColors.at(eyeBand, f) >> 26) << 20 | flags) << 32 |
+                             (tags[f] & kRunMaskLo);
+                here.last = (vbgo_tag_compose(tags[l], cells[vbgo_tt_cell_at(l)]) & kRunMask) |
+                            static_cast<uint64_t>(starts) << 48;
+                activeAt[k] |= bandBit;
+                notePair(b, c, tags[f]);
+                countStarts(x, b, starts, startSums);
             }
-            if (marks & kAutoColumn)
+            flushStarts(startSums, bands[b].cells, c);
+            uint8_t &brightestHere = bands[b].cells.brightest[c];
+            brightestHere = static_cast<uint8_t>(std::max<unsigned>(brightestHere, startSums.level));
+            if (marks & kAutoColumnHi)
                 bands[b].autoCells |= 1ull << c;
-            const size_t at = (static_cast<size_t>(b) * 8 * fbWidth + eyeOffset[0]) * 4;
-            uint8_t *to = frame + at + c * 32;
-            const uint8_t *row = other + at + sx * 4;
+            uint8_t *to = frame + (static_cast<size_t>(b) * 8 * fbWidth + eyeOffset[0]) * 4 + c * 32;
+            const uint8_t *row = other + (static_cast<size_t>(top) * fbWidth + eyeOffset[0]) * 4 + sx * 4;
             for (unsigned r = 0; r < 8; ++r, to += rowBytes, row += rowBytes)
             {
                 if (claimRows)
                     ClearLine32(to);
-                for (unsigned k = 0; k < 32; k += 4)
-                {
-                    uint32_t word;
-                    std::memcpy(&word, row + k, 4);
-                    std::memcpy(to + k, &word, 4);
-                }
+                vbgo_copy8(to, row, 4);
             }
             return true;
         };
@@ -2777,9 +2909,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         if (first != runKey)
                             countRun(first, x, b * 8 + (here.first >> 48 & 7),
                                      static_cast<unsigned>(here.first >> 52 & 63), nullptr, 0);
-                        runKey = here.last;
-                        runHi = vbgo_tag_key_hi(here.last);
-                        runLo = vbgo_tag_lo(here.last) & kRunMaskLo;
+                        runKey = here.last & kKeyBits;
+                        runHi = vbgo_tag_key_hi(runKey);
+                        runLo = vbgo_tag_lo(runKey) & kRunMaskLo;
                         runSetUp = false;
                         continue;
                     }
@@ -2802,6 +2934,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 // started after the first)
                 bool counted = false;
                 uint64_t columnFirst = 0; // (here.first, stored with the flags once the column is walked)
+                uint32_t starts = 0;      // (the rows starting a run after the first counted - see BandColumn::last)
                 flags = kOneRunHi;
 
                 // (the rows that can count: those showing a color, and with a fill, any)
@@ -2929,6 +3062,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         runHi = cellAt, runLo = lo & kRunMaskLo;
                         countRun(runKey, x, y, rawPixel >> 26, firstHere ? nullptr : &sums, sumsAt);
                         flags &= firstHere ? ~0u : ~kOneRunHi;
+                        starts |= firstHere ? 0u : 1u << (y & 7);
                         cur = &setUpRun(t, runKey);
                         if (cur->slow)
                             run = *cur, cur = &run;
@@ -3074,7 +3208,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         if (!(b & 1) && !(keptHere >> (b + 1) & 1))
                             ClearLine32(reinterpret_cast<uint8_t *>(&here));
                         here.first = columnFirst | static_cast<uint64_t>(flags) << 32;
-                        here.last = runKey, active |= 1u << b;
+                        here.last = runKey | static_cast<uint64_t>(starts) << 48, active |= 1u << b;
                     }
                     else
                         active &= ~(1u << b);
