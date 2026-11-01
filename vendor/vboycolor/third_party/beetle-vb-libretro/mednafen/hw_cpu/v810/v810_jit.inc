@@ -453,6 +453,21 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       for(unsigned k = 0; k < 6; ++k)
       {
          JitStub[JIT_STUB_READ8 + k] = w.at;
+         if(k >= 3)
+         {
+            /* A store's first cycle, its address's alignment and its value's width: here, not at every store. */
+            uint32 *const bdz = w.Bdz();
+            w.Patch(bdz, w.at);
+            if(k == 3)
+               w.Rlwinm(5, 5, 0, 24, 31);
+            else if(k == 4)
+            {
+               w.Rlwinm(4, 4, 0, 0, 30);
+               w.Rlwinm(5, 5, 0, 16, 31);
+            }
+            else
+               w.Rlwinm(4, 4, 0, 0, 29);
+         }
          if(k < 3)
          {
             /* A frame buffer read has no side effects: its bytes straight from FB, no call. */
@@ -544,7 +559,8 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          else
          {
             w.Lhzx(0, 7, 6);
-            w.Cmpw(0, 5);
+            w.Rlwinm(6, 5, 0, 16, 31);
+            w.Cmpw(0, 6);
          }
          w.Blr();
       }
@@ -1069,18 +1085,11 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
                Cold();
                w.Patch(slow, w.at);
                if(clear)
-                  w.Rlwinm(4, 4, 0, 0, 31 - clear);
-               if(op.kind == BK_ST_B)
-                  w.Rlwinm(5, 5, 0, 24, 31);
-               else if(op.kind == BK_ST_H)
-                  w.Rlwinm(5, 5, 0, 16, 31);
-               if(clear)
                {
                   /* (VIP DRAM left as it was: the work RAM path's cycles; a call keeps each store's code short) */
                   w.BTo(JitStub[word ? JIT_STUB_SAME32 : JIT_STUB_SAME16], 1);
                   w.Patch(w.Bc(BO_TRUE, CR_EQ), cycles);
                }
-               FirstCycle();
                w.BTo(JitStub[op.kind == BK_ST_B   ? JIT_STUB_WRITE8
                              : op.kind == BK_ST_H ? JIT_STUB_WRITE16
                                                   : JIT_STUB_WRITE32],
