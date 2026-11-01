@@ -992,6 +992,28 @@ static INLINE int WindowSide(int first, int lo, int hi)
    return first >= lo && first + 7 <= hi ? 1 : first + 7 < lo || first > hi ? 0 : -1;
 }
 
+/* The cells c (0 - 47) with lo <= c <= hi. */
+static INLINE uint64 CellSpan(int lo, int hi)
+{
+   if(lo < 0)
+      lo = 0;
+   if(hi > 47)
+      hi = 47;
+   return lo > hi ? 0 : ((2ull << hi) - 1) & ~((1ull << lo) - 1);
+}
+
+/* The cells whose columns, or those d to their right, the window x0..x1 neither wholly holds nor wholly leaves out
+ * (WindowSide for each cell, as spans: the same cells for every x0, x1 and d). */
+static uint64 WindowEdgeCells(int x0, int x1, int d)
+{
+   const int in_lo = (x0 + 7) >> 3, in_hi = (x1 - 7) >> 3, in_lo_s = (x0 - d + 7) >> 3, in_hi_s = (x1 - 7 - d) >> 3;
+   const int left = (x0 - 8) >> 3, right = (x1 >> 3) + 1, left_s = (x0 - 8 - d) >> 3, right_s = ((x1 - d) >> 3) + 1;
+   const uint64 inside = CellSpan(in_lo > in_lo_s ? in_lo : in_lo_s, in_hi < in_hi_s ? in_hi : in_hi_s);
+   const uint64 outside = CellSpan(0, left < left_s ? left : left_s) | CellSpan(right > right_s ? right : right_s, 47) |
+                          (CellSpan(0, left) & CellSpan(right_s, 47)) | (CellSpan(right, 47) & CellSpan(0, left_s));
+   return ~(inside | outside) & ((1ull << 48) - 1);
+}
+
 /* VirtualBoyGo: after a block is drawn whole, which of its left eye's cells show only what the other buffer's last pass
  * drew, moved by the camera (vbgo_tiletrack_note_motion): known from what drawing reads, not by comparing. */
 static void NoteBlockMotion(void)
@@ -1089,11 +1111,7 @@ static void NoteBlockMotion(void)
          /* (cells whose columns, or their source's, the window's left eye edge passes through) */
          const uint16 gp = ParallaxDisabled ? 0 : sign_9_to_s16(a[2]);
          const int x0 = (int16)sign_10_to_s16((uint16)(sign_11_to_s16(a[1]) - gp)), x1 = x0 + (uint16)sign_11_to_s16(a[7]);
-         for(c = 0; c < 48; c++)
-         {
-            const int here = WindowSide(c * 8, x0, x1);
-            bad[w] |= (uint64)(here < 0 || here != WindowSide(c * 8 + d, x0, x1)) << c;
-         }
+         bad[w] |= WindowEdgeCells(x0, x1, d);
       }
       dx[w] = (int8_t)d;
       dy[w] = (int8_t)e;
