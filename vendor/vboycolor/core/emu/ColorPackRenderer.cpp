@@ -2823,12 +2823,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             {
                 if (claimRows)
                     ClearLine32(to);
-                for (unsigned k = 0; k < 32; k += 4)
-                {
-                    uint32_t word;
-                    std::memcpy(&word, row + k, 4);
-                    std::memcpy(to + k, &word, 4);
-                }
+                vbgo_copy8(to, row, 4);
             }
             return true;
         };
