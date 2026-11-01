@@ -414,6 +414,7 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
     m_depth.Reset();
     m_pack = pack && !pack->Empty() ? pack : nullptr;
     m_cellStart.clear();
+    m_cellHasTiles.fill(0);
     m_fillCells.clear();
     m_layered.clear();
     m_markerBits.clear();
@@ -476,6 +477,8 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
         ++m_cellStart[cell.cell + 1u];
     for (size_t i = 1; i < m_cellStart.size(); ++i)
         m_cellStart[i] += m_cellStart[i - 1];
+    for (const TileColorPack::CellTile &cell : cells)
+        m_cellHasTiles[cell.cell >> 5] |= 1u << (cell.cell & 31);
     // Fills: a cell has some if an entry colors a pixel its tile leaves transparent; marking every cell with an entry
     // is simplest (the tracker only uses this to decide where tagging fills is worth it).
     if (!cells.empty())
@@ -2210,6 +2213,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
 
         // (as the last run with this key in this eye, if any)
         auto setUpRun = [&](uint64_t t, uint64_t key) -> const Run & {
+            // (a background tile's run is the same in every map cell the pack has no colors for: one entry, under a
+            // high word no cell has, serves them all)
+            const uint32_t cell = vbgo_tag_key_hi(key);
+            if (!VBGO_TAG_IS_OBJ(key) && !(m_cellHasTiles[cell >> 5] >> (cell & 31) & 1))
+                key |= 0xFFFFFFFFull << 32;
             const uint32_t runHash = (static_cast<uint32_t>(key) ^ static_cast<uint32_t>(key >> 32)) * 2654435761u;
             CachedRun &cached = m_runCache[runHash >> (32 - kRunCacheBits)];
             if (cached.at != runAt || cached.key != key)

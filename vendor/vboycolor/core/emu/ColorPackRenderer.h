@@ -487,6 +487,7 @@ private:
 
     const TileColorPack *m_pack = nullptr;
     std::vector<uint32_t> m_cellStart;  // 65537 entries: cell n's CellTiles are [m_cellStart[n], m_cellStart[n + 1])
+    std::array<uint32_t, 65536 / 32> m_cellHasTiles{}; // (bit per map cell with CellTiles)
     std::vector<uint8_t> m_fillCells;
     std::unordered_set<uint32_t> m_layered; // hashes with per-layer colors
     std::array<Slot, 2048> m_slots{};
