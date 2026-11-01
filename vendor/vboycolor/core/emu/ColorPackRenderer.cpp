@@ -410,7 +410,7 @@ void ColorPackRenderer::ForgetBands()
 void ColorPackRenderer::SetPack(const TileColorPack *pack)
 {
     ForgetBands();
-    m_endsRest = 0;
+    m_endsRest = m_endsWait = 0, m_endsRead = m_endsChanged = 0;
     m_depth.Reset();
     m_pack = pack && !pack->Empty() ? pack : nullptr;
     m_cellStart.clear();
@@ -1763,6 +1763,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
     // its kind, every layer pair estimated and what it keeps walked with its band reached as now, a start only sizes
     // its layer (by the extent - see the figures below) and wants its pair. Only bands where that can change are read.
     constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
+    constexpr int kScanPerCell = 64;
     uint64_t markWalk[kBands] = {}; // (cells the shortcut walks after all: their runs add markers - see below)
     auto rightFromEnds = [&](const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut) -> bool {
         std::fill(markWalk, markWalk + kBands, 0);
@@ -1773,13 +1774,20 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             --m_endsRest;
             return false;
         }
-        // (only worth it where much of the picture changed: the walk costs little where cells are kept - those skipped
-        // before, walked once more - and this costs about the same however little changed)
-        int changed = 0;
+        // (only worth it where the walk would walk many cells - changed ones, and those skipped before, walked once
+        // more when kept - and where its tries lately read less than the walk would each frame, as this costs about
+        // the same however little changed; tried again after 16 Paints, as what it reads changes with the scene)
+        int changed = 0, owed = 0;
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-            changed += __builtin_popcountll((v.tagged ? v.tagged[b] : kAllCells) & ~keepRight[b]);
-        if (changed < kBands * kGridW / 8)
+        {
+            const uint64_t fresh = (v.tagged ? v.tagged[b] : kAllCells) & ~keepRight[b];
+            changed += __builtin_popcountll(fresh);
+            owed += __builtin_popcountll(rightBands[b].skipped & ~fresh);
+        }
+        m_endsChanged += static_cast<uint32_t>(changed) - m_endsChanged / 8;
+        if (changed + owed < kBands * kGridW / 8 || (m_endsRead > m_endsChanged && ++m_endsWait < 16))
             return false;
+        m_endsWait = 0;
         for (int p = 0; pairs && p < m_pairCount; ++p)
             if (!m_pairs[p].sprites && !m_pairs[p].estimated)
                 return false;
@@ -1825,6 +1833,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         for (unsigned w = 0; rightOnly && w < 32; ++w)
             spriteWorlds |= static_cast<uint32_t>(m_spritePairOf[w] >= 0) << w;
         // The sprites' tags (only where one may be) for both: markers, and the pairs they want.
+        int scanned = 0;
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
         {
             uint32_t used = 0;
@@ -1850,6 +1859,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     {
                         const unsigned y = b * 8 + static_cast<unsigned>(__builtin_ctz(sprites));
                         const uint32_t lo = column[y];
+                        ++scanned;
                         if ((lo ^ runLo) & kRunMaskLo)
                         {
                             runLo = lo;
@@ -2119,8 +2129,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         for (int p = 0; p < m_pairCount; ++p)
             if (wanted >> p & 1)
                 m_pairs[p].wantedAt = m_frame;
-        if (openCells > changed)
-            m_endsRest = 16; // (it read more cells than the walk would: not tried again soon)
+        // (what it read, in cells walked: a cell's worth for every kScanPerCell sprite tags)
+        int read = openCells + scanned / kScanPerCell;
+        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+            read += __builtin_popcountll(markWalk[b]);
+        m_endsRead += static_cast<uint32_t>(read) - m_endsRead / 8;
         return true;
     };
 

@@ -369,6 +369,8 @@ private:
     std::vector<CachedRun> m_runCache;
     uint32_t m_runCacheAt = 0; // (one more each eye painted)
     uint8_t m_endsRest = 0; // (Paints the right eye's ends aren't tried after they cost too much - see Paint)
+    uint8_t m_endsWait = 0; // (Paints they weren't tried in, as they lately read more than the walk would)
+    uint32_t m_endsRead = 0, m_endsChanged = 0; // (what their tries read and the changed cells: sums decaying by 1/8)
     std::array<uint32_t, (VBGO_TT_HEIGHT / 8) * (VBGO_TT_WIDTH / 8)> m_rightCellWorlds{}; // (Paint's scratch)
     std::array<uint8_t, VBGO_TT_WIDTH> m_rightLit{}; // (Paint's scratch: per column, the pixel values that show lit)
 
