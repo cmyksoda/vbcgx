@@ -1568,6 +1568,11 @@ const uint8 *VIP_FBBase(void)
    return &FB[0][0][0];
 }
 
+const uint16 *VIP_DramBase(void)
+{
+   return DRAM;
+}
+
 /* The CPU's word read from a frame buffer, as its two halfword reads (false: A isn't one). */
 bool VIP_ReadFBWord(uint32 A, uint32 *V)
 {

@@ -68,6 +68,7 @@ extern "C" v810_timestamp_t VB_QuietHorizon(v810_timestamp_t next_event, bool ti
 extern "C" v810_timestamp_t VB_LastEventBefore(v810_timestamp_t at);
 extern "C" v810_timestamp_t vbgo_vip_steady_until(v810_timestamp_t timestamp);
 extern "C" const uint8 *VIP_FBBase(void);
+extern "C" const uint16 *VIP_DramBase(void);
 extern "C" bool VIP_WriteFBWord(uint32 A, uint32 V);
 extern "C" void VIP_ColumnStateAt(int32 **lastTs, int32 **columnCounter, int32 **column, int32 **displayRegion,
                                   int32 **drawingCounter, bool **instantHack);

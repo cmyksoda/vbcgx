@@ -79,6 +79,7 @@ public:
    void Extsb(unsigned ra, unsigned rs) { X(rs, ra, 0, 954); }
    void Extsh(unsigned ra, unsigned rs) { X(rs, ra, 0, 922); }
    void Lwzx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 23); }
+   void Lhzx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 279); }
    void Lbzx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 87); }
    void Lhbrx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 790); }
    void Lwbrx(unsigned rt, unsigned ra, unsigned rb) { X(rt, ra, rb, 534); }
@@ -506,6 +507,32 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
             w.Blr();
             for(uint32 *m : miss)
                w.Patch(m, w.at);
+         }
+         if(k >= 4)
+         {
+            /* A halfword or word write that leaves VIP DRAM (region 0, 0x20000 - 0x3FFFF) as it was changes nothing
+             * VIP_Write16 tracks: no call (games copy their unchanged maps and sprites in every frame). */
+            w.Rlwinm(0, 4, 15, 22, 31);
+            w.Cmplwi(0, 1);
+            uint32 *const elsewhere = w.Bc(BO_FALSE, CR_EQ);
+            w.Rlwinm(6, 4, 0, 15, k == 5 ? 29 : 30);
+            w.Imm32(7, (uint32)(uintptr_t)VIP_DramBase());
+            if(k == 5)
+            {
+               /* (a word's first halfword is its low one: in DRAM's halfwords as the Wii loads them, the high one) */
+               w.Lwzx(0, 7, 6);
+               w.Rlwinm(6, 5, 16, 0, 31);
+            }
+            else
+            {
+               w.Lhzx(0, 7, 6);
+               w.Mr(6, 5);
+            }
+            w.Cmpw(0, 6);
+            uint32 *const changes = w.Bc(BO_FALSE, CR_EQ);
+            w.Blr();
+            w.Patch(elsewhere, w.at);
+            w.Patch(changes, w.at);
          }
          w.Stwu(1, -16, 1);
          w.Mflr(0);
