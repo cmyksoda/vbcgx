@@ -11,3 +11,4 @@ AGENTS.*
 CLAUDE.*
 
 __pycache__/
+portlibs/
