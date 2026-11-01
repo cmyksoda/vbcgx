@@ -50,6 +50,40 @@ static VBGO_NOINLINE bool VbgoChunkCoveredRows(const VbgoFrontChunk *c, int x, u
  return true;
 }
 
+/* How many of the chunk's rows are covered over the run of pixels at x. */
+static VBGO_NOINLINE unsigned VbgoRowsCovered(const VbgoFrontChunk *c, int x, unsigned run)
+{
+ const uint8 *const cov = c->cv + x;
+ unsigned count = 0, j;
+ int v;
+ for(v = c->skip; v < 8; v++)
+ {
+  for(j = 0; j < run && cov[v * VBGO_COVER_WIDTH + j] == 0xFF; j++)
+   ;
+  count += j == run;
+ }
+ return count;
+}
+
+/* What the rows covered at x counted alone on their way to end, where the chunk's blank character jumps: each group
+ * they stepped over before reading one. */
+static VBGO_NOINLINE unsigned VbgoBlankSkipped(const VbgoFrontChunk *c, int x, unsigned run, int end)
+{
+ unsigned count = 0, j;
+ int v, at;
+ for(v = c->skip; v < 8; v++)
+ {
+  const uint8 *const cov = c->cv + v * VBGO_COVER_WIDTH;
+  for(j = 0; j < run && cov[x + j] == 0xFF; j++)
+   ;
+  if(j != run)
+   continue;
+  for(count++, at = x + run; at < end && VbgoCovered8(cov + at); at += 8)
+   count++;
+ }
+ return count;
+}
+
 /* Whether the run of pixels at x is covered in each of the chunk's rows. */
 static INLINE bool VbgoChunkCovered(const VbgoFrontChunk *c, int x, unsigned run)
 {
@@ -491,6 +525,8 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
 
   x = start_x;
   sx = (uint32)(int32)(int16)row_srcX + SourceX_shift;
+  /* (H-bias rows were one-row chunks: each counts the groups it steps over as then, so VbgoFrontDone decides alike) */
+  const bool per_row = hbias && n > 1;
   while(x <= final_x)
   {
    unsigned cell, offset, run, i;
@@ -531,6 +567,8 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
     memcpy(blank_w, &CHR16[char_no * 8], 16);
     if(!(blank_w[0] | blank_w[1] | blank_w[2] | blank_w[3]))
     {
+     const int32 blank_x = x;
+     const unsigned blank_run = run;
      x += run;
      sx += run;
      while(x + 7 <= final_x)
@@ -558,6 +596,8 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
       if(x <= last)
        break;
      }
+     if(per_row)
+      VbgoFrontSkipped += VbgoBlankSkipped(&chunk, blank_x, blank_run, x);
      continue;
     }
    }
@@ -573,6 +613,8 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
     /* (the rest of this character's row inside the line, or what is left of the line: one run) */
     const int fills_here = vbgo_tt_fills_from(char_no, cell);
     const uint32 palette_selector = bgsc >> 14;
+    if(per_row)
+     VbgoFrontSkipped += VbgoRowsCovered(&chunk, x, run);
     for(i = 0; i < (unsigned)n; i++)
     {
      const int v = chunk.skip + i;
