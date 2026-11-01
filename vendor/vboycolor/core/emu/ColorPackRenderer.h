@@ -369,6 +369,8 @@ private:
     std::vector<CachedRun> m_runCache;
     uint32_t m_runCacheAt = 0; // (one more each eye painted)
     uint8_t m_endsRest = 0; // (Paints the right eye's ends aren't tried after they cost too much - see Paint)
+    uint8_t m_endsWait = 0; // (Paints they weren't tried in, as they lately read more than the walk would)
+    uint32_t m_endsRead = 0, m_endsChanged = 0; // (what their tries read and the changed cells: sums decaying by 1/8)
     std::array<uint32_t, (VBGO_TT_HEIGHT / 8) * (VBGO_TT_WIDTH / 8)> m_rightCellWorlds{}; // (Paint's scratch)
     std::array<uint8_t, VBGO_TT_WIDTH> m_rightLit{}; // (Paint's scratch: per column, the pixel values that show lit)
 
@@ -434,6 +436,9 @@ private:
     // (ResolveSlots' compact copies of the slots' hashes and flags, bit per slot: a frame's checks stay in cache)
     std::array<uint32_t, 2048> m_slotHashes{};
     uint32_t m_slotsResolved[2048 / 32] = {}, m_ambiguousSlots[2048 / 32] = {}, m_markerSlots[2048 / 32] = {};
+    // (the marker slots with sprites' groups, and with layer-bound ones - whether any has those)
+    uint32_t m_spriteMarkerSlots[2048 / 32] = {}, m_boundMarkerSlots[2048 / 32] = {};
+    bool m_anyBoundMarkerSlot = false;
     std::vector<uint8_t> m_markerLayer[3];
     ContextGroupBits m_layerBound;
     unsigned m_gridCurrent = 0;
@@ -482,6 +487,7 @@ private:
 
     const TileColorPack *m_pack = nullptr;
     std::vector<uint32_t> m_cellStart;  // 65537 entries: cell n's CellTiles are [m_cellStart[n], m_cellStart[n + 1])
+    std::array<uint32_t, 65536 / 32> m_cellHasTiles{}; // (bit per map cell with CellTiles)
     std::vector<uint8_t> m_fillCells;
     std::unordered_set<uint32_t> m_layered; // hashes with per-layer colors
     std::array<Slot, 2048> m_slots{};
