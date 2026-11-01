@@ -1014,6 +1014,15 @@ static uint64 WindowEdgeCells(int x0, int x1, int d)
    return ~(inside | outside) & ((1ull << 48) - 1);
 }
 
+/* A world's 11 attribute halfwords the same in a and b (compared in registers: a memcmp call costs more). */
+static INLINE bool SameWorldAttrs(const uint16 *a, const uint16 *b)
+{
+   uint32 x[5], y[5];
+   memcpy(x, a, sizeof(x));
+   memcpy(y, b, sizeof(y));
+   return !((x[0] ^ y[0]) | (x[1] ^ y[1]) | (x[2] ^ y[2]) | (x[3] ^ y[3]) | (x[4] ^ y[4]) | (uint32)(a[10] ^ b[10]));
+}
+
 /* VirtualBoyGo: after a block is drawn whole, which of its left eye's cells show only what the other buffer's last pass
  * drew, moved by the camera (vbgo_tiletrack_note_motion): known from what drawing reads, not by comparing. */
 static void NoteBlockMotion(void)
@@ -1081,7 +1090,7 @@ static void NoteBlockMotion(void)
                same = sb->worlds[w * 16 + k] == s[k];
             /* (every other world drew these rows as it drew src: a mid-pass write could leave its other pixels here) */
             for(t = tagged & ~(1u << w); t && same; t &= t - 1)
-               same = !memcmp(&sb->worlds[__builtin_ctz(t) * 16], &src->worlds[__builtin_ctz(t) * 16], 11 * sizeof(uint16));
+               same = SameWorldAttrs(&sb->worlds[__builtin_ctz(t) * 16], &src->worlds[__builtin_ctz(t) * 16]);
             if(same && sb->drawnAt < since)
                since = sb->drawnAt;
          }
