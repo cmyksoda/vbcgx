@@ -1021,6 +1021,7 @@ static void NoteBlockMotion(void)
    }
    for(c = 0; c < 48; c++)
       worlds |= vbgo_tt_wcells[c];
+   const uint32 tagged = worlds;
    for(; worlds; worlds &= worlds - 1)
    {
       const int w = __builtin_ctz(worlds);
@@ -1052,9 +1053,13 @@ static void NoteBlockMotion(void)
          for(j = 0; j < 2 && same; j++)
          {
             const BlockInputs *const sb = &Blocks[!DrawingFB][(top + 7 * j) >> 3];
+            uint32 t;
             same = sb->valid && GlobalChangedAt <= sb->drawnAt && sb->passAt == src->passAt;
             for(k = 0; k <= 10 && same; k++)
                same = sb->worlds[w * 16 + k] == s[k];
+            /* (every other world drew these rows as it drew src: a mid-pass write could leave its other pixels here) */
+            for(t = tagged & ~(1u << w); t && same; t &= t - 1)
+               same = !memcmp(&sb->worlds[__builtin_ctz(t) * 16], &src->worlds[__builtin_ctz(t) * 16], 11 * sizeof(uint16));
             if(same && sb->drawnAt < since)
                since = sb->drawnAt;
          }
@@ -1083,7 +1088,7 @@ static void NoteBlockMotion(void)
       {
          /* (cells whose columns, or their source's, the window's left eye edge passes through) */
          const uint16 gp = ParallaxDisabled ? 0 : sign_9_to_s16(a[2]);
-         const int x0 = (int16)sign_10_to_s16((uint16)(sign_11_to_s16(a[1]) - gp)), x1 = x0 + (int16)sign_11_to_s16(a[7]);
+         const int x0 = (int16)sign_10_to_s16((uint16)(sign_11_to_s16(a[1]) - gp)), x1 = x0 + (uint16)sign_11_to_s16(a[7]);
          for(c = 0; c < 48; c++)
          {
             const int here = WindowSide(c * 8, x0, x1);
