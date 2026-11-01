@@ -1384,10 +1384,14 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 std::fill(m_closeSprites.begin(), m_closeSprites.end(), ContextGroupBits{});
             }
             else
-                for (const uint16_t i : m_spreadCells)
-                    m_nearSprites[i] = m_closeSprites[i] = ContextGroupBits{};
+                for (int y = 0; y < kGridH; ++y)
+                    for (uint64_t cells = m_spreadRows[y]; cells; cells &= cells - 1)
+                    {
+                        const int i = y * kGridW + __builtin_ctzll(cells);
+                        m_nearSprites[i] = m_closeSprites[i] = ContextGroupBits{};
+                    }
             m_spreadAll = false;
-            m_spreadCells.clear();
+            m_spreadRows.fill(0);
             for (int k = 0; k < sourceCount; ++k)
             {
                 const int i = sources[k], gx = i % kGridW, gy = i / kGridW;
@@ -1398,27 +1402,28 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     if (bits.w[j])
                         word = j, ++words;
                 const uint64_t only = bits.w[word];
+                const int x0 = std::max(0, gx - kContextReach), x1 = std::min(kGridW - 1, gx + kContextReach);
+                const uint64_t span = ((2ull << x1) - 1) & ~((1ull << x0) - 1);
                 for (int y = std::max(0, gy - kContextReach); y <= std::min(kGridH - 1, gy + kContextReach); ++y)
-                    for (int x = std::max(0, gx - kContextReach); x <= std::min(kGridW - 1, gx + kContextReach); ++x)
+                {
+                    ContextGroupBits *const row = &m_nearSprites[y * kGridW];
+                    m_spreadRows[y] |= span;
+                    if (words <= 1)
+                        for (int x = x0; x <= x1; ++x)
+                            row[x].w[word] |= only;
+                    else
+                        for (int x = x0; x <= x1; ++x)
+                            row[x] |= bits;
+                }
+                for (int y = std::max(0, gy - 1); y <= std::min(kGridH - 1, gy + 1); ++y)
+                    for (int x = std::max(0, gx - 1); x <= std::min(kGridW - 1, gx + 1); ++x)
                     {
-                        const int t = y * kGridW + x;
-                        if (!m_spreadMark[t])
-                            m_spreadMark[t] = 1, m_spreadCells.push_back(static_cast<uint16_t>(t));
-                        const bool close = std::abs(x - gx) <= 1 && std::abs(y - gy) <= 1;
                         if (words <= 1)
-                        {
-                            m_nearSprites[t].w[word] |= only;
-                            if (close)
-                                m_closeSprites[t].w[word] |= only;
-                            continue;
-                        }
-                        m_nearSprites[t] |= bits;
-                        if (close)
-                            m_closeSprites[t] |= bits;
+                            m_closeSprites[y * kGridW + x].w[word] |= only;
+                        else
+                            m_closeSprites[y * kGridW + x] |= bits;
                     }
             }
-            for (const uint16_t i : m_spreadCells)
-                m_spreadMark[i] = 0;
         }
         else
         {
@@ -2554,7 +2559,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                                          (contextCompared && !(reach[b] >> c & 1)));
         }
 
-        // (a cell's kept near / close groups are clear unless it or the frame has any: the frame's are m_spreadCells,
+        // (a cell's kept near / close groups are clear unless it or the frame has any: the frame's are m_spreadRows,
         // or every cell if it spread everywhere - only those cells are looked at)
         auto contextCell = [&](unsigned b, unsigned c) {
             CellMarks &cell = bands[b].marks[c];
@@ -2578,13 +2583,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             else
             {
                 std::memcpy(contextSame, keptCell, sizeof(contextSame));
-                uint64_t todo[kBands];
                 for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-                    todo[b] = bands[b].nearAny;
-                for (const uint16_t i : m_spreadCells)
-                    todo[i / kGridW] |= 1ull << (i % kGridW);
-                for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-                    for (uint64_t w = todo[b]; w; w &= w - 1)
+                    for (uint64_t w = bands[b].nearAny | m_spreadRows[b]; w; w &= w - 1)
                         contextCell(b, static_cast<unsigned>(__builtin_ctzll(w)));
             }
         }
