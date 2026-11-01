@@ -1297,8 +1297,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         }
 
         // Sprites' groups: markers of this frame and the last two within reach of each cell (Close: within one cell -
-        // see contextTile). Spread from the few cells that have any, else by rows then columns: a lookup is one read.
-        ContextGroupBits *rows = m_gridRows.data(), *closeRows = m_gridCloseRows.data(), *here = m_gridHere.data();
+        // see contextTile). Spread from the cells that have any: a lookup is one read.
+        ContextGroupBits *here = m_gridHere.data();
         const ContextGroupBits *a = m_markerGrid[(m_gridCurrent + 1) % 3].data(),
                                *b = m_markerGrid[(m_gridCurrent + 2) % 3].data();
         const ContextGroupBits free = ~m_layerBound;
@@ -1399,91 +1399,76 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             }
             m_spreadAll = true;
         }
-        else if (sourceCount <= 192)
-        {
-            // (up to about 200 sources the spread costs less than the whole-grid passes below: ~4 us each against 0.8
-            // ms)
-            if (m_spreadAll)
-            {
-                std::fill(m_nearSprites.begin(), m_nearSprites.end(), ContextGroupBits{});
-                std::fill(m_closeSprites.begin(), m_closeSprites.end(), ContextGroupBits{});
-            }
-            else
-                for (int y = 0; y < kGridH; ++y)
-                    for (uint64_t cells = m_spreadRows[y]; cells; cells &= cells - 1)
-                    {
-                        const int i = y * kGridW + __builtin_ctzll(cells);
-                        m_nearSprites[i] = m_closeSprites[i] = ContextGroupBits{};
-                    }
-            m_spreadAll = false;
-            m_spreadRows.fill(0);
-            for (int k = 0; k < sourceCount; ++k)
-            {
-                const int i = sources[k], gx = i % kGridW, gy = i / kGridW;
-                const ContextGroupBits &bits = here[i];
-                // (a source of one word of groups - nearly all - ORs in just that word)
-                unsigned word = 0, words = 0;
-                for (unsigned j = 0; j < ContextGroupBits::kWords; ++j)
-                    if (bits.w[j])
-                        word = j, ++words;
-                const uint64_t only = bits.w[word];
-                const int x0 = std::max(0, gx - kContextReach), x1 = std::min(kGridW - 1, gx + kContextReach);
-                const uint64_t span = ((2ull << x1) - 1) & ~((1ull << x0) - 1);
-                for (int y = std::max(0, gy - kContextReach); y <= std::min(kGridH - 1, gy + kContextReach); ++y)
-                {
-                    ContextGroupBits *const row = &m_nearSprites[y * kGridW];
-                    m_spreadRows[y] |= span;
-                    if (words <= 1)
-                        for (int x = x0; x <= x1; ++x)
-                            row[x].w[word] |= only;
-                    else
-                        for (int x = x0; x <= x1; ++x)
-                            row[x] |= bits;
-                }
-                for (int y = std::max(0, gy - 1); y <= std::min(kGridH - 1, gy + 1); ++y)
-                    for (int x = std::max(0, gx - 1); x <= std::min(kGridW - 1, gx + 1); ++x)
-                    {
-                        if (words <= 1)
-                            m_closeSprites[y * kGridW + x].w[word] |= only;
-                        else
-                            m_closeSprites[y * kGridW + x] |= bits;
-                    }
-            }
-        }
         else
         {
-            m_spreadAll = true;
-            for (int i = 0; i < kGridW * kGridH; ++i)
-                here[i] = (a[i] | b[i] | markers[i]) & free;
-            for (int gy = 0; gy < kGridH; ++gy)
-                for (int gx = 0; gx < kGridW; ++gx)
+            // A row at a time from the sources within reach of it, so a row's lines are cleared (on the Wii claimed by
+            // dcbz, never read) and then ORed into while cached. Over 192 sources every cell counts as reached.
+            const bool whole = sourceCount > 192, clearAll = whole || m_spreadAll;
+            int rowFirst[kGridH + 1] = {};
+            for (int k = 0; k < sourceCount; ++k)
+                ++rowFirst[sources[k] / kGridW + 1];
+            for (int y = 0; y < kGridH; ++y)
+                rowFirst[y + 1] += rowFirst[y];
+            uint16_t byRow[kGridW * kGridH];
+            {
+                int next[kGridH];
+                std::copy(rowFirst, rowFirst + kGridH, next);
+                for (int k = 0; k < sourceCount; ++k)
+                    byRow[next[sources[k] / kGridW]++] = sources[k];
+            }
+            for (int y = 0; y < kGridH; ++y)
+            {
+                const int from = rowFirst[std::max(0, y - kContextReach)];
+                const int to = rowFirst[std::min(kGridH, y + kContextReach + 1)];
+                const int closeFrom = rowFirst[std::max(0, y - 1)], closeTo = rowFirst[std::min(kGridH, y + 2)];
+                uint64_t reach = 0;
+                for (int k = from; k < to; ++k)
                 {
-                    const int row = gy * kGridW;
-                    closeRows[row + gx] = here[row + std::max(0, gx - 1)] |
-                                          here[row + gx] | here[row + std::min(kGridW - 1, gx + 1)];
+                    const int gx = byRow[k] % kGridW;
+                    const int x0 = std::max(0, gx - kContextReach), x1 = std::min(kGridW - 1, gx + kContextReach);
+                    reach |= ((2ull << x1) - 1) & ~((1ull << x0) - 1);
                 }
-            // Three adjacent 3-cell windows cover the same 9-cell neighborhood.
-            static_assert(kContextReach == 4);
-            for (int gy = 0; gy < kGridH; ++gy)
-                for (int gx = 0; gx < kGridW; ++gx)
+                const uint64_t clear = clearAll ? (1ull << kGridW) - 1 : m_spreadRows[y] | reach;
+                if (!whole)
+                    m_spreadRows[y] = reach;
+                if (!clear)
+                    continue;
+                ContextGroupBits *const nearRow = &m_nearSprites[y * kGridW];
+                ContextGroupBits *const closeRow = &m_closeSprites[y * kGridW];
+                for (uint64_t cells = clear; cells; cells &= cells - 1)
                 {
-                    const int row = gy * kGridW;
-                    rows[row + gx] = closeRows[row + std::max(0, gx - 3)] |
-                                     closeRows[row + gx] | closeRows[row + std::min(kGridW - 1, gx + 3)];
+                    const int x = __builtin_ctzll(cells);
+                    ClearLine32(reinterpret_cast<uint8_t *>(&nearRow[x]));
+                    ClearLine32(reinterpret_cast<uint8_t *>(&closeRow[x]));
                 }
-            for (int gy = 0; gy < kGridH; ++gy)
-                for (int gx = 0; gx < kGridW; ++gx)
+                for (int k = from; k < to; ++k)
                 {
-                    const int at = gy * kGridW + gx;
-                    const int before = std::max(0, gy - 1) * kGridW + gx;
-                    const int after = std::min(kGridH - 1, gy + 1) * kGridW + gx;
-                    m_closeSprites[at] = closeRows[before] | closeRows[at] | closeRows[after];
-                    here[at] = rows[before] | rows[at] | rows[after];
+                    const int i = byRow[k], gx = i % kGridW;
+                    const ContextGroupBits &bits = here[i];
+                    // (a source of one word of groups - nearly all - ORs in just that word)
+                    unsigned word = 0, words = 0;
+                    for (unsigned j = 0; j < ContextGroupBits::kWords; ++j)
+                        if (bits.w[j])
+                            word = j, ++words;
+                    const uint64_t only = bits.w[word];
+                    const int x0 = std::max(0, gx - kContextReach), x1 = std::min(kGridW - 1, gx + kContextReach);
+                    if (words <= 1)
+                        for (int x = x0; x <= x1; ++x)
+                            nearRow[x].w[word] |= only;
+                    else
+                        for (int x = x0; x <= x1; ++x)
+                            nearRow[x] |= bits;
+                    if (k >= closeFrom && k < closeTo)
+                        for (int x = std::max(0, gx - 1); x <= std::min(kGridW - 1, gx + 1); ++x)
+                        {
+                            if (words <= 1)
+                                closeRow[x].w[word] |= only;
+                            else
+                                closeRow[x] |= bits;
+                        }
                 }
-            for (int gy = 0; gy < kGridH; ++gy)
-                for (int gx = 0; gx < kGridW; ++gx)
-                    m_nearSprites[gy * kGridW + gx] = here[std::max(0, gy - 3) * kGridW + gx] |
-                        here[gy * kGridW + gx] | here[std::min(kGridH - 1, gy + 3) * kGridW + gx];
+            }
+            m_spreadAll = whole;
         }
     }
 
