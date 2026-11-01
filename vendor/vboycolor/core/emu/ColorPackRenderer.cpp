@@ -2949,7 +2949,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 auto paintRows = [&](auto kind, const TileColorPack::Tile *tile, const AutoColors::Ramp *ramp)
                                      __attribute__((always_inline)) {
                     constexpr PlainKind kKind = decltype(kind)::value;
-                    const uint32_t *const rampWords = kKind == PlainKind::kRampOnly ? RampWords(ramp) : nullptr;
+                    const uint32_t *const rampWords =
+                        kKind == PlainKind::kRampOnly || (kKind == PlainKind::kMixed && ramp) ? RampWords(ramp) : nullptr;
+                    const uint32_t *const tileColors = tile->frame.data();
                     const uint32_t maskLo = static_cast<uint32_t>(tile->mask);
                     const uint32_t maskHi = static_cast<uint32_t>(tile->mask >> 32);
                     const uint32_t *tags = column + y;
@@ -2966,7 +2968,25 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         const uint32_t rawPixel = eyeColumn.at(eyeBand, y);
                         const uint8_t *rgb;
                         if constexpr (kKind == PlainKind::kAllOwn)
-                            rgb = tile->rgb[VBGO_TAG_INDEX(lo)];
+                        {
+                            StoreFrameRgb(dst, tileColors[VBGO_TAG_INDEX(lo)]);
+                            continue;
+                        }
+                        else if constexpr (kKind == PlainKind::kMixed)
+                        {
+                            const uint32_t color = tileColors[VBGO_TAG_INDEX(lo)];
+                            if (!(color & kFrameAlpha))
+                            {
+                                StoreFrameRgb(dst, color);
+                                continue;
+                            }
+                            const unsigned shade = (rawPixel >> 24) & 3;
+                            if (!rampWords || !shade)
+                                continue;
+                            StoreFrameRgb(dst, rampWords[shade]);
+                            flags |= kAutoColumnHi;
+                            continue;
+                        }
                         else if constexpr (kKind == PlainKind::kRampOnly)
                         {
                             const unsigned shade = (rawPixel >> 24) & 3;

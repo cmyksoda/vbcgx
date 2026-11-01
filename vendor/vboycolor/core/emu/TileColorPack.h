@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -90,10 +91,28 @@ struct ContextGroupBits
 class TileColorPack
 {
 public:
+    // A color as the renderer's pictures hold a pixel: B, G, R bytes in memory, then an alpha byte of 0.
+    static uint32_t FrameColor(const uint8_t rgb[3])
+    {
+        const uint8_t bytes[4] = {rgb[2], rgb[1], rgb[0], 0};
+        uint32_t word;
+        std::memcpy(&word, bytes, 4);
+        return word;
+    }
+    static constexpr uint32_t kNoFrameColor = ~0u; // (its alpha byte isn't 0, as no FrameColor's is)
+    static constexpr std::array<uint32_t, 64> NoFrameColors()
+    {
+        std::array<uint32_t, 64> colors{};
+        for (uint32_t &color : colors)
+            color = kNoFrameColor;
+        return colors;
+    }
     struct Tile
     {
         uint64_t mask = 0;       // bit (y * 8 + x) set = that tile pixel has a painted color
         uint8_t rgb[64][3] = {}; // indexed the same way
+        // (rgb as FrameColor gives it where mask is set, else kNoFrameColor: a pixel is painted with one word)
+        std::array<uint32_t, 64> frame = NoFrameColors();
     };
 
     // Colors one map cell gives the tile it shows (in one palette): only

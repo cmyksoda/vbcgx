@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 
 namespace
 {
@@ -54,6 +55,8 @@ namespace
         tile.rgb[index][0] = static_cast<uint8_t>(rgb >> 16);
         tile.rgb[index][1] = static_cast<uint8_t>(rgb >> 8);
         tile.rgb[index][2] = static_cast<uint8_t>(rgb);
+        if constexpr (std::is_same_v<T, TileColorPack::Tile>)
+            tile.frame[index] = TileColorPack::FrameColor(tile.rgb[index]);
     }
 
     // A pixel key's winning color: the most votes; ties go to the lower value
@@ -1584,6 +1587,8 @@ bool TileColorPack::Deserialize(const std::vector<uint8_t> &bytes)
     auto readTile = [&](Tile &tile) {
         tile.mask = ReadLe64(&bytes[offset]);
         std::memcpy(tile.rgb, &bytes[offset + 8], sizeof(tile.rgb));
+        for (unsigned i = 0; i < 64; ++i)
+            tile.frame[i] = tile.mask >> i & 1 ? FrameColor(tile.rgb[i]) : kNoFrameColor;
         offset += kTileBytes;
     };
     const uint32_t count = ReadLe32(&bytes[offset]);
