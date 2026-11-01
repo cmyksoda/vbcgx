@@ -468,7 +468,7 @@ class V810
  void FlushBlocks(void);
  void *CompileBlock(const Decoded *block, bool retried = false);
  size_t JitCodeUsed = 0, JitColdUsed = 0; /* (the hot and cold ends, in words) */
- uint32 *JitStub[16]; /* (shared code at the code buffer's start: JIT_STUB_*) */
+ uint32 *JitStub[18]; /* (shared code at the code buffer's start: JIT_STUB_*) */
  uint8 *JitWorkRam = nullptr;
 
  public:

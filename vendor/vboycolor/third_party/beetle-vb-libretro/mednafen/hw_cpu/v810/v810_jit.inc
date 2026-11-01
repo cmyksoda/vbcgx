@@ -113,6 +113,7 @@ public:
    void Mfctr(unsigned rt) { Mfspr(rt, 9); }
    void Mtctr(unsigned rs) { Mtspr(9, rs); }
    void Blr() { Word(0x4E800020); }
+   void Bclr(unsigned bo, unsigned bi) { Word(19u << 26 | bo << 21 | bi << 16 | 16u << 1); }
    void Blrl() { Word(0x4E800021); }
    /* b / bl to code already written */
    void BTo(const uint32 *to, unsigned link = 0) { Word(BranchWord(at, to, link)); }
@@ -521,6 +522,30 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          w.Lwz(0, 20, 1);
          w.Mtlr(0);
          w.Addi(1, 1, 16);
+         w.Blr();
+      }
+      for(unsigned word = 0; word < 2; ++word)
+      {
+         /* CR0 EQ if a halfword or word write leaves VIP DRAM (region 0, 0x20000 - 0x3FFFF) as it was: it changes
+          * nothing VIP_Write16 tracks (games copy their unchanged maps and sprites in every frame). */
+         JitStub[JIT_STUB_SAME16 + word] = w.at;
+         w.Rlwinm(0, 4, 15, 22, 31);
+         w.Cmplwi(0, 1);
+         w.Bclr(BO_FALSE, CR_EQ);
+         w.Rlwinm(6, 4, 0, 15, word ? 29 : 30);
+         w.Imm32(7, (uint32)(uintptr_t)VIP_DramBase());
+         if(word)
+         {
+            /* (its first halfword is its low one: in DRAM's halfwords as the Wii loads them, the high one) */
+            w.Lwzx(0, 7, 6);
+            w.Rlwinm(6, 5, 16, 0, 31);
+            w.Cmpw(0, 6);
+         }
+         else
+         {
+            w.Lhzx(0, 7, 6);
+            w.Cmpw(0, 5);
+         }
          w.Blr();
       }
       while((w.at - JitCode) & 7)
@@ -1051,27 +1076,9 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
                   w.Rlwinm(5, 5, 0, 16, 31);
                if(clear)
                {
-                  /* A write that leaves VIP DRAM (region 0, 0x20000 - 0x3FFFF) as it was changes nothing VIP_Write16
-                   * tracks (games copy their unchanged maps and sprites in every frame): the work RAM path's cycles. */
-                  w.Rlwinm(0, 4, 15, 22, 31);
-                  w.Cmplwi(0, 1);
-                  uint32 *const elsewhere = w.Bc(BO_FALSE, CR_EQ);
-                  w.Rlwinm(6, 4, 0, 15, word ? 29 : 30);
-                  w.Imm32(7, (uint32)(uintptr_t)VIP_DramBase());
-                  if(word)
-                  {
-                     /* (its first halfword is its low one: in DRAM's halfwords as the Wii loads them, the high one) */
-                     w.Lwzx(0, 7, 6);
-                     w.Rlwinm(6, 5, 16, 0, 31);
-                     w.Cmpw(0, 6);
-                  }
-                  else
-                  {
-                     w.Lhzx(0, 7, 6);
-                     w.Cmpw(0, 5);
-                  }
+                  /* (VIP DRAM left as it was: the work RAM path's cycles; a call keeps each store's code short) */
+                  w.BTo(JitStub[word ? JIT_STUB_SAME32 : JIT_STUB_SAME16], 1);
                   w.Patch(w.Bc(BO_TRUE, CR_EQ), cycles);
-                  w.Patch(elsewhere, w.at);
                }
                FirstCycle();
                w.BTo(JitStub[op.kind == BK_ST_B   ? JIT_STUB_WRITE8
