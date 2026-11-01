@@ -1764,9 +1764,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
     // its layer (by the extent - see the figures below) and wants its pair. Only bands where that can change are read.
     constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
     constexpr int kScanPerCell = 64;
-    uint64_t markWalk[kBands] = {}; // (cells the shortcut walks after all: their runs add markers - see below)
     auto rightFromEnds = [&](const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut) -> bool {
-        std::fill(markWalk, markWalk + kBands, 0);
         if (!m_pack || !v.cell_worlds || (markers && !v.band_chr))
             return false;
         if (m_endsRest)
@@ -1874,7 +1872,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         if (marks && !(((lo & kRunMaskLo) == doneLo && hi == doneHi) || !VBGO_TAG_PIXEL(lo) ||
                                        !(EyeTaggedPixel(eyeBits, eyeClut, x, y) & 0xFFFFFFu)))
                         {
-                            markWalk[b] |= (1ull << (x >> 3)) & ~keepRight[b];
                             const int lx = LeftX(vbgo_tag_compose(lo, hi), static_cast<int>(x), 1, y);
                             if (lx >= 0 && lx < VBGO_TT_WIDTH)
                             {
@@ -2130,10 +2127,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             if (wanted >> p & 1)
                 m_pairs[p].wantedAt = m_frame;
         // (what it read, in cells walked: a cell's worth for every kScanPerCell sprite tags)
-        int read = openCells + scanned / kScanPerCell;
-        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-            read += __builtin_popcountll(markWalk[b]);
-        m_endsRead += static_cast<uint32_t>(read) - m_endsRead / 8;
+        m_endsRead += static_cast<uint32_t>(openCells + scanned / kScanPerCell) - m_endsRead / 8;
         return true;
     };
 
@@ -2227,95 +2221,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             return cached.run;
         };
 
-        // (the right eye: a cell not kept, walked for its bookkeeping alone - the frame's extents and wanted pairs are
-        // the shortcut's - as the walk below walks it; a band's first run is counted where the cell is next kept)
-        auto walkCell = [&](unsigned b, unsigned c) {
-            Band &band = rightBands[b];
-            const uint32_t bandKey = v.band_key[b];
-            const uint64_t cellBits = static_cast<uint64_t>(c) << 32;
-            const bool tagged = !v.tagged || (v.tagged[b] >> c & 1);
-            for (uint32_t x = c * 8; x < c * 8 + 8; ++x)
-            {
-                rightSummaryState[x] = 0;
-                const uint32_t *column = v.columns[x];
-                const uint16_t *columnCells = v.cells[x];
-                if (!column)
-                    continue;
-                uint32_t &active = rightActive[x];
-                if (!tagged)
-                {
-                    active &= ~(1u << b);
-                    continue;
-                }
-                BandColumn &here = rightColumns[x * kBands + b];
-                const EyeColumn eyeColumn(eyeBits, eyeClut, x);
-                const uint32_t eyeBand = eyeColumn.band(b);
-                uint64_t runKey = ~0ull;
-                uint32_t runHi = 0, runLo = ~0u, skipHi = VBGO_TAG_NO_HI;
-                Run run;
-                bool counted = false, slowHere = false;
-                for (uint32_t y = b * 8; y < b * 8 + 8; ++y)
-                {
-                    const uint32_t lo = column[y];
-                    if ((lo & kRunMaskLo) == runLo && columnCells[vbgo_tt_cell_at(y)] == skipHi &&
-                        (!run.slow || run.band == static_cast<int>(b)))
-                    {
-                        while (y + 1 < b * 8 + 8 && (column[y + 1] & kRunMaskLo) == runLo &&
-                               columnCells[vbgo_tt_cell_at(y + 1)] == skipHi)
-                            ++y;
-                        continue;
-                    }
-                    if (!vbgo_tag_drawn(lo, bandKey))
-                        continue;
-                    const uint64_t t = vbgo_tag_compose(lo, columnCells[vbgo_tt_cell_at(y)]);
-                    const unsigned pixel = VBGO_TAG_PIXEL(t);
-                    const uint32_t rawPixel = eyeColumn.at(eyeBand, y);
-                    if (pixel && !(rawPixel & 0xFFFFFFu))
-                        continue;
-                    const bool firstHere = !counted;
-                    if (firstHere)
-                    {
-                        counted = true;
-                        here.first = (t & kRunMask) | static_cast<uint64_t>(y & 7) << 48 |
-                                     static_cast<uint64_t>(rawPixel >> 26) << 52;
-                    }
-                    if ((t & kRunMask) != runKey)
-                    {
-                        runKey = t & kRunMask;
-                        runHi = vbgo_tag_hi(t), runLo = lo & kRunMaskLo;
-                        if (!firstHere)
-                            countRun(runKey, x, y, rawPixel >> 26, &band.cells, c);
-                        run = setUpRun(t, runKey);
-                        if (run.pairSlot)
-                            notePairSlot(band.pairSlots, cellBits | run.pairSlot);
-                    }
-                    slowHere |= run.slow;
-                    skipHi = runHi;
-                    if (!run.slow || !pixel || static_cast<int>(y >> 3) == run.band)
-                        continue;
-                    run.band = static_cast<int>(y >> 3);
-                    const unsigned chr = VBGO_TAG_CHAR(t);
-                    if (!markers || !m_slotHasMarkers[chr])
-                        continue;
-                    const bool sprite = VBGO_TAG_IS_OBJ(t) != 0;
-                    const ContextGroupBits bits = m_slotMarkers[chr] & (sprite ? ~m_layerBound : m_layerBound);
-                    if (bits.Any())
-                        band.markCells |= 1ull << c;
-                    const int lx = LeftX(t, static_cast<int>(x), eye, y);
-                    if (bits.Any() && lx >= 0 && lx < VBGO_TT_WIDTH)
-                    {
-                        const unsigned cell = (y >> 3) * kGridW + (lx >> 3);
-                        markers[cell] |= bits;
-                        NoteMarkerCell(cell);
-                    }
-                }
-                if (counted)
-                    here.last = runKey, here.first |= slowHere ? kSlowColumn : 0, active |= 1u << b;
-                else
-                    active &= ~(1u << b);
-            }
-        };
-
         if (eye)
         {
             // The right eye isn't shown, but later frames go by what it draws: the layers'
@@ -2332,14 +2237,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                                m_paintStateRight);
                     band.onShades = static_cast<uint8_t>(rightOnShades);
                     const uint64_t walked = ~keepRight[b] & kAllCells;
-                    band.skipped = (band.skipped | walked) & ~markWalk[b];
+                    band.skipped |= walked;
                     band.unreached = (band.unreached & ~walked) | (v.band_key[b] ? 0 : walked);
                 }
-                // (a cell whose runs add markers is walked now, as the walk would, so a later Paint keeping it reads
-                // it again by its band as it is then, as before)
-                for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-                    for (uint64_t cells = markWalk[b]; cells; cells &= cells - 1)
-                        walkCell(b, static_cast<unsigned>(__builtin_ctzll(cells)));
                 continue;
             }
             // (cells whose walk a Paint skipped count as not kept; the kept ones are walked as they would have been
