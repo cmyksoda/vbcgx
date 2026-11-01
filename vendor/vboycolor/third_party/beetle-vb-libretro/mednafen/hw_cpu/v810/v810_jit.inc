@@ -508,32 +508,6 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
             for(uint32 *m : miss)
                w.Patch(m, w.at);
          }
-         if(k >= 4)
-         {
-            /* A halfword or word write that leaves VIP DRAM (region 0, 0x20000 - 0x3FFFF) as it was changes nothing
-             * VIP_Write16 tracks: no call (games copy their unchanged maps and sprites in every frame). */
-            w.Rlwinm(0, 4, 15, 22, 31);
-            w.Cmplwi(0, 1);
-            uint32 *const elsewhere = w.Bc(BO_FALSE, CR_EQ);
-            w.Rlwinm(6, 4, 0, 15, k == 5 ? 29 : 30);
-            w.Imm32(7, (uint32)(uintptr_t)VIP_DramBase());
-            if(k == 5)
-            {
-               /* (a word's first halfword is its low one: in DRAM's halfwords as the Wii loads them, the high one) */
-               w.Lwzx(0, 7, 6);
-               w.Rlwinm(6, 5, 16, 0, 31);
-            }
-            else
-            {
-               w.Lhzx(0, 7, 6);
-               w.Mr(6, 5);
-            }
-            w.Cmpw(0, 6);
-            uint32 *const changes = w.Bc(BO_FALSE, CR_EQ);
-            w.Blr();
-            w.Patch(elsewhere, w.at);
-            w.Patch(changes, w.at);
-         }
          w.Stwu(1, -16, 1);
          w.Mflr(0);
          w.Stw(0, 20, 1);
@@ -1061,7 +1035,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
             w.Sthbrx(5, JR_RAM, 7);
          else
             w.Stwbrx(5, JR_RAM, 7);
-         uint32 *onward = NULL;
+         uint32 *onward = NULL, *const cycles = w.at;
          for(int path = 0; path < 2; ++path)
          {
             if(path)
@@ -1075,6 +1049,30 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
                   w.Rlwinm(5, 5, 0, 24, 31);
                else if(op.kind == BK_ST_H)
                   w.Rlwinm(5, 5, 0, 16, 31);
+               if(clear)
+               {
+                  /* A write that leaves VIP DRAM (region 0, 0x20000 - 0x3FFFF) as it was changes nothing VIP_Write16
+                   * tracks (games copy their unchanged maps and sprites in every frame): the work RAM path's cycles. */
+                  w.Rlwinm(0, 4, 15, 22, 31);
+                  w.Cmplwi(0, 1);
+                  uint32 *const elsewhere = w.Bc(BO_FALSE, CR_EQ);
+                  w.Rlwinm(6, 4, 0, 15, word ? 29 : 30);
+                  w.Imm32(7, (uint32)(uintptr_t)VIP_DramBase());
+                  if(word)
+                  {
+                     /* (its first halfword is its low one: in DRAM's halfwords as the Wii loads them, the high one) */
+                     w.Lwzx(0, 7, 6);
+                     w.Rlwinm(6, 5, 16, 0, 31);
+                     w.Cmpw(0, 6);
+                  }
+                  else
+                  {
+                     w.Lhzx(0, 7, 6);
+                     w.Cmpw(0, 5);
+                  }
+                  w.Patch(w.Bc(BO_TRUE, CR_EQ), cycles);
+                  w.Patch(elsewhere, w.at);
+               }
                FirstCycle();
                w.BTo(JitStub[op.kind == BK_ST_B   ? JIT_STUB_WRITE8
                              : op.kind == BK_ST_H ? JIT_STUB_WRITE16
