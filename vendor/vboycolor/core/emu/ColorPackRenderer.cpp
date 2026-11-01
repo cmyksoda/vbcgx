@@ -2650,7 +2650,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 notePairSlot(bands[b].pairSlots, static_cast<uint64_t>(c) << 32 | VBGO_TAG_CHAR(tag) | 1u << pair << 11);
             }
         };
-        auto countStarts = [&](uint32_t x, unsigned b, uint32_t starts) {
+        auto countStarts = [&](uint32_t x, unsigned b, uint32_t starts) __attribute__((always_inline)) {
             const uint32_t *tags = v.columns[x] + b * 8;
             const uint32_t eyeBand = eyeBits[x * 56 + b * 2] | eyeBits[x * 56 + b * 2 + 1] << 8;
             CellSums *const sums = &bands[b].cells;
@@ -2743,10 +2743,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     continue;
                 const uint32_t *tags = column + b * 8;
                 const uint32_t eyeBand = eyeBits[x * 56 + b * 2] | eyeBits[x * 56 + b * 2 + 1] << 8;
-                uint32_t counted = 0;
-                for (uint32_t j = 0, lit = copyLit(eyeBand); j < 8; ++j, lit >>= 2)
-                    counted |= (lit & static_cast<uint32_t>(tags[j] != 0)) << j;
-                if (!counted)
+                uint32_t f = 0, lit = copyLit(eyeBand); // (f: the first row counted - a lit shade and a tag - or 8)
+                while (f < 8 && !((lit & 1) && tags[f]))
+                    ++f, lit >>= 2;
+                if (f == 8)
                 {
                     activeAt[k] &= ~bandBit;
                     continue;
@@ -2758,11 +2758,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 {
                     starts |= (static_cast<uint32_t>(lower.last >> 48) & ((1u << shift) - 1)) << (8 - shift);
                     const uint32_t lowerFirst = static_cast<uint32_t>(lower.first >> 48 & 7);
-                    if (lowerFirst < shift && upperActive && (counted & ((1u << (8 - shift)) - 1)) &&
+                    if (lowerFirst < shift && upperActive && f < 8 - shift &&
                         (lower.first & kKeyBits) != (upper.last & kKeyBits))
                         starts |= 1u << (lowerFirst + 8 - shift);
                 }
-                const uint32_t f = static_cast<uint32_t>(__builtin_ctz(counted));
                 starts &= ~(1u << f);
                 const uint16_t *cells = v.cells[x] + vbgo_tt_cell_at(b * 8);
                 const uint32_t l = starts ? 31 - static_cast<uint32_t>(__builtin_clz(starts)) : f;
