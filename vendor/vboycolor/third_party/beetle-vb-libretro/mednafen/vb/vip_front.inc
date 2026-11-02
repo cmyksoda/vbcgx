@@ -274,11 +274,16 @@ static INLINE bool VbgoNoFills(int *fills_here, uint32 bgsc, unsigned cell)
    } \
    memcpy(&d0, OpaqueQuad[p & 0xFF], 4); \
    memcpy(&d1, OpaqueQuad[p >> 8], 4); \
-   /* (as a mask, f | f >> 1 keeps a cover byte of 0xFF and drops a fill's 1: the row draws over fills) */ \
-   f0 = c0 & 0xFEFEFEFEu; \
-   f1 = c1 & 0xFEFEFEFEu; \
-   own0 = d0 & ~(f0 | f0 >> 1); \
-   own1 = d1 & ~(f1 | f1 >> 1); \
+   /* (with nothing in front, the usual, it draws all it has) */ \
+   own0 = d0, own1 = d1; \
+   if(c0 | c1) \
+   { \
+    /* (as a mask, f | f >> 1 keeps a cover byte of 0xFF and drops a fill's 1: the row draws over fills) */ \
+    f0 = c0 & 0xFEFEFEFEu; \
+    f1 = c1 & 0xFEFEFEFEu; \
+    own0 &= ~(f0 | f0 >> 1); \
+    own1 &= ~(f1 | f1 >> 1); \
+   } \
    if(own0 | own1) \
    { \
     uint32_t b = bits; \
