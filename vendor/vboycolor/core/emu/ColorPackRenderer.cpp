@@ -329,6 +329,57 @@ __attribute__((noinline)) bool GatherCell(uint8_t *dst, const uint32_t *const co
     }
     return true;
 }
+
+// (GatherCellSlots keeps this many slots' rows at once)
+constexpr int kGatherSlots = 4;
+
+// GatherCell for every slot at once, where more than one slot's layers may show (dst, then a slot every slotBytes):
+// slotOf gives a tag's slot (-1 none, -2 a sprite pair's, which need the pixel-by-pixel pass: false, nothing written).
+__attribute__((noinline)) bool GatherCellSlots(uint8_t *dst, size_t slotBytes, int count, const uint32_t *const columns[8],
+                                               const uint8_t *packed, const uint32_t *clut, uint16_t shadePack[8],
+                                               const int8_t *slotOf, CellShades &cellShades, unsigned firstRow)
+{
+    uint32_t rows[kGatherSlots][8] = {};
+    unsigned made = cellShades.shades;
+    for (unsigned x = 0; x < 8; ++x)
+    {
+        const uint32_t *column = columns[x];
+        if (!column)
+            continue;
+        const uint8_t *pixels = packed + x * 56;
+        const unsigned values = pixels[0] | pixels[1] << 8;
+        unsigned shades = shadePack[x];
+        if (!shades)
+            shadePack[x] = static_cast<uint16_t>(shades = ColumnShades(clut + x * 4));
+        if (!values && !(shades & 3))
+            continue;
+        if (shades != made)
+            cellShades.Make(made = shades);
+        const uint32_t *tags = column + firstRow, *bit = cellShades.bit[x];
+        for (unsigned j = 0; j < 8; ++j)
+        {
+            const int k = slotOf[tags[j] >> 19 & 0xFF];
+            if (k < 0)
+            {
+                if (k == -2)
+                    return false;
+                continue;
+            }
+            rows[k][j] |= bit[values >> (2 * j) & 3];
+        }
+    }
+    for (int k = 0; k < count; ++k, dst += slotBytes)
+    {
+        uint8_t *row = dst;
+        for (unsigned j = 0; j < 8; ++j, row += kRowBytes)
+        {
+            row[0] = static_cast<uint8_t>(rows[k][j]);
+            row[kShadeBytes] = static_cast<uint8_t>(rows[k][j] >> 8);
+            row[2 * kShadeBytes] = static_cast<uint8_t>(rows[k][j] >> 16);
+        }
+    }
+    return true;
+}
 } // namespace
 
 // The worlds with tags drawn in a grid cell, a bit each.
@@ -3925,12 +3976,14 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
         // pair's also count only eye-only sprites (see slotSprite).
         int32_t slotBase[256];
         uint8_t slotSprite[256];
+        int8_t slotOf[256]; // (GatherCellSlots')
         for (unsigned i = 0; i < 256; ++i)
         {
             const unsigned world = i >> 3;
             const int k = !(i >> 1 & 3) ? -1 : !(i & 1) ? layerSlot[eye][world] : spriteSlot[world];
             slotBase[i] = k < 0 ? -1 : static_cast<int32_t>(k * 2 * eyeRows);
             slotSprite[i] = (i & 1) && k >= 0;
+            slotOf[i] = static_cast<int8_t>(k < 0 ? -1 : slotSprite[i] ? -2 : k);
         }
 
         // (per slot once used: how its pass counts each kind of tag - by its sprite, pixel and world bits)
@@ -4007,6 +4060,11 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
                         continue;
                     }
                 }
+                else if (bandKey == VBGO_TT_BAND_REACHED && count <= kGatherSlots &&
+                         GatherCellSlots(CellByte(cellWord, c), slotWords * 4, count, view[eye].columns + c * 8,
+                                         eyeBits + c * 8 * 56 + b * 2, eyeClut + c * 8 * 4, shadePack + c * 8, slotOf,
+                                         cellShades, b * 8))
+                    continue;
 
                 if (keep)
                 {
