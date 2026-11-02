@@ -32,11 +32,45 @@ inline int CountSet(uint32_t x)
 // are long sequences on Broadway; two guard words before and three after keep a shift by up to 64 pixels inside.
 constexpr int kRowWords = VBGO_TT_WIDTH / 32, kGuardWords = 2, kGuardedRow = kRowWords + kGuardWords + 3;
 
-// Word k of the row shifted so that bit x holds the row's bit x + d.
-inline uint32_t Shifted(const uint32_t *row, int k, int d)
+// A carry-save adder: h:l counts the set bits among a, b and c, bit by bit.
+inline void Csa(uint32_t &h, uint32_t &l, uint32_t a, uint32_t b, uint32_t c)
 {
-    const int bit = 32 * (k + kGuardWords) + d, w = bit >> 5, s = bit & 31;
-    return s ? (row[w] >> s) | (row[w + 1] << (32 - s)) : row[w];
+    const uint32_t u = a ^ b;
+    h = (a & b) | (u & c);
+    l = u ^ c;
+}
+
+// The set bits of count words (a multiple of 16), word i being right[i] & left[i] + k shifted right by s: carry-save
+// adders sum them for one popcount per 16 words (PowerPC counts bits in software, and dense rows made that most of it).
+inline int CountShifted(const uint32_t *right, const uint32_t *const *left, int count, int k, int s)
+{
+    uint32_t ones = 0, twos = 0, fours = 0, eights = 0;
+    int sixteens = 0;
+    const auto word = [&](int i) {
+        const uint32_t *l = left[i] + k;
+        return right[i] & (s ? (l[0] >> s) | (l[1] << (32 - s)) : l[0]);
+    };
+    for (int i = 0; i < count; i += 16)
+    {
+        uint32_t twosA, twosB, foursA, foursB, eightsA, eightsB, sixteen;
+        Csa(twosA, ones, ones, word(i), word(i + 1));
+        Csa(twosB, ones, ones, word(i + 2), word(i + 3));
+        Csa(foursA, twos, twos, twosA, twosB);
+        Csa(twosA, ones, ones, word(i + 4), word(i + 5));
+        Csa(twosB, ones, ones, word(i + 6), word(i + 7));
+        Csa(foursB, twos, twos, twosA, twosB);
+        Csa(eightsA, fours, fours, foursA, foursB);
+        Csa(twosA, ones, ones, word(i + 8), word(i + 9));
+        Csa(twosB, ones, ones, word(i + 10), word(i + 11));
+        Csa(foursA, twos, twos, twosA, twosB);
+        Csa(twosA, ones, ones, word(i + 12), word(i + 13));
+        Csa(twosB, ones, ones, word(i + 14), word(i + 15));
+        Csa(foursB, twos, twos, twosA, twosB);
+        Csa(eightsB, fours, fours, foursA, foursB);
+        Csa(sixteen, eights, eights, eightsA, eightsB);
+        sixteens += CountSet(sixteen);
+    }
+    return 16 * sixteens + 8 * CountSet(eights) + 4 * CountSet(fours) + 2 * CountSet(twos) + CountSet(ones);
 }
 
 constexpr int kMaxDisparity = 64;
@@ -326,6 +360,57 @@ __attribute__((noinline)) bool GatherCell(uint8_t *dst, const uint32_t *const co
         dst[0] = static_cast<uint8_t>(rows[j]);
         dst[kShadeBytes] = static_cast<uint8_t>(rows[j] >> 8);
         dst[2 * kShadeBytes] = static_cast<uint8_t>(rows[j] >> 16);
+    }
+    return true;
+}
+
+// (GatherCellSlots keeps this many slots' rows at once)
+constexpr int kGatherSlots = 4;
+
+// GatherCell for every slot at once, where more than one slot's layers may show (dst, then a slot every slotBytes):
+// slotOf gives a tag's slot (-1 none, -2 a sprite pair's, which need the pixel-by-pixel pass: false, nothing written).
+__attribute__((noinline)) bool GatherCellSlots(uint8_t *dst, size_t slotBytes, int count, const uint32_t *const columns[8],
+                                               const uint8_t *packed, const uint32_t *clut, uint16_t shadePack[8],
+                                               const int8_t *slotOf, CellShades &cellShades, unsigned firstRow)
+{
+    uint32_t rows[kGatherSlots][8] = {};
+    unsigned made = cellShades.shades;
+    for (unsigned x = 0; x < 8; ++x)
+    {
+        const uint32_t *column = columns[x];
+        if (!column)
+            continue;
+        const uint8_t *pixels = packed + x * 56;
+        const unsigned values = pixels[0] | pixels[1] << 8;
+        unsigned shades = shadePack[x];
+        if (!shades)
+            shadePack[x] = static_cast<uint16_t>(shades = ColumnShades(clut + x * 4));
+        if (!values && !(shades & 3))
+            continue;
+        if (shades != made)
+            cellShades.Make(made = shades);
+        const uint32_t *tags = column + firstRow, *bit = cellShades.bit[x];
+        for (unsigned j = 0; j < 8; ++j)
+        {
+            const int k = slotOf[tags[j] >> 19 & 0xFF];
+            if (k < 0)
+            {
+                if (k == -2)
+                    return false;
+                continue;
+            }
+            rows[k][j] |= bit[values >> (2 * j) & 3];
+        }
+    }
+    for (int k = 0; k < count; ++k, dst += slotBytes)
+    {
+        uint8_t *row = dst;
+        for (unsigned j = 0; j < 8; ++j, row += kRowBytes)
+        {
+            row[0] = static_cast<uint8_t>(rows[k][j]);
+            row[kShadeBytes] = static_cast<uint8_t>(rows[k][j] >> 8);
+            row[2 * kShadeBytes] = static_cast<uint8_t>(rows[k][j] >> 16);
+        }
     }
     return true;
 }
@@ -3925,12 +4010,14 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
         // pair's also count only eye-only sprites (see slotSprite).
         int32_t slotBase[256];
         uint8_t slotSprite[256];
+        int8_t slotOf[256]; // (GatherCellSlots')
         for (unsigned i = 0; i < 256; ++i)
         {
             const unsigned world = i >> 3;
             const int k = !(i >> 1 & 3) ? -1 : !(i & 1) ? layerSlot[eye][world] : spriteSlot[world];
             slotBase[i] = k < 0 ? -1 : static_cast<int32_t>(k * 2 * eyeRows);
             slotSprite[i] = (i & 1) && k >= 0;
+            slotOf[i] = static_cast<int8_t>(k < 0 ? -1 : slotSprite[i] ? -2 : k);
         }
 
         // (per slot once used: how its pass counts each kind of tag - by its sprite, pixel and world bits)
@@ -4007,6 +4094,11 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
                         continue;
                     }
                 }
+                else if (bandKey == VBGO_TT_BAND_REACHED && count <= kGatherSlots &&
+                         GatherCellSlots(CellByte(cellWord, c), slotWords * 4, count, view[eye].columns + c * 8,
+                                         eyeBits + c * 8 * 56 + b * 2, eyeClut + c * 8 * 4, shadePack + c * 8, slotOf,
+                                         cellShades, b * 8))
+                    continue;
 
                 if (keep)
                 {
@@ -4083,25 +4175,22 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
     std::array<int16_t, kBands> found;
     found.fill(kNoDisparity);
 
+    // (a band's right-picture words that have pixels, each with its left row's word at the same place (so shift d reads
+    // that word + floor(d / 32) and the next), padded with empty words to a multiple of 16)
+    constexpr int kBandWords = 8 * 3 * kRowWords;
+    uint32_t litRight[kBandWords + 15];
+    const uint32_t *litLeft[kBandWords + 15];
+
     // How many right-picture pixels line up with the left's at each shift lo to hi (n[d + kMaxDisparity]), over all of
     // the band's rows and shades.
-    auto scores = [&](int by, int from, int to, int lo, int hi, int *n) {
-        for (int y = by * 8; y < by * 8 + 8; ++y)
-            for (int s = 0; s < 3; ++s)
-            {
-                const uint32_t *r = &rightBits[(y * 3 + s) * kGuardedRow];
-                const uint32_t *l = &leftBits[(y * 3 + s) * kGuardedRow];
-                for (int w = from; w <= to; ++w)
-                    if (const uint32_t right = r[kGuardWords + w])
-                        for (int d = lo; d <= hi; ++d)
-                            if (const uint32_t both = right & Shifted(l, w, d))
-                                n[d + kMaxDisparity] += CountSet(both);
-            }
+    auto scores = [&](int words, int lo, int hi, int *n) {
+        for (int d = lo; d <= hi; ++d)
+            n[d + kMaxDisparity] = CountShifted(litRight, litLeft, words, d >> 5, d & 31);
     };
 
     for (int band = 0; band < kBands; ++band)
     {
-        int lit = 0, from = kRowWords, to = -1;
+        int lit = 0, from = kRowWords, to = -1, words = 0;
         for (int y = band * 8; y < band * 8 + 8; ++y)
             for (int s = 0; s < 3; ++s)
                 for (int w = 0; w < kRowWords; ++w)
@@ -4110,9 +4199,13 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
                         lit += CountSet(r);
                         from = std::min(from, w);
                         to = std::max(to, w);
+                        litRight[words] = r;
+                        litLeft[words++] = &leftBits[(y * 3 + s) * kGuardedRow + kGuardWords + w];
                     }
         if (lit < 16)
             continue;
+        for (; words & 15; ++words)
+            litRight[words] = 0, litLeft[words] = leftBits + kGuardWords;
 
         const int previous = pair.estimated ? pair.disparity[band] : kNoDisparity;
         const int around = previous != kNoDisparity ? previous : 0;
@@ -4162,7 +4255,7 @@ void ColorPackRenderer::EstimatePair(Pair &pair, const uint32_t *leftBits, const
         auto fine = [&](int lo, int hi, int &bestD) {
             lo = std::max(-kMaxDisparity, lo), hi = std::min(kMaxDisparity, hi);
             int n[2 * kMaxDisparity + 1] = {};
-            scores(band, from, to, lo, hi, n);
+            scores(words, lo, hi, n);
             int best = -1;
             for (int d = lo; d <= hi; ++d)
                 if (n[d + kMaxDisparity] > best ||

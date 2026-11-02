@@ -508,6 +508,215 @@ static void DrawAffine(uint8 *target, uint16 RealY, bool lr, uint32 ParamBase,]=
  for(x = start_x; x <= final_x; x++)
  {]=]
         "vip_draw.inc (DrawAffine no-rotation run)")
+    # A zoomed-in unrotated line a map cell at a time: the cell test and the 8-pixel-group test leave the per-pixel loop.
+    _vbgo_replace_once(DRAW
+        [=[ else
+ for(x = start_x; x <= final_x; x++)
+ {
+  unsigned int char_sub_x;
+  uint32 pixel = 0;
+
+  SourceX &= SourceX_Mask;
+
+  if((SourceX >> 12) != cell_at)
+  {
+   cell_at = SourceX >> 12;
+   bgsc = bgsc_overplane;
+   vbgo_cell = OverplaneChar & 0xFFFF; /* VirtualBoyGo */
+
+   if(SourceX < (SourceX_Size << 9))
+   {
+    vbgo_cell = (BGMap_Base | ((SourceX >> 6) & ~0xFFF) | ((SourceX >> 12) & 0x3F)) & 0xFFFF; /* VirtualBoyGo */
+    bgsc = BGMap[vbgo_cell];
+    USE_ROW(vbgo_cell);
+   }
+   vbgo_fills = vbgo_row && vbgo_tt_fills_from(bgsc & 0x7FF, vbgo_cell); /* VirtualBoyGo */
+
+   hflip_xor = ((int32)(bgsc << 18) >> 30) & 0xE;
+   char_sub_y = (((int32)(bgsc << 19) >> 31) & 0x7) ^ ((SourceY >> 9) & 0x7);
+   char_row = CHR16[((bgsc & 0x7FF) * 8) | char_sub_y];
+   vbgo_cbits = vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, 0, char_sub_y, bgsc >> 14, 0); /* VirtualBoyGo */
+   plt = GPLT_Cache[bgsc >> 14];
+   if((bgsc & 0x7FF) != used_chr)
+   {
+    USE_BG_CHR(bgsc & 0x7FF);
+    used_chr = bgsc & 0x7FF;
+   }
+  }
+
+  char_sub_x = hflip_xor ^ ((SourceX >> 8) & 0xE);
+  pixel = (char_row >> char_sub_x) & 0x3;
+
+  if(pixel)
+  {
+   target[x] = plt[pixel];
+   if(vbgo_row) /* VirtualBoyGo: char_sub_x is even, so << 10 puts its half in VBGO_TT_BG_BITS's column field */
+   {
+    vbgo_row[x * VBGO_TT_COLUMN] = vbgo_cbits | char_sub_x << 10 | pixel << 20;
+    vbgo_crow[x * VBGO_TT_CELL_COLUMN] = (uint16_t)vbgo_cell;
+    if((x >> 3) != vbgo_wgroup)
+     vbgo_tt_wcells[vbgo_wgroup = x >> 3] |= vbgo_wbit;
+   }
+  }
+  else if(vbgo_fills) /* VirtualBoyGo */
+   vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], &vbgo_crow[x * VBGO_TT_CELL_COLUMN], vbgo_cbits | char_sub_x << 10, vbgo_cell),
+   vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_fillc[x >> 3] = 1;
+
+  SourceX += dx;
+ }
+}
+else
+{
+]=]
+        [=[ else if((dx < 0 ? -dx : dx) < 512) /* VirtualBoyGo */
+ {
+  /* (zoomed in, a map cell holds over 8 pixels: its run is counted once, the reciprocal's quotient one short at most, so
+     the pixels go without the cell and group tests, and a blank character row without a pixel each) */
+  const uint32 run_step = (uint32)(dx < 0 ? -dx : dx);
+  x = start_x;
+  while(x <= final_x)
+  {
+   int32 run_end = final_x;
+   SourceX &= SourceX_Mask;
+
+   bgsc = bgsc_overplane;
+   vbgo_cell = OverplaneChar & 0xFFFF;
+
+   if(SourceX < (SourceX_Size << 9))
+   {
+    vbgo_cell = (BGMap_Base | ((SourceX >> 6) & ~0xFFF) | ((SourceX >> 12) & 0x3F)) & 0xFFFF;
+    bgsc = BGMap[vbgo_cell];
+    USE_ROW(vbgo_cell);
+   }
+   vbgo_fills = vbgo_row && vbgo_tt_fills_from(bgsc & 0x7FF, vbgo_cell);
+
+   hflip_xor = ((int32)(bgsc << 18) >> 30) & 0xE;
+   char_sub_y = (((int32)(bgsc << 19) >> 31) & 0x7) ^ ((SourceY >> 9) & 0x7);
+   char_row = CHR16[((bgsc & 0x7FF) * 8) | char_sub_y];
+   vbgo_cbits = vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, 0, char_sub_y, bgsc >> 14, 0);
+   plt = GPLT_Cache[bgsc >> 14];
+   if((bgsc & 0x7FF) != used_chr)
+   {
+    USE_BG_CHR(bgsc & 0x7FF);
+    used_chr = bgsc & 0x7FF;
+   }
+
+   if(run_step)
+   {
+    const uint32 room = dx < 0 ? (SourceX & 0xFFF) : 0xFFF - (SourceX & 0xFFF);
+    uint32 steps = (uint32)(((uint64)room * blank_rdx) >> 32);
+    if((steps + 1) * run_step <= room)
+     steps++;
+    if((int32)steps < final_x - x)
+     run_end = x + (int32)steps;
+   }
+
+   if(!char_row && !vbgo_fills)
+   {
+    SourceX += (uint32)((int32)dx * (run_end - x + 1));
+    x = run_end + 1;
+   }
+   else if(vbgo_row && !vbgo_fills && ((char_row | (char_row >> 1)) & 0x5555) == 0x5555)
+   {
+    const int32 run_start = x;
+    int group;
+    for(; x <= run_end; x++)
+    {
+     const unsigned int char_sub_x = hflip_xor ^ ((SourceX >> 8) & 0xE);
+     const uint32 pixel = (char_row >> char_sub_x) & 0x3;
+     target[x] = plt[pixel];
+     vbgo_row[x * VBGO_TT_COLUMN] = vbgo_cbits | char_sub_x << 10 | pixel << 20;
+     vbgo_crow[x * VBGO_TT_CELL_COLUMN] = (uint16_t)vbgo_cell;
+     SourceX += dx;
+    }
+    for(group = run_start >> 3; group <= run_end >> 3; group++)
+     vbgo_tt_wcells[group] |= vbgo_wbit;
+    vbgo_wgroup = run_end >> 3;
+   }
+   else
+    for(; x <= run_end; x++)
+    {
+     const unsigned int char_sub_x = hflip_xor ^ ((SourceX >> 8) & 0xE);
+     const uint32 pixel = (char_row >> char_sub_x) & 0x3;
+
+     if(pixel)
+     {
+      target[x] = plt[pixel];
+      if(vbgo_row)
+      {
+       vbgo_row[x * VBGO_TT_COLUMN] = vbgo_cbits | char_sub_x << 10 | pixel << 20;
+       vbgo_crow[x * VBGO_TT_CELL_COLUMN] = (uint16_t)vbgo_cell;
+       if((x >> 3) != vbgo_wgroup)
+        vbgo_tt_wcells[vbgo_wgroup = x >> 3] |= vbgo_wbit;
+      }
+     }
+     else if(vbgo_fills)
+      vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], &vbgo_crow[x * VBGO_TT_CELL_COLUMN], vbgo_cbits | char_sub_x << 10, vbgo_cell),
+      vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_fillc[x >> 3] = 1;
+
+     SourceX += dx;
+    }
+  }
+ }
+ else
+ for(x = start_x; x <= final_x; x++)
+ {
+  unsigned int char_sub_x;
+  uint32 pixel = 0;
+
+  SourceX &= SourceX_Mask;
+
+  if((SourceX >> 12) != cell_at)
+  {
+   cell_at = SourceX >> 12;
+   bgsc = bgsc_overplane;
+   vbgo_cell = OverplaneChar & 0xFFFF; /* VirtualBoyGo */
+
+   if(SourceX < (SourceX_Size << 9))
+   {
+    vbgo_cell = (BGMap_Base | ((SourceX >> 6) & ~0xFFF) | ((SourceX >> 12) & 0x3F)) & 0xFFFF; /* VirtualBoyGo */
+    bgsc = BGMap[vbgo_cell];
+    USE_ROW(vbgo_cell);
+   }
+   vbgo_fills = vbgo_row && vbgo_tt_fills_from(bgsc & 0x7FF, vbgo_cell); /* VirtualBoyGo */
+
+   hflip_xor = ((int32)(bgsc << 18) >> 30) & 0xE;
+   char_sub_y = (((int32)(bgsc << 19) >> 31) & 0x7) ^ ((SourceY >> 9) & 0x7);
+   char_row = CHR16[((bgsc & 0x7FF) * 8) | char_sub_y];
+   vbgo_cbits = vbgo_bits | VBGO_TT_BG_BITS(bgsc & 0x7FF, 0, char_sub_y, bgsc >> 14, 0); /* VirtualBoyGo */
+   plt = GPLT_Cache[bgsc >> 14];
+   if((bgsc & 0x7FF) != used_chr)
+   {
+    USE_BG_CHR(bgsc & 0x7FF);
+    used_chr = bgsc & 0x7FF;
+   }
+  }
+
+  char_sub_x = hflip_xor ^ ((SourceX >> 8) & 0xE);
+  pixel = (char_row >> char_sub_x) & 0x3;
+
+  if(pixel)
+  {
+   target[x] = plt[pixel];
+   if(vbgo_row) /* VirtualBoyGo: char_sub_x is even, so << 10 puts its half in VBGO_TT_BG_BITS's column field */
+   {
+    vbgo_row[x * VBGO_TT_COLUMN] = vbgo_cbits | char_sub_x << 10 | pixel << 20;
+    vbgo_crow[x * VBGO_TT_CELL_COLUMN] = (uint16_t)vbgo_cell;
+    if((x >> 3) != vbgo_wgroup)
+     vbgo_tt_wcells[vbgo_wgroup = x >> 3] |= vbgo_wbit;
+   }
+  }
+  else if(vbgo_fills) /* VirtualBoyGo */
+   vbgo_tt_fill_at(&vbgo_row[x * VBGO_TT_COLUMN], &vbgo_crow[x * VBGO_TT_CELL_COLUMN], vbgo_cbits | char_sub_x << 10, vbgo_cell),
+   vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_fillc[x >> 3] = 1;
+
+  SourceX += dx;
+ }
+}
+else
+{
+]=]
+        "vip_draw.inc (DrawAffine zoomed-in runs)")
     _vbgo_replace_once(DRAW
         [=[    bgsc = BGMap[(BGMap_Base | m_index | sub_index) & 0xFFFF];
    }]=]
