@@ -2594,10 +2594,17 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         // does; copies need every column's colors the same, so one table serves all)
         const EyeColumn copyColors(eyeBits, eyeClut, 0);
         const LitRows copyLit(copyColors);
-        auto notePair = [&](unsigned b, unsigned c, uint32_t tag) {
+        // (a copy's last two tiles and pairs noted: noting one again changes nothing, as pairSlots is read as a set)
+        struct NotedPairs
+        {
+            uint32_t last = ~0u, before = ~0u;
+        };
+        auto notePair = [&](unsigned b, unsigned c, uint32_t tag, NotedPairs &noted) {
             const int pair = pairs ? m_pairOfLeft[VBGO_TAG_WORLD(tag)] : -1;
-            if (pair >= 0)
+            const uint32_t key = VBGO_TAG_CHAR(tag) | static_cast<uint32_t>(pair) << 11;
+            if (pair >= 0 && key != noted.last && key != noted.before)
             {
+                noted.before = noted.last, noted.last = key;
                 NoteLeftPair(VBGO_TAG_CHAR(tag), 1u << pair);
                 notePairSlot(bands[b].pairSlots, static_cast<uint64_t>(c) << 32 | VBGO_TAG_CHAR(tag) | 1u << pair << 11);
             }
@@ -2626,7 +2633,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             }
             s.colors = ~0u, s.left = 7, s.right = 0, s.top = 7, s.bottom = 0;
         };
-        auto countStarts = [&](uint32_t x, unsigned b, uint32_t starts, CopiedStarts &s)
+        auto countStarts = [&](uint32_t x, unsigned b, uint32_t starts, CopiedStarts &s, NotedPairs &noted)
                                __attribute__((always_inline)) {
             const uint32_t *tags = v.columns[x] + b * 8;
             const uint32_t eyeBand = eyeBits[x * 56 + b * 2] | eyeBits[x * 56 + b * 2 + 1] << 8;
@@ -2636,7 +2643,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             {
                 const uint32_t j = static_cast<uint32_t>(__builtin_ctz(starts)), tag = tags[j];
                 if (notePairs)
-                    notePair(b, x >> 3, tag);
+                    notePair(b, x >> 3, tag, noted);
                 s.level = std::max<unsigned>(s.level, copyColors.at(eyeBand, j) >> 26);
                 if (VBGO_TAG_IS_OBJ(tag))
                     continue;
@@ -2695,8 +2702,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             const uint32_t bandBit = 1u << b;
             std::memset(&summaryState[c * 8], 0, 8);
             const unsigned shift = top & 7; // (the rows of band b0 above the cell's first)
-            const bool notePairs = pairs;
-            uint32_t noted = ~0u; // (the last column's pair and tile: noting them again changes nothing)
+            NotedPairs noted;
             CopiedStarts startSums;
             for (unsigned k = 0; k < 8; ++k)
             {
@@ -2711,16 +2717,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     activeAt[k] = (activeAt[k] & ~bandBit) | on << b;
                     if (!on)
                         continue;
-                    const int pair = notePairs ? m_pairOfLeft[VBGO_TAG_WORLD(column.first)] : -1;
-                    if (pair >= 0 && (VBGO_TAG_CHAR(column.first) | static_cast<uint32_t>(pair) << 11) != noted)
-                    {
-                        const unsigned chr = VBGO_TAG_CHAR(column.first);
-                        noted = chr | static_cast<uint32_t>(pair) << 11;
-                        NoteLeftPair(chr, 1u << pair);
-                        notePairSlot(bands[b].pairSlots, static_cast<uint64_t>(c) << 32 | chr | 1u << pair << 11);
-                    }
+                    notePair(b, c, static_cast<uint32_t>(column.first), noted);
                     if (const uint32_t starts = static_cast<uint32_t>(column.last >> 48))
-                        countStarts(x, b, starts, startSums);
+                        countStarts(x, b, starts, startSums, noted);
                     continue;
                 }
                 // (rows from two bands: counted by this column's tags, runs starting where the sources' did - but a
@@ -2761,8 +2760,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 here.last = (vbgo_tag_compose(tags[l], cells[vbgo_tt_cell_at(l)]) & kRunMask) |
                             static_cast<uint64_t>(starts) << 48;
                 activeAt[k] |= bandBit;
-                notePair(b, c, tags[f]);
-                countStarts(x, b, starts, startSums);
+                notePair(b, c, tags[f], noted);
+                countStarts(x, b, starts, startSums, noted);
             }
             flushStarts(startSums, bands[b].cells, c);
             uint8_t &brightestHere = bands[b].cells.brightest[c];

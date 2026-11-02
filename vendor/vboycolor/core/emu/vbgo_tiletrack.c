@@ -91,6 +91,10 @@ static vbgo_tt_motion s_motion[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS] __a
 static uint64_t s_motion_cells[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 /* Per slot, the blocks (a bit each) whose drawing in its latest pass was given motion records. */
 static uint32_t s_motion_noted[VBGO_TT_SLOTS];
+/* Per cell, the worlds its left eye may show (see NoteShown), while s_shown_at is the slot's stamp: worked out as its
+ * latest pass noted the block's motion. */
+static uint32_t s_cell_shown[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
+static uint16_t s_shown_at[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 
 /* Per slot and block, whether it was drawn (or kept) with background color 0, which no colorizer lights;
  * cleared when a state is loaded, its frame buffer's pixels then not those its tags were drawn with. */
@@ -179,6 +183,7 @@ static void RestampSlot(int k)
          memset(s_cell_worlds[k][b], 0xFF, sizeof(s_cell_worlds[k][b]));
       }
    }
+   memset(s_shown_at[k], 0, sizeof(s_shown_at[k]));
    s_stamp[k] = 1;
 }
 
@@ -201,6 +206,7 @@ static void NextStamp(int keep)
          }
       memset(s_motion, 0, sizeof(s_motion)); /* (their stamps are of the old count) */
       memset(s_motion_cells, 0, sizeof(s_motion_cells));
+      memset(s_shown_at, 0, sizeof(s_shown_at));
       memset(s_have, 0, sizeof(s_have));
       s_next_stamp = 1;
       if (keep >= 0)
@@ -327,6 +333,8 @@ static void Unshare(unsigned fb, int lazily)
    memcpy(s_cell_worlds[to], s_cell_worlds[from], sizeof(s_cell_worlds[to]));
    memcpy(s_motion[to], s_motion[from], sizeof(s_motion[to]));
    memcpy(s_motion_cells[to], s_motion_cells[from], sizeof(s_motion_cells[to]));
+   memcpy(s_cell_shown[to], s_cell_shown[from], sizeof(s_cell_shown[to]));
+   memcpy(s_shown_at[to], s_shown_at[from], sizeof(s_shown_at[to]));
    CopySlotInfo(to, from);
    s_slot[fb] = to;
 }
@@ -342,6 +350,7 @@ static void ForgetBlocks(void)
    memset(s_cell_worlds, 0xFF, sizeof(s_cell_worlds));
    memset(s_motion, 0, sizeof(s_motion));
    memset(s_motion_cells, 0, sizeof(s_motion_cells));
+   memset(s_shown_at, 0, sizeof(s_shown_at));
    memset(s_band_bk0, 0, sizeof(s_band_bk0));
 }
 
@@ -501,6 +510,7 @@ void vbgo_tiletrack_reset(void)
    memset(s_cell_worlds, 0xFF, sizeof(s_cell_worlds));
    memset(s_motion, 0, sizeof(s_motion));
    memset(s_motion_cells, 0, sizeof(s_motion_cells));
+   memset(s_shown_at, 0, sizeof(s_shown_at));
    memset(s_have, 0, sizeof(s_have));
    s_slot[0] = 0;
    s_slot[1] = 1;
@@ -523,6 +533,7 @@ void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr)
    memset(s_cell_worlds[s_slot[fb & 1]], 0xFF, sizeof(s_cell_worlds[0]));
    memset(s_motion[s_slot[fb & 1]], 0, sizeof(s_motion[0]));
    memset(s_motion_cells[s_slot[fb & 1]], 0, sizeof(s_motion_cells[0]));
+   memset(s_shown_at[s_slot[fb & 1]], 0, sizeof(s_shown_at[0]));
    memset(s_band_bk0[s_slot[fb & 1]], 0, sizeof(s_band_bk0[0]));
    s_cpu[fb & 1] = 1;
 }
@@ -531,6 +542,7 @@ void vbgo_tiletrack_forget_motion(void)
 {
    memset(s_motion, 0, sizeof(s_motion));
    memset(s_motion_cells, 0, sizeof(s_motion_cells));
+   memset(s_shown_at, 0, sizeof(s_shown_at));
    memset(s_band_bk0, 0, sizeof(s_band_bk0));
 }
 
@@ -997,30 +1009,92 @@ static int BandOfPass(int from, int band)
    return band >= 0 && band < VBGO_TT_BLOCKS && !(s_lazy[from] >> band & 1) && s_band_pass[from][band] == s_stamp[from];
 }
 
-/* Slot `from`'s cells of a band (bit per 8 columns) shown only by `group`'s worlds, with no sprite's or fill's tag. */
+/* Slot `from`'s cells of a band (bit per 8 columns) shown only by `group`'s worlds, with no sprite's or fill's tag: by
+ * what its left eye may show, as its pass noted it, else by every world that drew there. */
 static uint64_t CellsShownBy(int from, int band, uint32_t group)
 {
-   const uint32_t *const was_worlds = s_cell_worlds[from][band];
-   uint64_t cells = 0;
+   const uint32_t *const worlds =
+      s_shown_at[from][band] == s_stamp[from] ? s_cell_shown[from][band] : s_cell_worlds[from][band];
+   uint32_t half[2] = { 0, 0 };
    unsigned c;
    for (c = 0; c < VBGO_TT_CELLS; c++)
-      cells |= (uint64_t)((was_worlds[c] & ~group) == 0) << c;
-   return cells & ~(s_obj_cells[from][band] | s_filled_cells[from][band]);
+      half[c >> 5] |= (uint32_t)((worlds[c] & ~group) == 0) << (c & 31);
+   return ((uint64_t)half[1] << 32 | half[0]) & ~(s_obj_cells[from][band] | s_filled_cells[from][band]);
 }
 
-unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, const int8_t *dx, const int8_t *dy,
+/* The worlds whose tags the left eye shows in cell c of slot's block b, a bit each (all 64 tags: a pixel drawn in a
+ * black shade hides what's behind it too). A pixel without a tag reads as world 0, so that bit counts only where world
+ * 0 may have drawn: drew is the worlds that drew there in the left eye, or more. */
+static uint32_t ShownWorlds(int slot, unsigned b, unsigned c, uint32_t drew)
+{
+   const uint32_t *tags = &s_tags[slot][0][c * 8 * VBGO_TT_COLUMN + b * 8];
+   uint32_t shown = 0;
+   unsigned x;
+   for (x = 0; x < 8; x++, tags += VBGO_TT_COLUMN)
+      shown |= 1u << VBGO_TAG_WORLD(tags[0]) | 1u << VBGO_TAG_WORLD(tags[1]) | 1u << VBGO_TAG_WORLD(tags[2]) |
+               1u << VBGO_TAG_WORLD(tags[3]) | 1u << VBGO_TAG_WORLD(tags[4]) | 1u << VBGO_TAG_WORLD(tags[5]) |
+               1u << VBGO_TAG_WORLD(tags[6]) | 1u << VBGO_TAG_WORLD(tags[7]);
+   return drew & 1 ? shown : shown & ~1u;
+}
+
+/* What the left eye may show in each cell of the block just drawn, as its pass's (a later pass's records may take them
+ * as sources): ShownWorlds for the cells of `exact`, else the worlds that drew there but those that draw nothing in the
+ * left eye (noleft). */
+static void NoteShown(uint64_t exact, uint32_t noleft)
+{
+   const unsigned b = s_block_no;
+   const int slot = s_block_slot;
+   const uint32_t half[2] = { (uint32_t)exact, (uint32_t)(exact >> 32) };
+   uint32_t *const shown = s_cell_shown[slot][b];
+   unsigned c;
+   s_shown_at[slot][b] = s_stamp[slot];
+   for (c = 0; c < VBGO_TT_CELLS; c++)
+   {
+      const uint32_t drew = vbgo_tt_wcells[c] & ~noleft;
+      shown[c] = half[c >> 5] >> (c & 31) & 1 ? ShownWorlds(slot, b, c, drew) : drew;
+   }
+}
+
+/* (fresh cells without a sprite's or fill's tag: what records are made for) */
+static uint64_t FreshCells(void)
+{
+   const uint32_t *const version = s_cell_version[s_block_slot][s_block_no];
+   uint32_t half[2] = { 0, 0 };
+   unsigned c;
+   for (c = 0; c < VBGO_TT_CELLS; c++)
+      half[c >> 5] |= (uint32_t)(version[c] == s_versions) << (c & 31);
+   return ((uint64_t)half[1] << 32 | half[0]) &
+          ~(s_obj_cells[s_block_slot][s_block_no] | s_filled_cells[s_block_slot][s_block_no]);
+}
+
+void vbgo_tiletrack_note_shown(uint32_t noleft)
+{
+   uint32_t several[2] = { 0, 0 };
+   unsigned c;
+   if (!vbgo_tt_on || s_block_slot < 0 || s_block_no >= VBGO_TT_BLOCKS || !s_versions)
+      return;
+   /* (a cell one world drew is judged by that world alone) */
+   for (c = 0; c < VBGO_TT_CELLS; c++)
+   {
+      const uint32_t drew = vbgo_tt_wcells[c] & ~noleft;
+      several[c >> 5] |= (uint32_t)((drew & (drew - 1)) != 0) << (c & 31);
+   }
+   NoteShown(FreshCells() & s_tagged[s_block_slot][s_block_no] & ((uint64_t)several[1] << 32 | several[0]), noleft);
+}
+
+unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, uint32_t noleft, const int8_t *dx, const int8_t *dy,
                                     const uint64_t *bad)
 {
    const unsigned b = s_block_no;
    const int slot = s_block_slot;
    int from, d[2], e[2];
-   const uint32_t *version, fresh = s_versions;
+   const uint32_t *version;
    uint32_t todo = moved, groups[2] = { 0, 0 }, half[2];
    uint64_t bad_here[2] = { 0, 0 }, cells[2] = { 0, 0 }, base = 0, all = 0, claimed;
    uint64_t unmade = 0; /* (cells of `all` given no record) */
    vbgo_tt_motion *rec;
    unsigned g, n, c, k, made = 0;
-   if (!vbgo_tt_on || slot < 0 || b >= VBGO_TT_BLOCKS || s_last_fb < 0 || !fresh)
+   if (!vbgo_tt_on || slot < 0 || b >= VBGO_TT_BLOCKS || s_last_fb < 0 || !s_versions)
       return 0;
    from = s_slot[s_last_fb ^ 1];
    if (from == slot || !s_have[s_last_fb ^ 1])
@@ -1039,18 +1113,35 @@ unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, const int8_t
       todo &= ~group;
       groups[n] = group;
    }
-   for (c = 0; c < VBGO_TT_CELLS; c++)
-      base |= (uint64_t)(version[c] == fresh) << c;
-   base &= ~(s_obj_cells[slot][b] | s_filled_cells[slot][b]);
+   base = FreshCells();
 
    {
       /* (per offset, the cells shown only by worlds that moved by it) */
-      uint64_t only[2] = { 0, 0 };
-      for (c = 0; c < VBGO_TT_CELLS; c++)
+      uint64_t only[2], scan;
       {
-         const uint32_t shown = vbgo_tt_wcells[c] & ~still;
-         only[0] |= (uint64_t)((shown != 0) & ((shown & ~groups[0]) == 0)) << c;
-         only[1] |= (uint64_t)((shown != 0) & ((shown & ~groups[1]) == 0)) << c;
+         uint32_t half0[2] = { 0, 0 }, half1[2] = { 0, 0 };
+         for (c = 0; c < VBGO_TT_CELLS; c++)
+         {
+            const uint32_t shown = vbgo_tt_wcells[c] & ~noleft;
+            half0[c >> 5] |= (uint32_t)((shown != 0) & ((shown & ~groups[0]) == 0)) << (c & 31);
+            half1[c >> 5] |= (uint32_t)((shown != 0) & ((shown & ~groups[1]) == 0)) << (c & 31);
+         }
+         only[0] = (uint64_t)half0[1] << 32 | half0[0], only[1] = (uint64_t)half1[1] << 32 | half1[0];
+      }
+      /* (cells other worlds drew in too go by the worlds their left eye's tags show: a hidden world shows nothing) */
+      scan = base & s_tagged[slot][b] & ~(only[0] | only[1]);
+      NoteShown(scan, noleft);
+      {
+         uint32_t add0[2] = { 0, 0 }, add1[2] = { 0, 0 };
+         for (half[0] = (uint32_t)scan, half[1] = (uint32_t)(scan >> 32), k = 0; k < 2; k++)
+            for (; half[k]; half[k] &= half[k] - 1)
+            {
+               const unsigned i = (unsigned)__builtin_ctz(half[k]);
+               const uint32_t shown = s_cell_shown[slot][b][k * 32 + i];
+               add0[k] |= (uint32_t)((shown != 0) & ((shown & ~groups[0]) == 0)) << i;
+               add1[k] |= (uint32_t)((shown != 0) & ((shown & ~groups[1]) == 0)) << i;
+            }
+         only[0] |= (uint64_t)add0[1] << 32 | add0[0], only[1] |= (uint64_t)add1[1] << 32 | add1[0];
       }
       for (g = 0; g < n; g++)
       {
@@ -1157,6 +1248,7 @@ void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
    {
       s_block_stamp[to][e] = s_block_stamp[from][e] == old_stamp ? s_next_stamp : s_block_stamp[from][e];
       s_band_pass[to][e] = s_band_pass[from][e] == old_stamp ? s_next_stamp : s_band_pass[from][e];
+      s_shown_at[to][e] = s_shown_at[from][e] == old_stamp ? s_next_stamp : 0;
       if (to != from)
       {
          s_band_bk0[to][e] = s_band_bk0[from][e];
@@ -1170,11 +1262,16 @@ void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
          memcpy(s_cell_worlds[to][e], s_cell_worlds[from][e], sizeof(s_cell_worlds[to][e]));
          memcpy(s_motion[to][e], s_motion[from][e], sizeof(s_motion[to][e]));
          s_motion_cells[to][e] = s_motion_cells[from][e];
+         memcpy(s_cell_shown[to][e], s_cell_shown[from][e], sizeof(s_cell_shown[to][e]));
       }
    }
 
-   for (e = block_no; to != from && e < VBGO_TT_BLOCKS; e++)
-      s_block_stamp[to][e] = 0; /* (leftovers of whatever pass last used the slot) */
+   for (e = block_no; e < VBGO_TT_BLOCKS; e++)
+   {
+      if (to != from)
+         s_block_stamp[to][e] = 0; /* (leftovers of whatever pass last used the slot) */
+      s_shown_at[to][e] = 0;
+   }
 
    /* (the blocks it repeated: the other buffer's tags, as this pass's) */
    for (x = 0; to != from && x < VBGO_TT_WIDTH; x++)
@@ -1243,6 +1340,7 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
             memset(s_cell_worlds[slot][b], 0xFF, sizeof(s_cell_worlds[0][0]));
             memset(s_motion[slot][b], 0, sizeof(s_motion[0][0]));
             s_motion_cells[slot][b] = 0;
+            s_shown_at[slot][b] = 0;
             s_cpu_reset[slot] |= 1u << b;
          }
       return;
@@ -1269,6 +1367,7 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
          memset(s_cell_worlds[slot][row / 8], 0xFF, sizeof(s_cell_worlds[0][0]));
          memset(s_motion[slot][row / 8], 0, sizeof(s_motion[0][0]));
          s_motion_cells[slot][row / 8] = 0;
+         s_shown_at[slot][row / 8] = 0;
          s_cpu_reset[slot] |= 1u << (row / 8);
       }
    }

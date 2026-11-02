@@ -415,9 +415,12 @@ uint64_t vbgo_tiletrack_world_cells_were(uint32_t worlds);
  * the other frame buffer's pass. moved: background worlds whose attributes are as when that buffer drew the rows they
  * show now but for MX and MY; dx[w], dy[w]: a pixel world w shows at x, y it showed at x + dx[w], y + dy[w] then;
  * bad[w]: cells (bit per 8 columns) where world w may show a map entry or character changed since.
- * still: worlds that draw nothing in the left eye. Returns the records made. */
-unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, const int8_t *dx, const int8_t *dy,
+ * still: worlds that draw nothing in the left eye and kept their place; noleft: every world drawing nothing in the left
+ * eye. Returns the records made. */
+unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, uint32_t noleft, const int8_t *dx, const int8_t *dy,
                                     const uint64_t *bad);
+/* For a block drawn whole that the next pass will note (not this one): what its left eye shows, for those records. */
+void vbgo_tiletrack_note_shown(uint32_t noleft);
 /* A bit per band (block) whose motion records paid in the renderer lately: the rest are noted only now and then. */
 extern uint32_t vbgo_tt_copy_bands;
 /* Per cell of the block being drawn, the background worlds that tagged a pixel
