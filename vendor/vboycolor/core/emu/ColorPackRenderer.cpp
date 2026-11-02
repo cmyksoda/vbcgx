@@ -2746,7 +2746,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 unfadedFrom[b1][c0] || unfadedFrom[b1][c1] ||
                 (((from[b0].unreached | from[b1].unreached) >> c0 | (from[b0].unreached | from[b1].unreached) >> c1) & 1))
                 return false;
-            if (moved && (CellWorlds(v, b, c) & moved))
+            // (the worlds noted as shown there include every world CellWorlds finds, and seldom one that moved)
+            if (moved && (!(v.shown_bands >> b & 1) || (v.cell_shown[b * kGridW + c] & moved)) &&
+                (CellWorlds(v, b, c) & moved))
                 return false;
             // (the source columns' flags: nothing slow, and the ramps an automatic color came from still as they were)
             const uint32_t *const activeFrom = &fromActive[sx];

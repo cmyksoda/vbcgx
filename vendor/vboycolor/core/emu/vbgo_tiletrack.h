@@ -217,6 +217,10 @@ typedef struct
     * with its pixel value, but in the cells the CPU wrote into since (cpu_cells: per band, a bit per 8 columns). */
    uint32_t clean_bands;
    const uint64_t *cpu_cells;
+   /* The left eye's per 8x8 cell [band * 48 + cell], in the bands of shown_bands (none for the right eye): a bit per
+    * world its tags may show, as the pass noted it (a superset). */
+   const uint32_t *cell_shown;
+   uint32_t shown_bands;
 } vbgo_tt_eye_view;
 
 /* World attribute fields (w = 16 halfwords of one world). */

@@ -1421,6 +1421,10 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view)
    view->motion_noted = s_motion_noted[slot];
    view->cpu_cells = s_cpu_cells[slot];
    view->stamp = s_stamp[slot];
+   view->cell_shown = &s_cell_shown[slot][0][0];
+   view->shown_bands = 0;
+   for (x = 0; !(eye & 1) && s_stamp[slot] && x < VBGO_TT_BLOCKS; x++)
+      view->shown_bands |= (uint32_t)(s_shown_at[slot][x] == s_stamp[slot]) << x;
 
    for (x = 0; x < VBGO_TT_WIDTH; x++)
    {
