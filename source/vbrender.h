@@ -24,6 +24,16 @@ inline uint32_t BytesInOrder(uint32_t a, uint32_t b, uint32_t c, uint32_t d)
 #endif
 }
 
+#if defined(__PPC__) || defined(__powerpc__)
+// The word at p + off, its bytes reversed (lwbrx has only the indexed form: off sits in a register).
+inline uint32_t LoadReversed(const uint8_t *p, uint32_t off)
+{
+    uint32_t v;
+    __asm__("lwbrx %0,%1,%2" : "=r"(v) : "b"(p), "r"(off), "m"(*(const uint8_t(*)[16])p));
+    return v;
+}
+#endif
+
 // One 4x4 tile of a picture shown 1:1, from its top left pixel: a line of alpha-red pairs and a line of
 // green-blue ones, two pixels a word.
 inline void ConvertTile(const uint8_t *bgrx, size_t pitch, uint8_t *tile)
@@ -32,23 +42,25 @@ inline void ConvertTile(const uint8_t *bgrx, size_t pitch, uint8_t *tile)
     ZeroLine32(tile + 32);
     for (unsigned y = 0; y < 4; ++y) {
         const uint8_t *src = bgrx + y * pitch;
-        for (unsigned x = 0; x < 4; x += 2, src += 8) {
-            // (each pixel read as one word, its bytes moved into place: on the Wii a rotate and insert apiece)
-            uint32_t p0, p1;
-            std::memcpy(&p0, src, 4);
-            std::memcpy(&p1, src + 4, 4);
+        for (unsigned x = 0; x < 4; x += 2) {
 #if defined(__PPC__) || defined(__powerpc__)
-            // (GCC builds each insert from a rotate and an or: these are the same bit fields, one instruction each)
-            uint32_t ar = 0xFF00FF00u, gb;
-            __asm__("rlwimi %0,%1,8,8,15\n\trlwimi %0,%2,24,24,31" : "+r"(ar) : "r"(p0), "r"(p1));
-            __asm__("rlwinm %0,%1,8,0,7\n\trlwimi %0,%1,24,8,15\n\trlwimi %0,%2,24,16,23\n\trlwimi %0,%2,8,24,31"
-                    : "=&r"(gb) : "r"(p0), "r"(p1));
-#elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+            // (read byte-reversed, red and green-blue already sit where three inserts put them; GCC would build
+            // each insert from a rotate and an or)
+            const uint32_t p0 = LoadReversed(src, x * 4);
+            uint32_t ar = 0xFF00FF00u, gb = LoadReversed(src, x * 4 + 4);
+            __asm__("rlwimi %0,%2,0,8,15\n\trlwimi %0,%1,16,24,31\n\trlwimi %1,%2,16,0,15"
+                    : "+r"(ar), "+r"(gb) : "r"(p0));
+#else
+            uint32_t p0, p1;
+            std::memcpy(&p0, src + x * 4, 4);
+            std::memcpy(&p1, src + x * 4 + 4, 4);
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
             const uint32_t ar = 0xFF00FF00u | (p0 << 8 & 0x00FF0000u) | (p1 >> 8 & 0x000000FFu),
                            gb = (p0 << 8 & 0xFF000000u) | (p0 >> 8 & 0x00FF0000u) | (p1 >> 8 & 0x0000FF00u) | p1 >> 24;
 #else
             const uint32_t ar = 0x00FF00FFu | (p0 >> 8 & 0x0000FF00u) | (p1 << 8 & 0xFF000000u),
                            gb = (p0 >> 8 & 0x000000FFu) | (p0 << 8 & 0x0000FF00u) | (p1 << 8 & 0x00FF0000u) | p1 << 24;
+#endif
 #endif
             std::memcpy(tile + y * 8 + x * 2, &ar, 4);
             std::memcpy(tile + 32 + y * 8 + x * 2, &gb, 4);

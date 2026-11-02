@@ -458,9 +458,9 @@ private:
     };
     std::array<std::vector<NearCell>, 32> m_nearCache; // (Near's, per layer and grid cell)
     // per grid cell: sprites' groups with a marker within reach (this frame and the last two)
-    std::vector<ContextGroupBits> m_nearSprites;
+    std::vector<ContextGroupBits, LineAligned<ContextGroupBits>> m_nearSprites;
     // (Paint's scratch for those)
-    std::array<ContextGroupBits, kGridW * kGridH> m_gridRows, m_gridCloseRows, m_gridHere;
+    std::array<ContextGroupBits, kGridW * kGridH> m_gridHere;
     std::array<uint64_t, kGridH> m_spreadRows{}; // (per row, a bit per cell those reached last frame; all if m_spreadAll)
     // With layer-bound groups only sprites' context tiles ask, so the cells
     // with markers are kept and a cell's groups worked out when asked (once a frame).
@@ -471,7 +471,7 @@ private:
     std::array<uint32_t, kGridW * kGridH> m_spriteNearAt{};
     void SpriteNear(unsigned i, ContextGroupBits &near, ContextGroupBits &close);
     bool m_spreadAll = true;
-    std::vector<ContextGroupBits> m_closeSprites; // (the same, within one cell)
+    std::vector<ContextGroupBits, LineAligned<ContextGroupBits>> m_closeSprites; // (the same, within one cell)
 
     // Auto mode, what no tile drew (the game's CPU wrote it into the frame
     // buffer): colored by depth. Returns the brightest level it painted.
