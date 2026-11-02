@@ -1023,21 +1023,68 @@ static INLINE bool SameWorldAttrs(const uint16 *a, const uint16 *b)
    return !((x[0] ^ y[0]) | (x[1] ^ y[1]) | (x[2] ^ y[2]) | (x[3] ^ y[3]) | (x[4] ^ y[4]) | (uint32)(a[10] ^ b[10]));
 }
 
+/* VirtualBoyGo: whether the other buffer's pass drew rows top to top + 7 as it drew src, every tagged world's attributes
+ * as there (a mid-pass write could leave other pixels in them), lowering since to the earliest of those drawings. */
+static bool SourceRowsSame(const BlockInputs *src, int top, uint32 tagged, uint32 *since)
+{
+   uint32 earliest = *since;
+   int j;
+   for(j = 0; j < 2; j++)
+   {
+      const BlockInputs *const sb = &Blocks[!DrawingFB][(top + 7 * j) >> 3];
+      uint32 t;
+      if(!sb->valid || GlobalChangedAt > sb->drawnAt || sb->passAt != src->passAt)
+         return false;
+      for(t = tagged; t; t &= t - 1)
+         if(!SameWorldAttrs(&sb->worlds[__builtin_ctz(t) * 16], &src->worlds[__builtin_ctz(t) * 16]))
+            return false;
+      if(sb->drawnAt < earliest)
+         earliest = sb->drawnAt;
+   }
+   *since = earliest;
+   return true;
+}
+
+/* VirtualBoyGo: of the worlds that tagged the block just drawn, those that draw nothing in the left eye. */
+static uint32 NoLeftWorlds(uint32 tagged)
+{
+   uint32 noleft = 0;
+   for(; tagged; tagged &= tagged - 1)
+      noleft |= (uint32)!(DRAM[(0x1D800 >> 1) + __builtin_ctz(tagged) * 16] & 0x8000) << __builtin_ctz(tagged);
+   return noleft;
+}
+
 /* VirtualBoyGo: after a block is drawn whole, which of its left eye's cells show only what the other buffer's last pass
  * drew, moved by the camera (vbgo_tiletrack_note_motion): known from what drawing reads, not by comparing. */
 static void NoteBlockMotion(void)
 {
-   /* (a block whose last noting made few records, or whose records haven't paid in the renderer lately, is noted again
-    * only every 8th pass: most of the cost is fixed) */
-   static bool Few[28];
+   /* (a block whose last 4 notings each made few records is noted again only every 8th pass: most of the cost is fixed,
+    * and one few-record noting is often a passing thing) */
+   static uint8 FewRun[28];
    const BlockInputs *const src = &Blocks[!DrawingFB][DrawingBlock];
    const uint16 *const cur = &DRAM[0x1D800 >> 1];
    int8_t dx[32], dy[32];
    uint64_t bad[32];
    uint32 worlds = 0, moved = 0, still = 0;
+   /* (SourceRowsSame's answers per vertical move tried: the same for every world moving alike) */
+   int rowsDy[2] = { 0, 0 }, rowsTried = 0;
+   bool rowsSame[2] = { false, false };
+   uint32 rowsSince[2] = { 0, 0 };
    int c;
-   if(!vbgo_tt_on || !src->valid || GlobalChangedAt > src->drawnAt ||
-      ((Few[DrawingBlock] || !(vbgo_tt_copy_bands >> DrawingBlock & 1)) && (PassNo & 7) != (DrawingBlock & 7)))
+   if(!vbgo_tt_on)
+      return;
+   if(FewRun[DrawingBlock] >= 4 && (PassNo & 7) != (DrawingBlock & 7))
+   {
+      /* (the next pass notes it, with this pass's cells as the sources) */
+      if(((PassNo + 1) & 7) == (DrawingBlock & 7))
+      {
+         for(c = 0; c < 48; c++)
+            worlds |= vbgo_tt_wcells[c];
+         vbgo_tiletrack_note_shown(NoLeftWorlds(worlds));
+      }
+      return;
+   }
+   if(!src->valid || GlobalChangedAt > src->drawnAt)
       return;
    /* (a character changed since that pass started, if the block uses it, or a drawing an older pass made: nothing
     * recorded) */
@@ -1078,24 +1125,22 @@ static void NoteBlockMotion(void)
          /* (its rows from other blocks of that pass, as each of them drew it: the window's rows edge neither) */
          const int gy = (int16)sign_11_to_s16(a[3]), gh = a[8] & 0x3FF;
          const int top = (int)DrawingBlock * 8 + e, here = WindowSide((int)DrawingBlock * 8, gy, gy + gh);
-         int j;
+         int m;
          if(top < 0 || top + 7 > 223 || here < 0 || here != WindowSide(top, gy, gy + gh))
             continue;
-         for(j = 0; j < 2 && same; j++)
+         for(m = 0; m < rowsTried && rowsDy[m] != e; m++)
+            ;
+         if(m == rowsTried)
          {
-            const BlockInputs *const sb = &Blocks[!DrawingFB][(top + 7 * j) >> 3];
-            uint32 t;
-            same = sb->valid && GlobalChangedAt <= sb->drawnAt && sb->passAt == src->passAt;
-            for(k = 0; k <= 10 && same; k++)
-               same = sb->worlds[w * 16 + k] == s[k];
-            /* (every other world drew these rows as it drew src: a mid-pass write could leave its other pixels here) */
-            for(t = tagged & ~(1u << w); t && same; t &= t - 1)
-               same = SameWorldAttrs(&sb->worlds[__builtin_ctz(t) * 16], &src->worlds[__builtin_ctz(t) * 16]);
-            if(same && sb->drawnAt < since)
-               since = sb->drawnAt;
+            rowsSince[m & 1] = since;
+            rowsSame[m & 1] = SourceRowsSame(src, top, tagged, &rowsSince[m & 1]);
+            rowsDy[m & 1] = e;
+            rowsTried = m < 2 ? m + 1 : 2;
+            m &= 1;
          }
-         if(!same)
+         if(!rowsSame[m])
             continue;
+         since = rowsSince[m];
       }
       if(a[0] & 0x1000)
       {
@@ -1131,7 +1176,8 @@ static void NoteBlockMotion(void)
       moved |= 1u << w;
    }
    if(moved)
-      Few[DrawingBlock] = vbgo_tiletrack_note_motion(moved, still, dx, dy, bad) < 4;
+      FewRun[DrawingBlock] = vbgo_tiletrack_note_motion(moved, still, NoLeftWorlds(tagged), dx, dy, bad) >= 4 ? 0 :
+                             FewRun[DrawingBlock] + (FewRun[DrawingBlock] < 4);
 }
 
 static void BeginPass(void)

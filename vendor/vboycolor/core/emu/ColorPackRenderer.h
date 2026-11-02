@@ -157,10 +157,6 @@ private:
     // Per buffer, the stamp of the pass its picture was last painted from (0: none): a cell the camera only moved is
     // copied from the other picture where it shows that pass (see vbgo_tt_motion).
     std::array<uint32_t, 2> m_paintedStamp{};
-    // (a copy costs about what painting kCopyLit pixels does; kCopyPays pixels about what noting a block's motion does)
-    static constexpr unsigned kCopyLit = 4, kCopyPays = 200, kCopyLately = 8;
-    std::array<uint8_t, VBGO_TT_HEIGHT / 8> m_copyMisses{}; // (per band, passes running whose records didn't pay)
-    uint32_t m_copyStamp = 0; // (the pass m_copyMisses last counted)
     std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_painted{};
     std::array<uint64_t, VBGO_TT_HEIGHT / 8> m_depthCells{}; // (bit per left-eye cell PaintDepth last painted into)
     // [eye][buffer][column * bands + band]: a column's bands together (in the renderer, off the heap: MEM1 on the Wii)

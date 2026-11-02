@@ -209,14 +209,16 @@ typedef struct
    /* The left eye's per 8x8 cell [band * 48 + cell] (see vbgo_tt_motion), and the stamp of the pass shown. */
    const vbgo_tt_motion *motion;
    uint16_t stamp;
-   /* Per band, a bit per cell whose motion record may hold (none elsewhere); a bit per band given records by the pass.
-    * */
+   /* Per band, a bit per cell whose motion record may hold (none elsewhere). */
    const uint64_t *motion_cells;
-   uint32_t motion_noted;
    /* A bit per band drawn (or kept) with background color 0: every lit pixel shown there is a tile's, tagged
     * with its pixel value, but in the cells the CPU wrote into since (cpu_cells: per band, a bit per 8 columns). */
    uint32_t clean_bands;
    const uint64_t *cpu_cells;
+   /* The left eye's per 8x8 cell [band * 48 + cell], in the bands of shown_bands (none for the right eye): a bit per
+    * world its tags may show, as the pass noted it (a superset). */
+   const uint32_t *cell_shown;
+   uint32_t shown_bands;
 } vbgo_tt_eye_view;
 
 /* World attribute fields (w = 16 halfwords of one world). */
@@ -415,11 +417,12 @@ uint64_t vbgo_tiletrack_world_cells_were(uint32_t worlds);
  * the other frame buffer's pass. moved: background worlds whose attributes are as when that buffer drew the rows they
  * show now but for MX and MY; dx[w], dy[w]: a pixel world w shows at x, y it showed at x + dx[w], y + dy[w] then;
  * bad[w]: cells (bit per 8 columns) where world w may show a map entry or character changed since.
- * still: worlds that draw nothing in the left eye. Returns the records made. */
-unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, const int8_t *dx, const int8_t *dy,
+ * still: worlds that draw nothing in the left eye and kept their place; noleft: every world drawing nothing in the left
+ * eye. Returns the records made. */
+unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, uint32_t noleft, const int8_t *dx, const int8_t *dy,
                                     const uint64_t *bad);
-/* A bit per band (block) whose motion records paid in the renderer lately: the rest are noted only now and then. */
-extern uint32_t vbgo_tt_copy_bands;
+/* For a block drawn whole that the next pass will note (not this one): what its left eye shows, for those records. */
+void vbgo_tiletrack_note_shown(uint32_t noleft);
 /* Per cell of the block being drawn, the background worlds that tagged a pixel
  * there (cleared before drawing: more than shows, never less). */
 extern uint32_t vbgo_tt_wcells[48];
