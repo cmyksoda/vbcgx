@@ -89,8 +89,6 @@ static uint32_t s_cell_worlds[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
 static vbgo_tt_motion s_motion[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS] __attribute__((aligned(32)));
 /* Per block, a bit per cell whose record may still hold for its version (the rest can't: the renderer skips them). */
 static uint64_t s_motion_cells[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
-/* Per slot, the blocks (a bit each) whose drawing in its latest pass was given motion records. */
-static uint32_t s_motion_noted[VBGO_TT_SLOTS];
 /* Per cell, the worlds its left eye may show (see NoteShown), while s_shown_at is the slot's stamp: worked out as its
  * latest pass noted the block's motion. */
 static uint32_t s_cell_shown[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
@@ -370,7 +368,6 @@ static void StartPass(unsigned fb, const uint16_t *chr_ram, const uint16_t *dram
    Unshare(fb, 1); /* (a slot of its own, holding the tags its last pass repeated) */
    slot = s_slot[fb];
    SettleFrom(slot);
-   s_motion_noted[slot] = 0;
 
    sparse = serials && dram && s_have_attrs[slot] && s_sync_epoch[slot] == serials->epoch && s_hashed_any &&
             s_hashed_epoch == serials->epoch;
@@ -966,7 +963,6 @@ void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same
 }
 
 uint32_t vbgo_tt_wcells[48];
-uint32_t vbgo_tt_copy_bands = ~0u;
 uint8_t vbgo_tt_fillc[48];
 uint8_t vbgo_tt_ocells[48];
 
@@ -1195,7 +1191,6 @@ unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, uint32_t nol
          }
    }
    s_motion_cells[slot][b] = (s_motion_cells[slot][b] & ~claimed) | (all & ~unmade);
-   s_motion_noted[slot] |= (uint32_t)(made != 0) << b;
    return made;
 }
 
@@ -1418,7 +1413,6 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view)
    view->clut = s_disp_clut[eye & 1][0];
    view->motion = &s_motion[slot][0][0];
    view->motion_cells = s_motion_cells[slot];
-   view->motion_noted = s_motion_noted[slot];
    view->cpu_cells = s_cpu_cells[slot];
    view->stamp = s_stamp[slot];
    view->cell_shown = &s_cell_shown[slot][0][0];

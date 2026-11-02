@@ -153,25 +153,6 @@ inline bool NoneLitCell(const uint8_t *eyeBits, const uint8_t *lit, bool usual, 
     return true;
 }
 
-// How many of cell c's 64 pixels in band b hold a pixel value other than 0 (EyeColumn's layout).
-inline unsigned LitPixels(const uint8_t *eyeBits, uint32_t b, uint32_t c)
-{
-    static constexpr auto kPairs = [] {
-        std::array<uint8_t, 256> pairs{}; // (per byte, its 2-bit pixels other than 0)
-        for (unsigned i = 0; i < 256; ++i)
-            for (unsigned k = 0; k < 8; k += 2)
-                pairs[i] += (i >> k & 3) != 0;
-        return pairs;
-    }();
-    unsigned lit = 0;
-    for (uint32_t x = c * 8; x < c * 8 + 8; ++x)
-    {
-        const uint8_t *bits = eyeBits + x * 56 + b * 2;
-        lit += kPairs[bits[0]] + kPairs[bits[1]];
-    }
-    return lit;
-}
-
 // Whether a band of an eye column holds no pixel the right eye's walk counts: none shows lit and its cell holds no
 // fill's tag.
 inline bool NoneCounted(const vbgo_tt_eye_view &v, const uint8_t *eyeBits, unsigned lit, uint32_t x, uint32_t b)
@@ -2573,7 +2554,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             }
         }
         const bool claimRows = !((reinterpret_cast<uintptr_t>(frame) | rowBytes | eyeOffset[0] * 4) & 31);
-        uint32_t heldBands = v.motion_noted; // (bands given records by the pass, or with a record that holds)
 
         // (a copied column's runs after its first are counted into its cell, and layer pairs' tiles noted, as painting
         // does; copies need every column's colors the same, so one table serves all)
@@ -2732,7 +2712,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             const uint32_t sources = 1u << b0 | 1u << b1;
             if ((sourceBands & sources) != sources)
                 return false;
-            heldBands |= 1u << b;
             uint32_t moved = 0, autoStale = 0; // (the sources' worlds moved since, and whether their ramps went stale)
             for (uint32_t s = sources; s; s &= s - 1)
             {
@@ -2805,10 +2784,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             for (uint32_t half = static_cast<uint32_t>(cells >> 32); half; half &= half - 1)
                 recordedBands[32 + __builtin_ctz(half)] |= 1u << b;
         }
-        // (per band, what its copies saved, as pixels lit past kCopyLit each: copying a cell costs about what painting
-        // kCopyLit of its pixels does; a band whose copies save under kCopyPays doesn't pay for noting its motion)
-        std::array<int32_t, kBands> saved{};
-        uint32_t paysBands = 0;
         // (the bands of the cell column walked so far that painted an automatic color: their autoCells bits are
         // set once per cell - nothing reads them until the next Paint)
         uint32_t autoBands = 0;
@@ -2829,12 +2804,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 {
                     const unsigned b = static_cast<unsigned>(__builtin_ctz(cells));
                     copiedHere |= static_cast<uint32_t>(copyCell(b, c)) << b;
-                }
-                for (uint32_t cells = copiedHere & ~paysBands; cells; cells &= cells - 1)
-                {
-                    const unsigned b = static_cast<unsigned>(__builtin_ctz(cells));
-                    saved[b] += static_cast<int32_t>(LitPixels(eyeBits, b, c)) - static_cast<int32_t>(kCopyLit);
-                    paysBands |= static_cast<uint32_t>(saved[b] >= static_cast<int32_t>(kCopyPays)) << b;
                 }
                 shade.cellColumn(c, unkept & ~copiedHere);
                 for (uint32_t cells = unkept; cells; cells &= cells - 1)
@@ -3250,21 +3219,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         }
         noteAutoCells(kGridW - 1);
         m_paintedStamp[buffer] = v.stamp;
-        if (v.stamp != m_copyStamp) // (a pass shown again repeats its verdict)
-        {
-            // (the VIP keeps noting a band's motion until its records didn't pay kCopyLately passes running)
-            m_copyStamp = v.stamp;
-            uint32_t lately = 0;
-            for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-            {
-                if (paysBands >> b & 1)
-                    m_copyMisses[b] = 0;
-                else if ((heldBands >> b & 1) && m_copyMisses[b] < kCopyLately)
-                    ++m_copyMisses[b];
-                lately |= static_cast<uint32_t>(m_copyMisses[b] < kCopyLately) << b;
-            }
-            vbgo_tt_copy_bands = lately;
-        }
 
         // The bands' own bookkeeping, kept or just made; the kept ones' pair slots.
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)

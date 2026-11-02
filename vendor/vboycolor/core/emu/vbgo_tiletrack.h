@@ -209,10 +209,8 @@ typedef struct
    /* The left eye's per 8x8 cell [band * 48 + cell] (see vbgo_tt_motion), and the stamp of the pass shown. */
    const vbgo_tt_motion *motion;
    uint16_t stamp;
-   /* Per band, a bit per cell whose motion record may hold (none elsewhere); a bit per band given records by the pass.
-    * */
+   /* Per band, a bit per cell whose motion record may hold (none elsewhere). */
    const uint64_t *motion_cells;
-   uint32_t motion_noted;
    /* A bit per band drawn (or kept) with background color 0: every lit pixel shown there is a tile's, tagged
     * with its pixel value, but in the cells the CPU wrote into since (cpu_cells: per band, a bit per 8 columns). */
    uint32_t clean_bands;
@@ -425,8 +423,6 @@ unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, uint32_t nol
                                     const uint64_t *bad);
 /* For a block drawn whole that the next pass will note (not this one): what its left eye shows, for those records. */
 void vbgo_tiletrack_note_shown(uint32_t noleft);
-/* A bit per band (block) whose motion records paid in the renderer lately: the rest are noted only now and then. */
-extern uint32_t vbgo_tt_copy_bands;
 /* Per cell of the block being drawn, the background worlds that tagged a pixel
  * there (cleared before drawing: more than shows, never less). */
 extern uint32_t vbgo_tt_wcells[48];

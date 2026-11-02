@@ -1058,9 +1058,9 @@ static uint32 NoLeftWorlds(uint32 tagged)
  * drew, moved by the camera (vbgo_tiletrack_note_motion): known from what drawing reads, not by comparing. */
 static void NoteBlockMotion(void)
 {
-   /* (a block whose last noting made few records, or whose records haven't paid in the renderer lately, is noted again
-    * only every 8th pass: most of the cost is fixed) */
-   static bool Few[28];
+   /* (a block whose last 4 notings each made few records is noted again only every 8th pass: most of the cost is fixed,
+    * and one few-record noting is often a passing thing) */
+   static uint8 FewRun[28];
    const BlockInputs *const src = &Blocks[!DrawingFB][DrawingBlock];
    const uint16 *const cur = &DRAM[0x1D800 >> 1];
    int8_t dx[32], dy[32];
@@ -1073,7 +1073,7 @@ static void NoteBlockMotion(void)
    int c;
    if(!vbgo_tt_on)
       return;
-   if((Few[DrawingBlock] || !(vbgo_tt_copy_bands >> DrawingBlock & 1)) && (PassNo & 7) != (DrawingBlock & 7))
+   if(FewRun[DrawingBlock] >= 4 && (PassNo & 7) != (DrawingBlock & 7))
    {
       /* (the next pass notes it, with this pass's cells as the sources) */
       if(((PassNo + 1) & 7) == (DrawingBlock & 7))
@@ -1176,7 +1176,8 @@ static void NoteBlockMotion(void)
       moved |= 1u << w;
    }
    if(moved)
-      Few[DrawingBlock] = vbgo_tiletrack_note_motion(moved, still, NoLeftWorlds(tagged), dx, dy, bad) < 4;
+      FewRun[DrawingBlock] = vbgo_tiletrack_note_motion(moved, still, NoLeftWorlds(tagged), dx, dy, bad) >= 4 ? 0 :
+                             FewRun[DrawingBlock] + (FewRun[DrawingBlock] < 4);
 }
 
 static void BeginPass(void)
