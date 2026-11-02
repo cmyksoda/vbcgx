@@ -947,6 +947,187 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, con
     return run;
 }
 
+__attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_eye_view &v, const uint8_t *eyeBits,
+                                                                  const uint32_t *eyeClut, ContextGroupBits *markers,
+                                                                  const bool spriteMarks, uint32_t &wantedPairs,
+                                                                  uint32_t &pairWorlds)
+{
+    static constexpr auto kBits8 = [] {
+        std::array<uint8_t, 256> bits{};
+        for (unsigned i = 0; i < 256; ++i)
+            bits[i] = static_cast<uint8_t>(__builtin_popcount(i));
+        return bits;
+    }();
+    constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
+    const uint32_t *const spriteSlots = m_spriteMarkerSlots;
+    const bool bound = m_anyBoundMarkerSlot;
+    const ContextGroupBits spriteGroups = ~m_layerBound;
+    uint32_t wanted = wantedPairs, spriteWorlds = pairWorlds;
+    int scanned = 0;
+    for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+    {
+        uint32_t used = 0;
+        for (unsigned i = 0; spriteMarks && markers && i < 2048 / 32; ++i)
+            used |= v.band_chr[b * (2048 / 32) + i] & spriteSlots[i];
+        const uint32_t bandKey = v.band_key[b];
+        const uint64_t spriteCells = v.tagged && v.obj_cells ? v.obj_cells[b] & v.tagged[b] : kAllCells;
+        // (the run LeftX last placed - its offset is the same in every column of the band - and the cell its marker
+        // last went into)
+        uint32_t knownLo = ~0u, knownHi = 0, knownCell = ~0u;
+        int knownOffset = 0;
+        const auto mark = [&](uint32_t lo, uint32_t hi, unsigned x, unsigned y) __attribute__((noinline)) {
+            if ((lo & kRunMaskLo) != knownLo || hi != knownHi)
+            {
+                knownLo = lo & kRunMaskLo, knownHi = hi, knownCell = ~0u;
+                knownOffset = LeftX(vbgo_tag_compose(lo, static_cast<uint16_t>(hi)), static_cast<int>(x), 1, y) -
+                              static_cast<int>(x);
+            }
+            const int lx = static_cast<int>(x) + knownOffset;
+            if (lx < 0 || lx >= VBGO_TT_WIDTH)
+                return false;
+            const unsigned cell = b * kGridW + (static_cast<unsigned>(lx) >> 3);
+            if (cell != knownCell)
+            {
+                // (without a slot holding layer-bound groups the mask changes nothing)
+                if (bound)
+                    markers[cell] |= m_slotMarkers[VBGO_TAG_CHAR(lo)] & spriteGroups;
+                else
+                    markers[cell] |= m_slotMarkers[VBGO_TAG_CHAR(lo)];
+                NoteMarkerCell(cell);
+                knownCell = cell;
+            }
+            return true;
+        };
+        // (a right-only sprite's counted pixel wants its pair, as SetUpRun would - its own estimate if the left picture
+        // doesn't share its tile, else the left's once there is one)
+        const auto pairPixel = [&](uint32_t lo, uint32_t hi, unsigned x, unsigned y) __attribute__((noinline)) {
+            const uint64_t t = vbgo_tag_compose(lo, static_cast<uint16_t>(hi));
+            const int p = m_spritePairOf[VBGO_TAG_WORLD(t)];
+            if (EyeOnly(t) != 2 || (wanted >> p & 1) ||
+                (VBGO_TAG_PIXEL(lo) && !(EyeTaggedPixel(eyeBits, eyeClut, x, y) & 0xFFFFFFu)))
+                return;
+            const unsigned chr = VBGO_TAG_CHAR(t);
+            if (SharedWithLeftPicture(chr, m_slots[chr].hash, p) && !m_pairs[p].estimated)
+                return;
+            wanted |= 1u << p;
+            for (unsigned w = 0; w < 32; ++w)
+                if (m_spritePairOf[w] == p)
+                    spriteWorlds &= ~(1u << w);
+        };
+        for (uint64_t cells = bandKey ? spriteCells : 0; cells && (used || spriteWorlds); cells &= cells - 1)
+            for (unsigned x = static_cast<unsigned>(__builtin_ctzll(cells)) * 8, end = x + 8; x < end; ++x)
+            {
+                const uint32_t *column = v.columns[x];
+                if (!column)
+                    continue;
+                const uint32_t *tags = column + b * 8;
+                uint32_t t[8];
+                unsigned sprites = 0; // (the tags that are a sprite's, a bit each)
+#pragma GCC unroll 8
+                for (unsigned j = 0; j < 8; ++j)
+                    t[j] = tags[j], sprites |= VBGO_TAG_IS_OBJ(t[j]) << j;
+                if (!sprites)
+                    continue;
+                scanned += kBits8[sprites];
+                const uint16_t *const his = v.cells[x] + vbgo_tt_cell_at(b * 8);
+                // (without sprite pairs left to want, as nearly always, a pixel can only add its marker)
+                const auto rows = [&](auto pairsLeft) __attribute__((always_inline)) {
+                    uint32_t doneLo = ~0u, doneHi = 0; // (the run whose marker went in: its other pixels add the same)
+                    uint32_t runLo = 0, runWorld = 0; // (the last tag's run: what it can add is worked out once)
+                    bool runDrawn = false, runMarks = false;
+#pragma GCC unroll 8
+                    for (unsigned j = 0; j < 8; ++j)
+                    {
+                        const uint32_t lo = t[j];
+                        if (!(sprites >> j & 1))
+                            continue;
+                        if ((lo ^ runLo) & kRunMaskLo)
+                        {
+                            runLo = lo;
+                            runDrawn = vbgo_tag_drawn(lo, bandKey);
+                            runMarks = used && (spriteSlots[VBGO_TAG_CHAR(lo) >> 5] >> (lo & 31) & 1);
+                            runWorld = 1u << VBGO_TAG_WORLD(lo);
+                        }
+                        const bool pair = pairsLeft && (spriteWorlds & runWorld) != 0;
+                        if (!runDrawn || !(runMarks || pair))
+                            continue;
+                        const uint32_t hi = his[vbgo_tt_cell_at(j)];
+                        const unsigned y = b * 8 + j;
+                        if (runMarks && ((lo & kRunMaskLo) != doneLo || hi != doneHi) && VBGO_TAG_PIXEL(lo) &&
+                            (EyeTaggedPixel(eyeBits, eyeClut, x, y) & 0xFFFFFFu) && mark(lo, hi, x, y))
+                            doneLo = lo & kRunMaskLo, doneHi = hi;
+                        if (pair)
+                            pairPixel(lo, hi, x, y);
+                    }
+                };
+                if (spriteWorlds)
+                    rows(std::true_type{});
+                else
+                    rows(std::false_type{});
+            }
+    }
+    wantedPairs = wanted;
+    pairWorlds = spriteWorlds;
+    return scanned;
+}
+
+__attribute__((noinline)) void ColorPackRenderer::LeftBandMarks(const vbgo_tt_eye_view &v, const unsigned band,
+                                                                uint64_t cells, const uint8_t *leftBits,
+                                                                const uint32_t *leftClut, ContextGroupBits *markers,
+                                                                uint8_t *markerLayers, Band &cache)
+{
+    const uint32_t bandKey = v.band_key[band];
+    for (; cells; cells &= cells - 1)
+    {
+        const uint32_t gx = static_cast<uint32_t>(__builtin_ctzll(cells));
+        unsigned spriteChr = ~0u; // (the sprite tile whose markers the cell got last: that tile again adds none)
+        for (uint32_t x = gx * 8; x < gx * 8 + 8; ++x)
+        {
+            const uint32_t *column = v.columns[x];
+            if (!column)
+                continue;
+            const uint32_t *tags = column + band * 8; // (the cell isn't needed here)
+            // (the tags drawn with a marker's tile, a bit each: almost always none)
+            unsigned candidates = 0;
+#pragma GCC unroll 8
+            for (uint32_t j = 0; j < 8; ++j)
+            {
+                const uint32_t t = tags[j];
+                candidates |= static_cast<unsigned>(vbgo_tag_drawn(t, bandKey) & m_slotHasMarkers[VBGO_TAG_CHAR(t)])
+                              << j;
+            }
+            unsigned lastChr = ~0u; // (a cell's marker counted once per tile and band)
+            for (; candidates; candidates &= candidates - 1)
+            {
+                const uint32_t j = static_cast<uint32_t>(__builtin_ctz(candidates));
+                const uint32_t t = tags[j];
+                const unsigned chr = VBGO_TAG_CHAR(t), y = band * 8 + j;
+                if (!VBGO_TAG_PIXEL(t) || chr == lastChr)
+                    continue;
+                const uint32_t rawPixel = EyeTaggedPixel(leftBits, leftClut, x, y);
+                if (!(rawPixel & 0xFFFFFFu))
+                    continue; // (a shade the game switched off)
+                lastChr = chr;
+                const bool sprite = VBGO_TAG_IS_OBJ(t) != 0;
+                if (sprite && chr == spriteChr)
+                    continue;
+                const ContextGroupBits bits = m_slotMarkers[chr] & (sprite ? ~m_layerBound : m_layerBound);
+                if (!bits.Any())
+                    continue;
+                if (sprite)
+                    spriteChr = chr;
+                const unsigned cell = band * kGridW + gx;
+                markers[cell] |= bits;
+                NoteMarkerCell(cell);
+                cache.marks[gx].markers |= bits, cache.marksAny |= 1ull << gx;
+                if (!sprite && markerLayers)
+                    markerLayers[cell] = cache.marks[gx].markerLayer =
+                        static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
+            }
+        }
+    }
+}
+
 void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbWidth, const uint32_t eyeOffset[2],
                               const ShadeRgb &background, const Shade &shade)
 {
@@ -1223,7 +1404,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     if (!used)
                         continue;
                 }
-                const uint32_t bandKey = v.band_key[band];
                 // (where no tile the band uses has layer-bound markers only sprites' markers count: cells without a
                 // sprite add none)
                 bool boundHere = bound;
@@ -1236,52 +1416,13 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 }
                 const uint64_t spriteCells =
                     boundHere || !v.tagged || !v.obj_cells ? ~0ull : v.obj_cells[band] & v.tagged[band];
+                uint64_t cells = 0;
                 for (uint32_t gx = 0; gx < static_cast<uint32_t>(kGridW); ++gx)
-                {
                     // (an untagged cell's tags are all 0)
-                    if (keptCell[band][gx] || (v.tagged && !(v.tagged[band] >> gx & 1)) || !(spriteCells >> gx & 1))
-                        continue;
-                    for (uint32_t x = gx * 8; x < gx * 8 + 8; ++x)
-                    {
-                        const uint32_t *column = v.columns[x];
-                        if (!column)
-                            continue;
-                        const uint32_t *tags = column + band * 8; // (the cell isn't needed here)
-                        unsigned lastChr = ~0u; // (a cell's marker counted once per tile and band)
-                        // (the tags drawn with a marker's tile, a bit each: almost always none)
-                        unsigned candidates = 0;
-#pragma GCC unroll 8
-                        for (uint32_t j = 0; j < 8; ++j)
-                        {
-                            const uint32_t t = tags[j];
-                            candidates |= static_cast<unsigned>(vbgo_tag_drawn(t, bandKey) &
-                                                                m_slotHasMarkers[VBGO_TAG_CHAR(t)]) << j;
-                        }
-                        for (; candidates; candidates &= candidates - 1)
-                        {
-                            const uint32_t j = static_cast<uint32_t>(__builtin_ctz(candidates));
-                            const uint32_t t = tags[j];
-                            const unsigned chr = VBGO_TAG_CHAR(t), y = band * 8 + j;
-                            if (!VBGO_TAG_PIXEL(t) || chr == lastChr)
-                                continue;
-                            const uint32_t rawPixel = EyeTaggedPixel(leftBits, leftClut, x, y);
-                            if (!(rawPixel & 0xFFFFFFu))
-                                continue; // (a shade the game switched off)
-                            lastChr = chr;
-                            const bool sprite = VBGO_TAG_IS_OBJ(t) != 0;
-                            const ContextGroupBits bits = m_slotMarkers[chr] & (sprite ? ~m_layerBound : m_layerBound);
-                            if (!bits.Any())
-                                continue;
-                            const unsigned cell = band * kGridW + gx;
-                            markers[cell] |= bits;
-                            NoteMarkerCell(cell);
-                            cache.marks[gx].markers |= bits, cache.marksAny |= 1ull << gx;
-                            if (!sprite && markerLayers)
-                                markerLayers[cell] = cache.marks[gx].markerLayer =
-                                    static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
-                        }
-                    }
-                }
+                    cells |= static_cast<uint64_t>(!keptCell[band][gx] && (!v.tagged || (v.tagged[band] >> gx & 1)) &&
+                                                   (spriteCells >> gx & 1))
+                             << gx;
+                LeftBandMarks(v, band, cells, leftBits, leftClut, markers, markerLayers, cache);
             }
         }
 
@@ -1788,9 +1929,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         // (sprites' marker pixels add markers, each at its left-eye cell: added here as the walk would, kept cells too
         // - the walk reads those again; a background tile's layer-bound ones also set a cell's layer: walked instead)
         const bool spriteMarks = v.tagged && v.obj_cells;
-        const uint32_t *const spriteSlots = m_spriteMarkerSlots;
         const bool bound = m_anyBoundMarkerSlot;
-        const ContextGroupBits spriteGroups = ~m_layerBound;
         for (unsigned b = 0; markers && (!spriteMarks || bound) && b < static_cast<unsigned>(kBands); ++b)
         {
             const uint32_t *slots = spriteMarks ? m_boundMarkerSlots : m_markerSlots;
@@ -1824,77 +1963,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         for (unsigned w = 0; rightOnly && w < 32; ++w)
             spriteWorlds |= static_cast<uint32_t>(m_spritePairOf[w] >= 0) << w;
         // The sprites' tags (only where one may be) for both: markers, and the pairs they want.
-        int scanned = 0;
-        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-        {
-            uint32_t used = 0;
-            for (unsigned i = 0; spriteMarks && markers && i < 2048 / 32; ++i)
-                used |= v.band_chr[b * (2048 / 32) + i] & spriteSlots[i];
-            const uint32_t bandKey = v.band_key[b];
-            const uint64_t spriteCells = v.tagged && v.obj_cells ? v.obj_cells[b] & v.tagged[b] : kAllCells;
-            for (uint64_t cells = bandKey ? spriteCells : 0; cells && (used || spriteWorlds); cells &= cells - 1)
-                for (unsigned x = static_cast<unsigned>(__builtin_ctzll(cells)) * 8, end = x + 8; x < end; ++x)
-                {
-                    const uint32_t *column = v.columns[x];
-                    if (!column)
-                        continue;
-                    const uint32_t *tags = column + b * 8;
-                    unsigned sprites = 0; // (the tags that are a sprite's, a bit each)
-#pragma GCC unroll 8
-                    for (unsigned j = 0; j < 8; ++j)
-                        sprites |= VBGO_TAG_IS_OBJ(tags[j]) << j;
-                    uint32_t doneLo = ~0u, doneHi = 0; // (the run whose marker went in: its other pixels add the same)
-                    uint32_t runLo = 0, runWorld = 0; // (the last tag's run: what it can add is worked out once)
-                    bool runDrawn = false, runMarks = false;
-                    for (; sprites; sprites &= sprites - 1)
-                    {
-                        const unsigned y = b * 8 + static_cast<unsigned>(__builtin_ctz(sprites));
-                        const uint32_t lo = column[y];
-                        ++scanned;
-                        if ((lo ^ runLo) & kRunMaskLo)
-                        {
-                            runLo = lo;
-                            runDrawn = vbgo_tag_drawn(lo, bandKey);
-                            runMarks = used && (spriteSlots[VBGO_TAG_CHAR(lo) >> 5] >> (lo & 31) & 1);
-                            runWorld = 1u << VBGO_TAG_WORLD(lo);
-                        }
-                        const bool marks = runMarks, pair = (spriteWorlds & runWorld) != 0;
-                        if (!runDrawn || !(marks || pair))
-                            continue;
-                        const uint16_t hi = v.cells[x][vbgo_tt_cell_at(y)];
-                        if (marks && !(((lo & kRunMaskLo) == doneLo && hi == doneHi) || !VBGO_TAG_PIXEL(lo) ||
-                                       !(EyeTaggedPixel(eyeBits, eyeClut, x, y) & 0xFFFFFFu)))
-                        {
-                            const int lx = LeftX(vbgo_tag_compose(lo, hi), static_cast<int>(x), 1, y);
-                            if (lx >= 0 && lx < VBGO_TT_WIDTH)
-                            {
-                                const unsigned cell = b * kGridW + (static_cast<unsigned>(lx) >> 3);
-                                // (without a slot holding layer-bound groups the mask changes nothing)
-                                if (bound)
-                                    markers[cell] |= m_slotMarkers[VBGO_TAG_CHAR(lo)] & spriteGroups;
-                                else
-                                    markers[cell] |= m_slotMarkers[VBGO_TAG_CHAR(lo)];
-                                NoteMarkerCell(cell);
-                                doneLo = lo & kRunMaskLo, doneHi = hi;
-                            }
-                        }
-                        if (!pair)
-                            continue;
-                        const uint64_t t = vbgo_tag_compose(lo, hi);
-                        const int p = m_spritePairOf[VBGO_TAG_WORLD(t)];
-                        if (EyeOnly(t) != 2 || (wanted >> p & 1) ||
-                            (VBGO_TAG_PIXEL(lo) && !(EyeTaggedPixel(eyeBits, eyeClut, x, y) & 0xFFFFFFu)))
-                            continue;
-                        const unsigned chr = VBGO_TAG_CHAR(t);
-                        if (SharedWithLeftPicture(chr, m_slots[chr].hash, p) && !m_pairs[p].estimated)
-                            continue;
-                        wanted |= 1u << p;
-                        for (unsigned w = 0; w < 32; ++w)
-                            if (m_spritePairOf[w] == p)
-                                spriteWorlds &= ~(1u << w);
-                    }
-                }
-        }
+        const int scanned = RightSpriteMarks(v, eyeBits, eyeClut, markers, spriteMarks, wanted, spriteWorlds);
 
         // (no world that may draw in band b at columns x0 - x1 - both eyes', a superset without sprites - could start
         // a run there that resizes its layer or wants a pair; a layer this wide is sized by its width alone)

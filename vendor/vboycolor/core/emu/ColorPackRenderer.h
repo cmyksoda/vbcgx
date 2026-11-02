@@ -278,6 +278,14 @@ private:
     // Where a right-eye pixel would be in the left eye, as far as both eyes
     // agree on it (sprites and layers both eyes draw: exactly).
     int LeftX(const uint64_t tag, int x, unsigned eye, unsigned y) const;
+    // The right eye's sprite pixels as its walk reads them: their markers, each at its left-eye cell, and the sprite
+    // pairs they want (bits in wanted, their worlds out of pairWorlds). Returns how many sprite tags it read.
+    int RightSpriteMarks(const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut,
+                         ContextGroupBits *markers, bool spriteMarks, uint32_t &wanted, uint32_t &pairWorlds);
+    // Paint's marker pre-pass in one band of the left eye: the cells (a bit each) where its drawing used a marker's
+    // tile, their markers into the grid and the band's cache.
+    void LeftBandMarks(const vbgo_tt_eye_view &v, unsigned band, uint64_t cells, const uint8_t *leftBits,
+                       const uint32_t *leftClut, ContextGroupBits *markers, uint8_t *markerLayers, Band &cache);
 
     // Per-eye pairs (at most kMaxPairs a frame).
     static constexpr int kMaxPairs = 16;
