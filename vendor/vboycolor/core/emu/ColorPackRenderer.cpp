@@ -1557,18 +1557,42 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 for (int k = 0; k < sourceCount; ++k)
                     byRow[next[sources[k] / kGridW]++] = sources[k];
             }
+            // (a row's sources with the same groups are one span: the cells they reach and come close to, ORed into
+            // once - and a target row's spans of the same groups from the rows within reach are merged again)
+            const auto cellsWithin = [](int gx, int r) {
+                const int x0 = std::max(0, gx - r), x1 = std::min(kGridW - 1, gx + r);
+                return ((2ull << x1) - 1) & ~((1ull << x0) - 1);
+            };
+            if (m_spreadSpans.size() < static_cast<size_t>(sourceCount))
+                m_spreadSpans.resize(static_cast<size_t>(sourceCount));
+            SpreadSpan *const spans = m_spreadSpans.data();
+            int spanFirst[kGridH + 1];
+            int spanCount = 0;
+            for (int r = 0; r < kGridH; ++r)
+            {
+                spanFirst[r] = spanCount;
+                for (int k = rowFirst[r]; k < rowFirst[r + 1]; ++k)
+                {
+                    const int i = byRow[k], gx = i % kGridW;
+                    int s = spanFirst[r];
+                    while (s < spanCount && !(spans[s].bits == here[i]))
+                        ++s;
+                    if (s == spanCount)
+                        spans[spanCount++] = SpreadSpan{here[i], 0, 0};
+                    spans[s].nearCells |= cellsWithin(gx, kContextReach);
+                    spans[s].closeCells |= cellsWithin(gx, 1);
+                }
+            }
+            spanFirst[kGridH] = spanCount;
+            constexpr int kMerged = 32;
             for (int y = 0; y < kGridH; ++y)
             {
-                const int from = rowFirst[std::max(0, y - kContextReach)];
-                const int to = rowFirst[std::min(kGridH, y + kContextReach + 1)];
-                const int closeFrom = rowFirst[std::max(0, y - 1)], closeTo = rowFirst[std::min(kGridH, y + 2)];
+                const int from = spanFirst[std::max(0, y - kContextReach)];
+                const int to = spanFirst[std::min(kGridH, y + kContextReach + 1)];
+                const int closeFrom = spanFirst[std::max(0, y - 1)], closeTo = spanFirst[std::min(kGridH, y + 2)];
                 uint64_t reach = 0;
-                for (int k = from; k < to; ++k)
-                {
-                    const int gx = byRow[k] % kGridW;
-                    const int x0 = std::max(0, gx - kContextReach), x1 = std::min(kGridW - 1, gx + kContextReach);
-                    reach |= ((2ull << x1) - 1) & ~((1ull << x0) - 1);
-                }
+                for (int s = from; s < to; ++s)
+                    reach |= spans[s].nearCells;
                 const uint64_t clear = clearAll ? (1ull << kGridW) - 1 : m_spreadRows[y] | reach;
                 if (!whole)
                     m_spreadRows[y] = reach;
@@ -1582,32 +1606,49 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     ClearLine32(reinterpret_cast<uint8_t *>(&nearRow[x]));
                     ClearLine32(reinterpret_cast<uint8_t *>(&closeRow[x]));
                 }
-                for (int k = from; k < to; ++k)
-                {
-                    const int i = byRow[k], gx = i % kGridW;
-                    const ContextGroupBits &bits = here[i];
-                    // (a source of one word of groups - nearly all - ORs in just that word)
+                const ContextGroupBits *mergedBits[kMerged];
+                uint64_t mergedNear[kMerged], mergedClose[kMerged];
+                int merged = 0;
+                // (groups ORed into a row's cells: a source of one word of groups - nearly all - ORs in just that word)
+                const auto spread = [&](const ContextGroupBits &bits, uint64_t nearCells, uint64_t closeCells) {
                     unsigned word = 0, words = 0;
                     for (unsigned j = 0; j < ContextGroupBits::kWords; ++j)
                         if (bits.w[j])
                             word = j, ++words;
                     const uint64_t only = bits.w[word];
-                    const int x0 = std::max(0, gx - kContextReach), x1 = std::min(kGridW - 1, gx + kContextReach);
-                    if (words <= 1)
-                        for (int x = x0; x <= x1; ++x)
+                    for (; nearCells; nearCells &= nearCells - 1)
+                    {
+                        const int x = __builtin_ctzll(nearCells);
+                        if (words <= 1)
                             nearRow[x].w[word] |= only;
-                    else
-                        for (int x = x0; x <= x1; ++x)
+                        else
                             nearRow[x] |= bits;
-                    if (k >= closeFrom && k < closeTo)
-                        for (int x = std::max(0, gx - 1); x <= std::min(kGridW - 1, gx + 1); ++x)
-                        {
-                            if (words <= 1)
-                                closeRow[x].w[word] |= only;
-                            else
-                                closeRow[x] |= bits;
-                        }
+                    }
+                    for (; closeCells; closeCells &= closeCells - 1)
+                    {
+                        const int x = __builtin_ctzll(closeCells);
+                        if (words <= 1)
+                            closeRow[x].w[word] |= only;
+                        else
+                            closeRow[x] |= bits;
+                    }
+                };
+                for (int s = from; s < to; ++s)
+                {
+                    const uint64_t closeCells = s >= closeFrom && s < closeTo ? spans[s].closeCells : 0;
+                    int m = 0;
+                    while (m < merged && !(*mergedBits[m] == spans[s].bits))
+                        ++m;
+                    if (m < merged)
+                        mergedNear[m] |= spans[s].nearCells, mergedClose[m] |= closeCells;
+                    else if (merged < kMerged)
+                        mergedBits[merged] = &spans[s].bits, mergedNear[merged] = spans[s].nearCells,
+                        mergedClose[merged++] = closeCells;
+                    else
+                        spread(spans[s].bits, spans[s].nearCells, closeCells);
                 }
+                for (int m = 0; m < merged; ++m)
+                    spread(*mergedBits[m], mergedNear[m], mergedClose[m]);
             }
             m_spreadAll = whole;
         }

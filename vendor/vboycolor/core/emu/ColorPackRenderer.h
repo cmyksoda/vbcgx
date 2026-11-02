@@ -470,6 +470,13 @@ private:
     // (Paint's scratch for those)
     std::array<ContextGroupBits, kGridW * kGridH> m_gridHere;
     std::array<uint64_t, kGridH> m_spreadRows{}; // (per row, a bit per cell those reached last frame; all if m_spreadAll)
+    // (Paint's spread: a source row's sources merged by their groups, each with the cells they reach and come close to)
+    struct SpreadSpan
+    {
+        ContextGroupBits bits;
+        uint64_t nearCells = 0, closeCells = 0;
+    };
+    std::vector<SpreadSpan> m_spreadSpans;
     // With layer-bound groups only sprites' context tiles ask, so the cells
     // with markers are kept and a cell's groups worked out when asked (once a frame).
     std::vector<std::pair<uint16_t, ContextGroupBits>> m_spriteSources;
