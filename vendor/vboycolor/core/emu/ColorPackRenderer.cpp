@@ -1049,7 +1049,8 @@ __attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_
             used |= v.band_chr[b * (2048 / 32) + i] & spriteSlots[i];
         const uint32_t bandKey = v.band_key[b];
         const uint64_t spriteCells = v.tagged && v.obj_cells ? v.obj_cells[b] & v.tagged[b] : kAllCells;
-        const uint64_t read = skim && bandKey && used && spriteCells ? RightSpriteCells(v, b, markers, bound) : kAllCells;
+        const uint64_t read =
+            skim && bandKey && used && spriteCells ? RightSpriteCells(v, b, markers, bound) : kAllCells;
         // (the run LeftX last placed - its offset is the same in every column of the band - and the cell its marker
         // last went into)
         uint32_t knownLo = ~0u, knownHi = 0, knownCell = ~0u;
@@ -1196,9 +1197,22 @@ __attribute__((noinline)) uint64_t ColorPackRenderer::RightSpriteCells(const vbg
             read |= (2ull << (x1 >> 3)) - (1ull << (x0 >> 3));
             continue;
         }
+        // (column xr + k is at base + k in the left eye: toLeft marks the k in cell `left`, the rest are in the next)
+        const int base = xr - 2 * vbgo_obj_parallax(m_oam, s.oam), left = base >> 3;
+        const unsigned toLeft = (1u << (8 - static_cast<unsigned>(base & 7))) - 1;
+        ContextGroupBits masked;
+        const ContextGroupBits *add = &m_slotMarkers[chr];
+        if (bound)
+            masked = *add & ~m_layerBound, add = &masked;
+        const auto holds = [&](int l) {
+            return l < 0 || l >= kGridW || (in[l] && ((row[l] | *add) == row[l]));
+        };
+        // (the sprite's columns whose left-eye cell lacks its markers: nearly always none)
+        unsigned lacking = (holds(left) ? 0 : toLeft) | (toLeft == 0xFF || holds(left + 1) ? 0 : 0xFF & ~toLeft);
+        if (!lacking)
+            continue;
         // (its tags are only in the columns its character has pixels in on the band's rows, when the character is still
         // as drawn)
-        unsigned columns = 0xFF;
         const unsigned top = (b * 8 - s.entry[2]) & 0xFF;
         if (!(changed[chr >> 5] >> (chr & 31) & 1) && (top < 8 || top > 0xF8))
         {
@@ -1210,32 +1224,20 @@ __attribute__((noinline)) uint64_t ColorPackRenderer::RightSpriteCells(const vbg
             unsigned shown = (pixels | pixels >> 1) & 0x5555;
             shown = (shown | shown >> 1) & 0x3333;
             shown = (shown | shown >> 2) & 0x0F0F;
-            columns = (shown | shown >> 4) & 0xFF;
+            shown = (shown | shown >> 4) & 0xFF;
             if (s.entry[3] & 0x2000)
             {
-                columns = (columns & 0xF0) >> 4 | (columns & 0x0F) << 4;
-                columns = (columns & 0xCC) >> 2 | (columns & 0x33) << 2;
-                columns = (columns & 0xAA) >> 1 | (columns & 0x55) << 1;
+                shown = (shown & 0xF0) >> 4 | (shown & 0x0F) << 4;
+                shown = (shown & 0xCC) >> 2 | (shown & 0x33) << 2;
+                shown = (shown & 0xAA) >> 1 | (shown & 0x55) << 1;
             }
+            lacking &= shown;
         }
-        // (a pixel at column xr + k goes to the left eye's cell (base + k) >> 3: base >> 3 below split, the next above)
-        const int base = xr - 2 * vbgo_obj_parallax(m_oam, s.oam), left = base >> 3;
-        const unsigned split = 8 - static_cast<unsigned>(base & 7);
-        ContextGroupBits masked;
-        const ContextGroupBits *add = &m_slotMarkers[chr];
-        if (bound)
-            masked = *add & ~m_layerBound, add = &masked;
-        const auto holds = [&](int l) {
-            return l < 0 || l >= kGridW || (in[l] && ((row[l] | *add) == row[l]));
-        };
-        for (int c = x0 >> 3; c <= x1 >> 3; ++c)
+        for (int c = x0 >> 3; lacking && c <= x1 >> 3; ++c)
         {
             const unsigned k0 = static_cast<unsigned>(std::max(x0, c * 8) - xr),
                            k1 = static_cast<unsigned>(std::min(x1, c * 8 + 7) - xr);
-            const unsigned here = columns & ((2u << k1) - (1u << k0));
-            if (!here || (read >> c & 1))
-                continue;
-            if (((here & ((1u << split) - 1)) && !holds(left)) || ((here >> split) && !holds(left + 1)))
+            if (lacking & ((2u << k1) - (1u << k0)))
                 read |= 1ull << c;
         }
     }
