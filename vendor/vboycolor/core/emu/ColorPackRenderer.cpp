@@ -2170,7 +2170,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         uint32_t wanted = 0; // (bit per pair a start wants)
         // (a background tile's layer-bound markers also set their cell's layer, the walk's last one kept)
         const int boundRead = markers && spriteMarks && m_anyBoundMarkerSlot
-                                  ? RightBoundMarks(v, eyeBits, eyeClut, markers, markerLayers, wanted)
+                                  ? RightBoundMarks(v, eyeBits, eyeClut, markers, m_markerLayer[m_gridCurrent].data(), wanted)
                                   : 0;
         // Sprite pairs: wanted by any counted pixel of a right-only sprite (its run's start is one), as SetUpRun would
         // - its own estimate if the left picture doesn't share its tile, else the left's once there is one.
