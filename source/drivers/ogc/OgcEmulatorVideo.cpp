@@ -65,8 +65,8 @@ static void StorePicture(const uint8_t *picture, size_t pitch, unsigned w, unsig
     __asm__ volatile("sync" : : : "memory");
 }
 
-// A picture shown 1:1 is converted by the GPU into an RGB8 EFB; AA modes (an RGB565 EFB) and reduced pictures keep
-// the CPU's conversion.
+// A picture shown 1:1 is converted by the GPU into an RGB8 EFB (its texture made on first use); AA modes (an RGB565
+// EFB) and reduced pictures keep the CPU's conversion.
 bool OgcEmulatorVideo::convertsOnGpu(const uint8_t *buffer, size_t pitch, unsigned w, unsigned h)
 {
     const GXRModeObj *mode = videoDriver->getVideoMode();
@@ -125,9 +125,9 @@ void OgcEmulatorVideo::convertOnGpu(const uint8_t *buffer, size_t pitch, unsigne
     guOrtho(projection, 0, mode->efbHeight, 0, mode->fbWidth, 0, 300);
     GX_LoadProjectionMtx(projection, GX_ORTHOGRAPHIC);
 
-    // (texel centers 13/24 of the way across and down a pixel: between 0.5 and 7/12, where GPUs sample one, with
-    // room either way inside the texel; h rows span the texture's whole height)
-    const float sample = 4 * 13.0f / 24, ds = 1.0f / texW;
+    // (texel centers on pixel centers: the Wii and vWii sample a pixel 0.46-0.5 of the way across and down, Dolphin
+    // 0.42-0.56, all well inside a texel; h rows span the texture's whole height)
+    const float sample = 4 * 0.5f, ds = 1.0f / texW;
     GX_Begin(GX_QUADS, GX_VTXFMT2, w / 2 * 4);
     for (unsigned m = 0; m < w / 2; ++m) {
         const s16 x0 = 2 * m, x1 = x0 + 2;
