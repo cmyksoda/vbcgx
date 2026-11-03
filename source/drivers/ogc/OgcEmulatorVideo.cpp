@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <malloc.h>
 
 GXRModeObj NTSC_240p, PAL_240p;
 
@@ -30,7 +31,9 @@ void OgcEmulatorVideo::init(VideoDriver *driver)
 
 void OgcEmulatorVideo::resetVideo()
 {
+    videoDriver->waitForCopy();
     videoDriver->startGameVideo();
+    gpuExact = checkGpu();
     platform->getAudio()->getEmulatorAudio()->updateSampleRate(48000);
 }
 
@@ -65,24 +68,63 @@ static void StorePicture(const uint8_t *picture, size_t pitch, unsigned w, unsig
     __asm__ volatile("sync" : : : "memory");
 }
 
-// A picture shown 1:1 is converted by the GPU into an RGB8 EFB (its texture made on first use); AA modes (an RGB565
-// EFB) and reduced pictures keep the CPU's conversion.
+// A picture shown 1:1 is converted by the GPU into an RGB8 EFB once its size and pitch passed checkGpu; AA modes (an
+// RGB565 EFB) and reduced pictures keep the CPU's conversion.
 bool OgcEmulatorVideo::convertsOnGpu(const uint8_t *buffer, size_t pitch, unsigned w, unsigned h)
 {
+    return gpuExact && w == vbWidth && h == vbHeight && w == gpuW && h == gpuH && pitch == gpuPitch
+        && reinterpret_cast<uintptr_t>(buffer) % 32 == 0;
+}
+
+// Dolphin's enhancements (internal resolution above 1x, forced linear filtering) and its EFB copies kept out of memory
+// don't reproduce pass 1, so a test picture converted both ways decides each time the game's video starts.
+bool OgcEmulatorVideo::checkGpu()
+{
     const GXRModeObj *mode = videoDriver->getVideoMode();
-    if (mode->aa || w != vbWidth || h != vbHeight || w > mode->fbWidth || h > mode->efbHeight || pitch % 32
-        || pitch > 4096 || h > 256 || reinterpret_cast<uintptr_t>(buffer) % 32)
+    const unsigned w = vbWidth, h = vbHeight;
+    const size_t pitch = (w + 8) * 4;
+    if (mode->aa || w > mode->fbWidth || h > mode->efbHeight || w % 8 || h % 4 || h > 256 || pitch > 4096)
         return false;
-    if (w != gpuW || h != gpuH) {
+    waitForGpu();
+    if (!gpuTexture || w != gpuW || h != gpuH) {
         videoDriver->getImageRenderer()->destroyTexture(gpuTexture);
         gpuTexture = videoDriver->getImageRenderer()->createTexture(w, h);
         gpuW = w;
         gpuH = h;
-        // (none of its lines may sit dirty in the CPU's cache, to be written back over the GPU's copies later)
-        if (gpuTexture)
-            DCFlushRange(gpuTexture, w * h * 4);
     }
-    return gpuTexture;
+    gpuPitch = pitch;
+    auto *picture = static_cast<uint8_t *>(memalign(32, pitch * h));
+    auto *expected = static_cast<uint8_t *>(memalign(32, w * h * 4));
+    bool exact = gpuTexture && picture && expected;
+    if (exact) {
+        // (hashed, so a texel read one place off or blended with a neighbor shows)
+        for (size_t i = 0; i < pitch * h / 4; ++i) {
+            uint32_t v = (i + 1) * 0x9E3779B1u;
+            v ^= v >> 15;
+            reinterpret_cast<uint32_t *>(picture)[i] = v * 0x2C1B3C6Du;
+        }
+        exact = convertsAlike(picture, pitch, w, h, expected);
+        // (Dolphin's faster texture caches hash only samples of a texture, so a one-byte change could go unseen)
+        picture[h / 2 * pitch + w / 2 * 4 + 1] ^= 0x5A;
+        exact = exact && convertsAlike(picture, pitch, w, h, expected);
+    }
+    free(picture);
+    free(expected);
+    return exact;
+}
+
+bool OgcEmulatorVideo::convertsAlike(const uint8_t *picture, size_t pitch, unsigned w, unsigned h, uint8_t *expected)
+{
+    const size_t bytes = w * h * 4;
+    DCStoreRange(const_cast<uint8_t *>(picture), pitch * h);
+    // (zeros fail: every texel's alpha is 255, so a GPU that leaves memory alone can't pass)
+    memset(gpuTexture, 0, bytes);
+    DCFlushRange(gpuTexture, bytes);
+    convertOnGpu(picture, pitch, w, h);
+    GX_DrawDone();
+    DCInvalidateRange(gpuTexture, bytes);
+    ReduceVBFrame(picture, w, h, pitch, expected, w, h);
+    return !memcmp(gpuTexture, expected, bytes);
 }
 
 // Pass 1: the GPU draws the picture 1:1 into the EFB and copies it out as the game's RGBA8 texture. In memory the
