@@ -930,6 +930,13 @@ const TileColorPack::CellTile *ColorPackRenderer::FindCell(unsigned cell, unsign
     return nullptr;
 }
 
+// (a layer pair's disparity has one reader, LeftX placing a right-eye background tile's layer-bound markers: only such
+// a tile wants the pair, and PairDue stops estimating one nothing wanted for 64 frames)
+static bool ReadsLayerPair(const uint32_t *boundMarkerSlots, unsigned chr)
+{
+    return boundMarkerSlots[chr >> 5] >> (chr & 31) & 1;
+}
+
 ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, const RunSetUp &c)
 {
     // A new run: everything but the pixel inside the tile (see Run).
@@ -988,7 +995,8 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, con
                 NoteLeftPair(chr, 1u << m_pairOfLeft[world]);
                 run.pairSlot = chr | 1u << m_pairOfLeft[world] << 11;
             }
-            else if (eye && m_pairOfRight[world] >= 0)
+            // (a kept cell's tiles are as when walked, so the replay of its pair slots agrees with this)
+            else if (eye && m_pairOfRight[world] >= 0 && ReadsLayerPair(m_boundMarkerSlots, chr))
             {
                 const int p = m_pairOfRight[world];
                 run.pairSlot = chr | static_cast<uint32_t>(p + 1) << 11;
@@ -2002,7 +2010,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
 
     // The right eye's run starts, if they're all it adds (true): with a pack, no drawn tile there carrying markers for
     // its kind, every layer pair estimated and what it keeps walked with its band reached as now, a start only sizes
-    // its layer (by the extent - see the figures below) and wants its pair. Only bands where that can change are read.
+    // its layer (see the figures below) and wants its sprite pair. Only bands where that can change are read.
     constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
     constexpr int kScanPerCell = 64;
     auto rightFromEnds = [&](const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut) -> bool {
@@ -2073,23 +2081,19 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         const int scanned = RightSpriteMarks(v, eyeBits, eyeClut, markers, spriteMarks, wanted, spriteWorlds);
 
         // (no world that may draw in band b at columns x0 - x1 - both eyes', a superset without sprites - could start
-        // a run there that resizes its layer or wants a pair; a layer this wide is sized by its width alone)
+        // a run there that resizes its layer; a layer this wide is sized by its width alone)
         constexpr int kSizedByWidth = VBGO_TT_HEIGHT - 1 + 7;
         uint32_t *const cellWorlds = m_rightCellWorlds.data();
 
-        // (a start of world w in band b, at columns x0 - x1, can neither widen its layer nor want its pair)
+        // (a start of world w in band b, at columns x0 - x1, can't widen its layer)
         auto reached = [&](unsigned w, int b, int x0, int x1) {
             const unsigned k = m_worlds[w].colors;
             return (worldsDrawn >> k & 1) && left[k] <= x0 && right[k] >= x1 &&
                    (!(top[k] > b * 8 || bottom[k] < b * 8 + 7) || right[k] - left[k] >= kSizedByWidth);
         };
-        auto covered = [&](unsigned w, int b, int x0, int x1) {
-            const int p = pairs ? m_pairOfRight[w] : -1;
-            return reached(w, b, x0, x1) && (p < 0 || (wanted >> p & 1));
-        };
         auto settled = [&](int b, int x0, int x1) {
             for (uint32_t worlds = cellWorlds[b * kGridW + (x0 >> 3)]; worlds; worlds &= worlds - 1)
-                if (!covered(static_cast<unsigned>(__builtin_ctz(worlds)), b, x0, x1))
+                if (!reached(static_cast<unsigned>(__builtin_ctz(worlds)), b, x0, x1))
                 {
                     // (a column with nothing lit, and no fills, has no run start to widen anything)
                     if (!v.filled_cells || (v.filled_cells[b] >> (x0 >> 3) & 1))
@@ -2137,7 +2141,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     if ((seen >> w & 1) || VBGO_TAG_IS_OBJ(lo) || !vbgo_tag_drawn(lo, v.band_key[b]) ||
                         (!noFills && VBGO_TAG_PIXEL(lo) && !(m_rightLit[x] >> (band >> ((y & 7) * 2) & 3) & 1)))
                         continue;
-                    if (!covered(w, static_cast<int>(b), static_cast<int>(c * 8), static_cast<int>(c * 8 + 7)))
+                    if (!reached(w, static_cast<int>(b), static_cast<int>(c * 8), static_cast<int>(c * 8 + 7)))
                         return true;
                     seen |= 1u << w;
                 }
@@ -2145,15 +2149,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             return false;
         };
 
-        // (per cell column, a bit per band with a cell where a world isn't covered yet by its extents, and with one
-        // that only waits for its pair to be wanted: starts widen the extents and want pairs, so the rest stay settled)
-        uint32_t openBands[kGridW] = {}, pairBands[kGridW] = {};
-        uint32_t unwantedPairs = 0; // (the worlds whose pair no start wants yet)
+        // (per cell column, a bit per band with a cell where a world isn't covered yet by its extents: starts widen
+        // the extents, so the rest stay settled)
+        uint32_t openBands[kGridW] = {};
         bool usual = true;
         for (unsigned x = 0; x < static_cast<unsigned>(VBGO_TT_WIDTH); ++x)
             usual &= m_rightLit[x] == 14;
-        for (unsigned w = 0; pairs && w < 32; ++w)
-            unwantedPairs |= static_cast<uint32_t>(m_pairOfRight[w] >= 0 && !(wanted >> m_pairOfRight[w] & 1)) << w;
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
         {
             const uint32_t bandKey = v.band_key[b];
@@ -2216,8 +2217,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                           NoneLitCell(eyeBits, m_rightLit.data(), usual, c, b)))
                         openBands[c] |= 1u << b;
                 }
-                else if (worlds & unwantedPairs)
-                    pairBands[c] |= 1u << b;
             }
         }
 
@@ -2226,12 +2225,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         {
             // (bands settled for all 8 columns at once - starts only widen the extents - the rest asked per column)
             uint32_t open = 0;
-            for (uint32_t todo = openBands[c] | pairBands[c]; todo; todo &= todo - 1)
+            for (uint32_t todo = openBands[c]; todo; todo &= todo - 1)
             {
                 const int b = __builtin_ctz(todo);
-                // (a cell that only waited for its pair to be wanted is settled once it is)
-                if (!(openBands[c] >> b & 1) && !(cellWorlds[b * kGridW + c] & unwantedPairs))
-                    continue;
                 if (!settled(b, c * 8, c * 8 + 7) && uncoveredStart(b, c))
                     open |= 1u << b;
             }
@@ -2283,9 +2279,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         runLo = lo, runHi = hi;
                         const uint64_t t = vbgo_tag_compose(column[y], cells[vbgo_tt_cell_at(y)]);
                         countRun(t & kRunMask, x, y, eyeColumn[static_cast<uint32_t>(y)] >> 26, nullptr, 0);
-                        if (pairs && !VBGO_TAG_IS_OBJ(t) && m_pairOfRight[VBGO_TAG_WORLD(t)] >= 0)
-                            wanted |= 1u << m_pairOfRight[VBGO_TAG_WORLD(t)],
-                                unwantedPairs &= ~(1u << VBGO_TAG_WORLD(t));
                     }
                     walked = b;
                 }
