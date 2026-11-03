@@ -125,9 +125,9 @@ void OgcEmulatorVideo::convertOnGpu(const uint8_t *buffer, size_t pitch, unsigne
     guOrtho(projection, 0, mode->efbHeight, 0, mode->fbWidth, 0, 300);
     GX_LoadProjectionMtx(projection, GX_ORTHOGRAPHIC);
 
-    // (texel centers land on GX's sample point, 7/12 of the way across and down a pixel; h rows span the texture's
-    // whole height)
-    const float sample = 4 * 7.0f / 12, ds = 1.0f / texW;
+    // (texel centers 13/24 of the way across and down a pixel: between 0.5 and 7/12, where GPUs sample one, with
+    // room either way inside the texel; h rows span the texture's whole height)
+    const float sample = 4 * 13.0f / 24, ds = 1.0f / texW;
     GX_Begin(GX_QUADS, GX_VTXFMT2, w / 2 * 4);
     for (unsigned m = 0; m < w / 2; ++m) {
         const s16 x0 = 2 * m, x1 = x0 + 2;
