@@ -385,6 +385,23 @@ private:
     static constexpr int kRunCacheBits = 10, kRunCacheSize = 1 << kRunCacheBits;
     HotVector<CachedRun, kRunCacheSize, 1> m_runCache;
     uint32_t m_runCacheAt = 0; // (one more each eye painted)
+    // Pack tiles the left eye's runs read, copied on first use into the renderer (MEM1 on the Wii); a copy is reused
+    // only once no run of the eye being painted holds it (runs live one eye's Paint).
+    struct alignas(32) TileCopy
+    {
+        uint8_t pad[24]; // (so frame starts a cache line)
+        TileColorPack::Tile tile;
+    };
+    static constexpr int kTileCopies = 512, kTileCopyIndexBits = 10;
+    std::array<TileCopy, kTileCopies> m_tileCopies;
+    std::array<const TileColorPack::Tile *, kTileCopies> m_tileCopyOf{}; // (nullptr: free)
+    std::array<uint32_t, kTileCopies> m_tileCopyAt{};                   // (m_runCacheAt when last handed out)
+    std::array<uint16_t, 1 << kTileCopyIndexBits> m_tileCopyIndex{};     // by pack tile, linear probing: copy + 1
+    uint32_t m_tileCopiesAt = 0;  // (the Paint m_tileCopiesHeld counts for)
+    int m_tileCopiesHeld = 0, m_tileCopyHand = 0;
+    const TileColorPack::Tile *TileCopyOf(const TileColorPack::Tile *tile);
+    void DropTileCopy(int k);
+    void ForgetTileCopies();
     uint8_t m_endsRest = 0; // (Paints the right eye's ends aren't tried after they cost too much - see Paint)
     uint8_t m_endsWait = 0; // (Paints they weren't tried in, as they lately read more than the walk would)
     uint32_t m_endsRead = 0, m_endsChanged = 0; // (what their tries read and the changed cells: sums decaying by 1/8)

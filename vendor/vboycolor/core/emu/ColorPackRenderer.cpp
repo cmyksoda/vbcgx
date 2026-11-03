@@ -487,6 +487,7 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
     m_contextRange.clear();
     for (Slot &slot : m_slots)
         slot = Slot{};
+    ForgetTileCopies();
     m_slotMarkers.fill(ContextGroupBits{});
     m_slotHasMarkers.fill(false);
     std::fill(std::begin(m_slotsResolved), std::end(m_slotsResolved), 0);
@@ -937,6 +938,77 @@ static bool ReadsLayerPair(const uint32_t *boundMarkerSlots, unsigned chr)
     return boundMarkerSlots[chr >> 5] >> (chr & 31) & 1;
 }
 
+static inline uint32_t TileCopyHome(const TileColorPack::Tile *tile, int bits)
+{
+    return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(tile) >> 3) * 2654435761u >> (32 - bits);
+}
+
+const TileColorPack::Tile *ColorPackRenderer::TileCopyOf(const TileColorPack::Tile *tile)
+{
+    const uint32_t mask = (1u << kTileCopyIndexBits) - 1;
+    if (m_tileCopiesAt != m_runCacheAt)
+        m_tileCopiesAt = m_runCacheAt, m_tileCopiesHeld = 0;
+    for (uint32_t i = TileCopyHome(tile, kTileCopyIndexBits); m_tileCopyIndex[i]; i = (i + 1) & mask)
+    {
+        const int k = m_tileCopyIndex[i] - 1;
+        if (m_tileCopyOf[k] == tile)
+        {
+            if (m_tileCopyAt[k] != m_runCacheAt)
+                m_tileCopyAt[k] = m_runCacheAt, ++m_tileCopiesHeld;
+            return &m_tileCopies[k].tile;
+        }
+    }
+    if (m_tileCopiesHeld >= kTileCopies)
+        return tile;
+    int k = m_tileCopyHand;
+    for (int n = 0; m_tileCopyOf[k] && m_tileCopyAt[k] == m_runCacheAt; k = (k + 1) % kTileCopies)
+        if (++n == kTileCopies)
+            return tile;
+    m_tileCopyHand = (k + 1) % kTileCopies;
+    if (m_tileCopyOf[k])
+        DropTileCopy(k);
+    m_tileCopyOf[k] = tile;
+    m_tileCopyAt[k] = m_runCacheAt, ++m_tileCopiesHeld;
+    m_tileCopies[k].tile = *tile;
+    uint32_t i = TileCopyHome(tile, kTileCopyIndexBits);
+    while (m_tileCopyIndex[i])
+        i = (i + 1) & mask;
+    m_tileCopyIndex[i] = static_cast<uint16_t>(k + 1);
+    return &m_tileCopies[k].tile;
+}
+
+void ColorPackRenderer::DropTileCopy(int k)
+{
+    // (linear probing's deletion: later entries of the run move back into the gap if their home allows)
+    const uint32_t mask = (1u << kTileCopyIndexBits) - 1;
+    uint32_t i = TileCopyHome(m_tileCopyOf[k], kTileCopyIndexBits);
+    while (m_tileCopyIndex[i] != k + 1)
+        i = (i + 1) & mask;
+    m_tileCopyOf[k] = nullptr;
+    for (uint32_t j = i;;)
+    {
+        m_tileCopyIndex[i] = 0;
+        for (;;)
+        {
+            j = (j + 1) & mask;
+            if (!m_tileCopyIndex[j])
+                return;
+            const uint32_t home = TileCopyHome(m_tileCopyOf[m_tileCopyIndex[j] - 1], kTileCopyIndexBits);
+            if (((j - home) & mask) >= ((j - i) & mask))
+                break;
+        }
+        m_tileCopyIndex[i] = m_tileCopyIndex[j];
+        i = j;
+    }
+}
+
+void ColorPackRenderer::ForgetTileCopies()
+{
+    m_tileCopyOf.fill(nullptr);
+    m_tileCopyIndex.fill(0);
+    m_tileCopiesHeld = 0, m_tileCopyHand = 0;
+}
+
 ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, const RunSetUp &c)
 {
     // A new run: everything but the pixel inside the tile (see Run).
@@ -1013,6 +1085,8 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, con
     }
     if (!run.tile)
         run.tile = &kNoTile;
+    else if (!eye)
+        run.tile = TileCopyOf(run.tile);
     const int pairOf = run.ownPair >= 0 ? run.ownPair : run.copyPair;
     if (pairOf >= 0 && m_pairs[pairOf].estimated)
         m_pairs[pairOf].wantedAt = m_frame;
