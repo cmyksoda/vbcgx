@@ -111,6 +111,16 @@ static uint32 AnaSlowColorLUT[256][256];
 /* A few settings: */
 static bool InstantDisplayHack;
 static bool AllowDrawSkip;
+/* (set by the frontend for Innsmouth no Yakata, whose fog scene is drawn and shown from frame buffer 0 only) */
+bool vbgo_vip_fog_game;
+static bool Fb1Stale, Fb1PassSkipped, Held;
+bool vbgo_vip_held(void) { return Held; }
+
+/* Its intro mansion, under two screen-wide H-bias fog worlds: each frame a full repaint, too slow to keep up. */
+static bool FogHeld(void)
+{
+   return vbgo_vip_fog_game && DRAM[(0x1D800 + 26 * 0x20) >> 1] == 0xD404 && DRAM[(0x1D800 + 24 * 0x20) >> 1] == 0xD404;
+}
 
 static bool VidSettingsDirty;
 static bool ParallaxDisabled;
@@ -1318,6 +1328,7 @@ void VIP_Power(void)
    DrawingActive = false;
    DrawingFB = 0;
    DrawingBlock = 0;
+   Fb1Stale = Fb1PassSkipped = false;
 
    DPCTRL = 2;
    DisplayActive = false;
@@ -1852,6 +1863,7 @@ void VIP_StartFrame(EmulateSpecStruct *espec)
 
    surface = espec->surface;
    skip    = false;
+   Held    = false;
    
    if(VidSettingsDirty)
    {
@@ -2579,8 +2591,8 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
             MDFN_ALIGN(8) uint8 DrawingBuffers[2][512 * 8];	/* Don't decrease this from 512 unless you adjust vip_draw.inc(including areas that draw off-visible >= 384 and >= -7 for speed reasons) */
 
             BlockInputs *block = &Blocks[DrawingFB][DrawingBlock];
-            if(skip && InstantDisplayHack && AllowDrawSkip)
-               PassTouched[DrawingFB] = true, NewContents(DrawingFB), block->valid = false, memset(CellContent[DrawingFB][DrawingBlock], 0, sizeof(CellContent[0][0])), EditBlock(DrawingFB);
+            if((skip || (DrawingFB && FogHeld())) && InstantDisplayHack && AllowDrawSkip)
+               Fb1Stale |= DrawingFB, Fb1PassSkipped |= DrawingFB, PassTouched[DrawingFB] = true, NewContents(DrawingFB), block->valid = false, memset(CellContent[DrawingFB][DrawingBlock], 0, sizeof(CellContent[0][0])), EditBlock(DrawingFB);
             else if(PassRepeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB] &&
                     (PassShared || vbgo_tiletrack_pass_reusable(!DrawingFB))) /* (options can change after BeginPass) */
             {
@@ -2771,6 +2783,8 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
             DrawingBlock++;
             if(DrawingBlock == 28)
             {
+               if(DrawingFB && !Fb1PassSkipped)
+                  Fb1Stale = false;
                DrawingActive = false;
                PassRepeats = false;
                PassClean[DrawingFB] = DrawSerial == PassSerial[DrawingFB] && !PassTouched[DrawingFB];
@@ -2845,15 +2859,19 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      DrawingFB     ^= 1;
                      DrawingBlock   = 0;
                      DrawingActive  = true;
+                     Fb1PassSkipped = false;
                      DrawingCounter = 1120 * 4;
                      BeginPass();
                   }
 
                   GameFrameCounter = 0;
                }
-               StartFramePicture();
+               /* (a buffer 1 with skipped blocks isn't shown, the frame before stays up; at brightness 0 nothing shows) */
+               Held = DisplayFB && Fb1Stale && (BRTA | BRTB | BRTC);
+               if(!Held)
+                  StartFramePicture();
 
-               if(!skip && InstantDisplayHack)
+               if(!skip && InstantDisplayHack && !Held)
                {
                   int lr;
                   /* Ugly kludge, fix in the future. */
@@ -2985,6 +3003,7 @@ int VIP_StateAction(StateMem *sm, int load, int data_only)
          Recalc_JPLT_Cache(i);
       }
       ForgetPasses();
+      Fb1Stale = Fb1PassSkipped = false;
       /* (a load mid-pass would leave the slot's character hashes from before it: count every character as changed) */
       LastChrChangeAt = ++DrawSerial;
       memset(ChrChangedInPass, 0xFF, sizeof(ChrChangedInPass));
