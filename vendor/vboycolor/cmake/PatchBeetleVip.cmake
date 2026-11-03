@@ -761,9 +761,9 @@ else
         [=[      if(pixels & 3)
       {
        *target = JPLT_Cache[palette_selector][pixels & 3];
-       if(vbgo_orow && (unsigned)(target - fb[lr] - ClipX0) <= (unsigned)(ClipX1 - ClipX0)) /* VirtualBoyGo */
-        vbgo_orow[(target - fb[lr]) * VBGO_TT_COLUMN] = vbgo_obits | ((8 - meow) << 11) | ((pixels & 3) << 20),
-        vbgo_ocrow[(target - fb[lr]) * VBGO_TT_CELL_COLUMN] = vbgo_ocell;
+       if(vbgo_orow && (unsigned)(target - row - ClipX0) <= (unsigned)(ClipX1 - ClipX0)) /* VirtualBoyGo */
+        vbgo_orow[(target - row) * VBGO_TT_COLUMN] = vbgo_obits | ((8 - meow) << 11) | ((pixels & 3) << 20),
+        vbgo_ocrow[(target - row) * VBGO_TT_CELL_COLUMN] = vbgo_ocell;
       }
       target--;]=]
         "vip_draw.inc (DrawOBJ flipped store)")
@@ -774,9 +774,9 @@ else
         [=[      if(pixels & 3)
       {
        *target = JPLT_Cache[palette_selector][pixels & 3];
-       if(vbgo_orow && (unsigned)(target - fb[lr] - ClipX0) <= (unsigned)(ClipX1 - ClipX0)) /* VirtualBoyGo */
-        vbgo_orow[(target - fb[lr]) * VBGO_TT_COLUMN] = vbgo_obits | ((8 - meow) << 11) | ((pixels & 3) << 20),
-        vbgo_ocrow[(target - fb[lr]) * VBGO_TT_CELL_COLUMN] = vbgo_ocell;
+       if(vbgo_orow && (unsigned)(target - row - ClipX0) <= (unsigned)(ClipX1 - ClipX0)) /* VirtualBoyGo */
+        vbgo_orow[(target - row) * VBGO_TT_COLUMN] = vbgo_obits | ((8 - meow) << 11) | ((pixels & 3) << 20),
+        vbgo_ocrow[(target - row) * VBGO_TT_CELL_COLUMN] = vbgo_ocell;
       }
       target++;]=]
         "vip_draw.inc (DrawOBJ store)")
@@ -848,18 +848,25 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, in
         "vip_draw.inc (DrawOBJ whole row)")
     # Which world (layer) is drawing.
     _vbgo_replace_once(DRAW
-        [=[    uint8 *target = &fb[lr][x];
+        [=[    uint8 *target = &row[x];
 ]=]
-        [=[    uint8 *target = &fb[lr][x];
+        [=[    uint8 *target = &row[x];
     /* VirtualBoyGo: this sprite row's tags - all but the pixel's place in the tile and its value */
-    uint32_t *const vbgo_orow = vbgo_tt_row(fb[lr]);
-    uint16_t *const vbgo_ocrow = vbgo_tt_cell_row(fb[lr]);
+    uint32_t *const vbgo_orow = vbgo_tt_row(row);
+    uint16_t *const vbgo_ocrow = vbgo_tt_cell_row(row);
     const uint32_t vbgo_obits = vbgo_tt_call_bits() | char_no | (char_sub_y << 14) | (palette_selector << 17) | (1u << 19);
     const uint16_t vbgo_ocell = VBGO_TT_OBJ_CELL(oam);
-    if(vbgo_orow) /* VirtualBoyGo: the cells this sprite row may tag */
-     vbgo_tt_ocells[x > 0 ? x >> 3 : 0] = vbgo_tt_ocells[x + 7 < 384 ? (x + 7) >> 3 : 47] = 1;
 ]=]
         "vip_draw.inc (DrawOBJ sprite row)")
+    # The cells a sprite may tag in an eye, once for all its rows (it meets one at least).
+    _vbgo_replace_once(DRAW
+        [=[   for(left = rows; left; left &= left - 1)
+]=]
+        [=[   if(vbgo_tt_on) /* VirtualBoyGo */
+    vbgo_tt_ocells[x > 0 ? x >> 3 : 0] = vbgo_tt_ocells[x + 7 < 384 ? (x + 7) >> 3 : 47] = 1;
+   for(left = rows; left; left &= left - 1)
+]=]
+        "vip_draw.inc (DrawOBJ sprite)")
 
     # vip.c #includes "vip_draw.inc"; a quoted include resolves next to the
     # including file first, so the generated vip.c picks up the generated

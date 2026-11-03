@@ -486,6 +486,8 @@ static int GatherOBJ(uint16 *list, uint16 block_y)
  return count;
 }
 
+/* DrawOBJ over a block's 8 rows (fb: each eye's first row, Y its row number), the sprites first to last (the last drawn
+ * is in front). Rows don't touch each other, so each sprite draws all the rows it meets at once. */
 static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, int count)
 {
  int k;
@@ -495,44 +497,53 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, in
  {
   const int32 oam = list[k];
   int lr;
-  uint32 pixels_save;
   uint32 char_no;
   uint32 jx, jp;
   uint32 palette_selector;
   uint32 vflip_xor;
-  uint32 char_sub_y;
+  uint32 rows;
   bool jlron[2];
   const uint16 *oam_ptr = &DRAM[(0x1E000 + (oam * 8)) >> 1];
   const uint32 jy = oam_ptr[2];
-  const uint32 tile_y = (Y - jy) & 0xFF;
+  const uint32 top = (Y - jy) & 0xFF; /* (the first row's tile_y) */
 
-  if(tile_y >= 8)
+  if(top < 8)
+   rows = 0xFFu >> top;
+  else if(top > 0xF8)
+   rows = (0xFFu << (0x100 - top)) & 0xFF;
+  else
    continue;
 
   jx = oam_ptr[0];
   jp = ParallaxDisabled ? 0 : (oam_ptr[1] & 0x3FFF);
   palette_selector = oam_ptr[3] >> 14;
   vflip_xor = (oam_ptr[3] & 0x1000) ? 7 : 0;
-  char_sub_y = vflip_xor ^ tile_y;
   jlron[0] = (bool)(oam_ptr[1] & 0x8000);
   jlron[1] = (bool)(oam_ptr[1] & 0x4000);
   char_no = oam_ptr[3] & 0x7FF;
-  pixels_save = CHR16[char_no * 8 + char_sub_y];
   USE_CHR(char_no);
 
   for(lr = 0; lr < 2; lr++)
   {
-   uint32 pixels;
    int32 x;
+   uint32 left;
    if(!(jlron[lr] & lron[lr]))
     continue;
 
-   pixels = pixels_save;
    x = sign_x_to_s32(10, (jx + (lr ? jp : -jp))); /* It may actually be 9, TODO? */
 
-   if(x >= -7 && x < 384 && x + 7 >= ClipX0 && x <= ClipX1)	/* Make sure we always keep the pitch of our 384x8 buffer large enough(with padding before and after the visible space) */
+   if(!(x >= -7 && x < 384 && x + 7 >= ClipX0 && x <= ClipX1))	/* Make sure we always keep the pitch of our 384x8 buffer large enough(with padding before and after the visible space) */
+    continue;
+   for(left = rows; left; left &= left - 1)
    {
-    uint8 *target = &fb[lr][x];
+    const int y = __builtin_ctz(left);
+    const uint32 char_sub_y = vflip_xor ^ ((top + y) & 0xFF);
+    uint8 *const row = fb[lr] + y * 512;
+    uint32 pixels = CHR16[char_no * 8 + char_sub_y];
+
+    if(!pixels)
+     continue;
+    uint8 *target = &row[x];
 
     if(oam_ptr[3] & 0x2000)
     {
@@ -558,9 +569,7 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, in
       pixels >>= 2;
      }
     }
-
    }
-
   }
  }
 
@@ -997,11 +1006,8 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
   if(bgm == BGM_OBJ)
   {
    const uint16 *const list = obj_lists[obj_index++];
-   for(y = 0; y < 8; y++)
-   {
-    uint8 *fb[2] = { &fb_l[y * 512], &fb_r[y * 512] };
-    DrawOBJ(fb, (block_no * 8) + y, lron, list, counts[k]);
-   }
+   uint8 *fb[2] = { fb_l, fb_r };
+   DrawOBJ(fb, block_no * 8, lron, list, counts[k]);
   }
   else if(bgm == BGM_AFFINE)
   {
