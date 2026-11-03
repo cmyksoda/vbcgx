@@ -126,6 +126,8 @@ void vbgo_tiletrack_forget_motion(void);
 /* The VIP's frame buffers, FB[fb][lr][0x6000], each stored by band (vip.c's FBOffset), through a function the patched
  * vip.c adds - see cmake/PatchBeetleVip.cmake. */
 const uint8_t *vbgo_vip_framebuffers(void);
+/* A bit per character the game wrote since the buffer's latest pass began (all of them after a state load). */
+const uint32_t *vbgo_vip_chrs_changed_in_pass(int fb);
 /* An eye's pixels of a block as the frame buffer holds them: 192 words of two columns' two bytes each, all zero where
  * the pixels are. */
 const uint32_t *vbgo_vip_block_pixels(unsigned fb, unsigned lr, unsigned block);

@@ -376,6 +376,8 @@ private:
         const TileColorPack *pack;
         bool haveCells, markers, haveContexts, pairs;
         unsigned flatObjPalettes; // (this eye's - see vbgo_tt_eye_view)
+        const uint16_t *chr = nullptr;         // (this eye's pass's characters - see vbgo_tt_eye_view)
+        const uint32_t *chrsChanged = nullptr; // (those written since - see vbgo_vip_chrs_changed_in_pass)
     };
     Run SetUpRun(uint64_t tag, unsigned eye, const RunSetUp &setUp);
     static constexpr int kRunCacheBits = 10, kRunCacheSize = 1 << kRunCacheBits;
