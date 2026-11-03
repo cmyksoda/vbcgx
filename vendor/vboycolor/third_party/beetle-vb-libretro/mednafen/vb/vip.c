@@ -3131,3 +3131,16 @@ int32 VIP_QuietUntil(int32 next_vip)
    }
    return j > 0 ? next_vip + 259 * j : next_vip;
 }
+
+/* A loaded save state starts the front to back memo fresh too, as of this pass: its waits count in passes, and the
+ * pass count and serials keep running so nothing stamped with them goes stale */
+void vbgo_vip_fresh(void)
+{
+   int fb, b;
+   for(fb = 0; fb < 2; fb++)
+      for(b = 0; b < 28; b++)
+      {
+         VbgoFrontMemos[fb][b].retry = VbgoFrontMemos[fb][b].big = PassNo;
+         VbgoFrontMemos[fb][b].worlds = 0;
+      }
+}

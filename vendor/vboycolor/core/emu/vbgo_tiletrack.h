@@ -133,6 +133,7 @@ const uint32_t *vbgo_vip_block_pixels(unsigned fb, unsigned lr, unsigned block);
  * of 2-bit pixels (row y: byte y / 4, bits (y % 4) * 2) and the 4 pixel values they index, each the
  * 32-bit word the surface would have held (0: the display was off). */
 const uint8_t *vbgo_vip_eye_bits(int eye);
+void vbgo_vip_fresh(void);
 const uint32_t *vbgo_vip_eye_clut(int eye);
 
 /* An eye's pixel y in column x, as the 4 bytes the surface would have held there */

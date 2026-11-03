@@ -929,6 +929,18 @@ extern "C"
     // Whether the loaded game has a color pack (whatever the packs option says)
     bool vboycolor_has_pack(void) { return !g_pack.Empty(); }
 
+    // A save state the player loads is colored as if the game had just been loaded with it (rewind and run-ahead keep
+    // their history: they load nearly the same picture)
+    void vboycolor_fresh_colors(void)
+    {
+        g_renderer.~ColorPackRenderer();
+        new (&g_renderer) ColorPackRenderer();
+        ApplyColors();
+        vbgo_tiletrack_reset();
+        vbgo_vip_fresh();
+        g_repaint = true;
+    }
+
     RETRO_API void retro_unload_game(void)
     {
         beetle_retro_unload_game();
