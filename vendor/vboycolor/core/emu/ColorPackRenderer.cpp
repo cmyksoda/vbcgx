@@ -828,7 +828,7 @@ void ColorPackRenderer::Near(int x, int y, unsigned world, ContextGroupBits &nea
     // Layer-bound markers on this pixel's layer within reach, this frame and the last two (in left-eye terms),
     // kept per grid cell and layer for the frame. (Sprites' groups: m_nearSprites.)
     const int cx = x >> 3, cy = y >> 3;
-    std::vector<NearCell> &cache = m_nearCache[world & 31];
+    auto &cache = m_nearCache[world & 31];
     if (cache.empty())
         cache.resize(kGridW * kGridH);
     NearCell &known = cache[cy * kGridW + cx];

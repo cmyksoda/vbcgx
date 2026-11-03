@@ -3,6 +3,7 @@
 #include "emu/AutoColors.h"
 #include "emu/DepthColors.h"
 #include "emu/LineAligned.h"
+#include "emu/StaticBlocks.h"
 #include "emu/ShadeColorizer.h"
 #include "emu/TileColorPack.h"
 #include "emu/vbgo_tiletrack.h"
@@ -326,11 +327,14 @@ private:
         std::vector<uint32_t> version[2];
     };
     std::array<GatherCache, 2> m_gatherCache;
+    // (vectors read hot in Paint, kept in static blocks: MEM1 on the Wii)
+    template <typename T, size_t kElements, unsigned kCount>
+    using HotVector = std::vector<T, InStaticBlocks<T, StaticBlocks<sizeof(T) * kElements, kCount, T>>>;
     std::vector<uint32_t> m_gatherKinds; // (EstimatePairs' scratch: per slot, how its pass counts 256 kinds of tag)
     // Tiles the left pictures of pairs draw this frame (by hash, with the pairs drawing them - bit per pair): a
     // right-picture pixel of such a tile is colored by tile, the right picture's own tiles by map cell or disparity.
-    std::vector<uint32_t> m_leftPairHashes; // open addressing, 0 = empty (hash 0 kept apart)
-    std::vector<uint32_t> m_leftPairMasks;
+    HotVector<uint32_t, 4096, 2> m_leftPairHashes; // open addressing, 0 = empty (hash 0 kept apart)
+    HotVector<uint32_t, 4096, 2> m_leftPairMasks;
     std::vector<uint16_t> m_leftPairUsed; // (the slots filled: the next frame clears just those)
     uint32_t m_leftPairHashZero = 0;
     std::array<uint32_t, 2048> m_slotSharedAt{}, m_slotShared{}; // per slot: the frame last checked, and the pairs then
@@ -379,7 +383,7 @@ private:
     };
     Run SetUpRun(uint64_t tag, unsigned eye, const RunSetUp &setUp);
     static constexpr int kRunCacheBits = 10, kRunCacheSize = 1 << kRunCacheBits;
-    std::vector<CachedRun> m_runCache;
+    HotVector<CachedRun, kRunCacheSize, 1> m_runCache;
     uint32_t m_runCacheAt = 0; // (one more each eye painted)
     uint8_t m_endsRest = 0; // (Paints the right eye's ends aren't tried after they cost too much - see Paint)
     uint8_t m_endsWait = 0; // (Paints they weren't tried in, as they lately read more than the walk would)
@@ -398,7 +402,7 @@ private:
     static constexpr int kGridW = VBGO_TT_WIDTH / 8, kGridH = VBGO_TT_HEIGHT / 8, kContextReach = 4;
     std::unordered_map<uint32_t, ContextGroupBits> m_markerBits;
     std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> m_contextRange; // hash -> (first, count)
-    std::vector<ContextGroupBits> m_markerGrid[3];
+    HotVector<ContextGroupBits, kGridW * kGridH, 5> m_markerGrid[3]; // (blocks shared with the sprite grids)
     // (per grid: the cells with markers - all others are clear - so a frame's work is the few in use)
     std::vector<uint16_t> m_markerCells[3];
     std::array<uint8_t, kGridW * kGridH> m_markerIn[3]{};
@@ -419,7 +423,7 @@ private:
     {
         bool valid = false;
         std::vector<WindowCell> cells;
-        std::vector<uint16_t> at; // grid cell -> index + 1 in cells
+        HotVector<uint16_t, kGridW * kGridH, 3> at; // grid cell -> index + 1 in cells
     };
     std::array<Window, 2> m_window; // per frame buffer, then the one being made
     Window m_windowNow;
@@ -452,7 +456,7 @@ private:
     // (the marker slots with sprites' groups, and with layer-bound ones - whether any has those)
     uint32_t m_spriteMarkerSlots[2048 / 32] = {}, m_boundMarkerSlots[2048 / 32] = {};
     bool m_anyBoundMarkerSlot = false;
-    std::vector<uint8_t> m_markerLayer[3];
+    HotVector<uint8_t, kGridW * kGridH, 3> m_markerLayer[3];
     ContextGroupBits m_layerBound;
     unsigned m_gridCurrent = 0;
     // This frame's markers as gathered, before coloring added any (see Coast)
@@ -468,9 +472,9 @@ private:
         uint32_t frame = 0; // (when worked out)
         ContextGroupBits bits, close;
     };
-    std::array<std::vector<NearCell>, 32> m_nearCache; // (Near's, per layer and grid cell)
+    std::array<HotVector<NearCell, kGridW * kGridH, 3>, 32> m_nearCache; // (Near's, per layer and grid cell)
     // per grid cell: sprites' groups with a marker within reach (this frame and the last two)
-    std::vector<ContextGroupBits, LineAligned<ContextGroupBits>> m_nearSprites;
+    HotVector<ContextGroupBits, kGridW * kGridH, 5> m_nearSprites;
     // (Paint's scratch for those)
     std::array<ContextGroupBits, kGridW * kGridH> m_gridHere;
     std::array<uint64_t, kGridH> m_spreadRows{}; // (per row, a bit per cell those reached last frame; all if m_spreadAll)
@@ -490,7 +494,7 @@ private:
     std::array<uint32_t, kGridW * kGridH> m_spriteNearAt{};
     void SpriteNear(unsigned i, ContextGroupBits &near, ContextGroupBits &close);
     bool m_spreadAll = true;
-    std::vector<ContextGroupBits, LineAligned<ContextGroupBits>> m_closeSprites; // (the same, within one cell)
+    HotVector<ContextGroupBits, kGridW * kGridH, 5> m_closeSprites; // (the same, within one cell)
 
     // Auto mode, what no tile drew (the game's CPU wrote it into the frame
     // buffer): colored by depth. Returns the brightest level it painted.
@@ -505,7 +509,7 @@ private:
     bool MarkersSettled() const;
 
     const TileColorPack *m_pack = nullptr;
-    std::vector<uint32_t> m_cellStart;  // 65537 entries: cell n's CellTiles are [m_cellStart[n], m_cellStart[n + 1])
+    HotVector<uint32_t, 65537, 1> m_cellStart;  // 65537 entries: cell n's CellTiles are [m_cellStart[n], m_cellStart[n + 1])
     std::array<uint32_t, 65536 / 32> m_cellHasTiles{}; // (bit per map cell with CellTiles)
     std::vector<uint8_t> m_fillCells;
     std::unordered_set<uint32_t> m_layered; // hashes with per-layer colors

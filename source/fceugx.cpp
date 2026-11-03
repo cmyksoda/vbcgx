@@ -29,6 +29,7 @@ bool vbgo_jit_attach(void);
 #else
 #include "drivers/ogc/wii/WiiPlatform.h"
 #include "drivers/ogc/wii/mem2.h"
+#include <ogc/system.h>
 static WiiPlatform platformInstance;
 #endif
 Platform *platform = &platformInstance;
@@ -69,7 +70,12 @@ int main(int argc, char **argv)
 #endif
     InitFileOpThreads();
     MountAllFAT();
+#ifdef __WIIU__
     GuiImageData::setDecodeScratch(malloc(IMAGE_DECODE_SCRATCH_SIZE), IMAGE_DECODE_SCRATCH_SIZE);
+#else
+    // (MEM2: the menu's scratch is cold in play, and MEM1 is kept for the renderer's static blocks)
+    GuiImageData::setDecodeScratch(SYS_AllocArenaMem2Hi(IMAGE_DECODE_SCRATCH_SIZE, 32), IMAGE_DECODE_SCRATCH_SIZE);
+#endif
     fontSystem = new GuiTextRenderer(font_ttf, font_ttf_size,
         platform->getVideo()->getGlyphRenderer(), platform->getVideo()->getUIScale());
     textTranslator = new GuiTextTranslator();
