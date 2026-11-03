@@ -1039,6 +1039,9 @@ __attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_
     const ContextGroupBits spriteGroups = ~m_layerBound;
     uint32_t wanted = wantedPairs, spriteWorlds = pairWorlds;
     int scanned = 0;
+    // (with no sprite pairs to want, cells whose sprites add no marker are only counted; v.clut says every column came
+    // from this eye's half of buffer v.fb, the one whose block records RightSpriteCells reads)
+    const bool skim = markers && spriteMarks && m_oam && v.clut && !spriteWorlds;
     for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
     {
         uint32_t used = 0;
@@ -1046,6 +1049,7 @@ __attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_
             used |= v.band_chr[b * (2048 / 32) + i] & spriteSlots[i];
         const uint32_t bandKey = v.band_key[b];
         const uint64_t spriteCells = v.tagged && v.obj_cells ? v.obj_cells[b] & v.tagged[b] : kAllCells;
+        const uint64_t read = skim && bandKey && used && spriteCells ? RightSpriteCells(v, b, markers, bound) : kAllCells;
         // (the run LeftX last placed - its offset is the same in every column of the band - and the cell its marker
         // last went into)
         uint32_t knownLo = ~0u, knownHi = 0, knownCell = ~0u;
@@ -1090,7 +1094,23 @@ __attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_
                     spriteWorlds &= ~(1u << w);
         };
         for (uint64_t cells = bandKey ? spriteCells : 0; cells && (used || spriteWorlds); cells &= cells - 1)
-            for (unsigned x = static_cast<unsigned>(__builtin_ctzll(cells)) * 8, end = x + 8; x < end; ++x)
+        {
+            const unsigned first = static_cast<unsigned>(__builtin_ctzll(cells)) * 8;
+            if (!(read >> (first >> 3) & 1))
+            {
+                // (counted as read: the count is what decides when the right eye's ends are tried)
+                for (unsigned x = first; x < first + 8; ++x)
+                    if (const uint32_t *column = v.columns[x])
+                    {
+                        const uint32_t *tags = column + b * 8;
+                        scanned += static_cast<int>(VBGO_TAG_IS_OBJ(tags[0]) + VBGO_TAG_IS_OBJ(tags[1]) +
+                                                    VBGO_TAG_IS_OBJ(tags[2]) + VBGO_TAG_IS_OBJ(tags[3]) +
+                                                    VBGO_TAG_IS_OBJ(tags[4]) + VBGO_TAG_IS_OBJ(tags[5]) +
+                                                    VBGO_TAG_IS_OBJ(tags[6]) + VBGO_TAG_IS_OBJ(tags[7]));
+                    }
+                continue;
+            }
+            for (unsigned x = first, end = x + 8; x < end; ++x)
             {
                 const uint32_t *column = v.columns[x];
                 if (!column)
@@ -1140,10 +1160,50 @@ __attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_
                 else
                     rows(std::false_type{});
             }
+        }
     }
     wantedPairs = wanted;
     pairWorlds = spriteWorlds;
     return scanned;
+}
+
+__attribute__((noinline)) uint64_t ColorPackRenderer::RightSpriteCells(const vbgo_tt_eye_view &v, const unsigned b,
+                                                                       const ContextGroupBits *markers,
+                                                                       const bool bound) const
+{
+    constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
+    const vbgo_vip_sprite *sprites = nullptr;
+    const int count = vbgo_vip_block_sprites(static_cast<unsigned>(v.fb), b, &sprites);
+    if (count < 0)
+        return kAllCells;
+    const uint8_t *const in = m_markerIn[m_gridCurrent].data() + b * kGridW;
+    const ContextGroupBits *const row = markers + b * kGridW;
+    uint64_t read = 0;
+    for (int i = 0; i < count; ++i)
+    {
+        const vbgo_vip_sprite &s = sprites[i];
+        const unsigned chr = s.chr;
+        if (!(s.world & 0x20) || !(s.entry[1] & 0x4000) || !(m_spriteMarkerSlots[chr >> 5] >> (chr & 31) & 1))
+            continue;
+        const int x0 = std::max<int>(s.x[1], 0), x1 = std::min<int>(s.x[1] + 7, VBGO_TT_WIDTH - 1);
+        // (a right-only sprite's pixels may go by its pair's disparity: see LeftX)
+        const bool rightOnly = (m_oam[s.oam * 4 + 1] & 0xC000) == 0x4000;
+        const int shift = 2 * vbgo_obj_parallax(m_oam, s.oam);
+        const ContextGroupBits add = bound ? m_slotMarkers[chr] & ~m_layerBound : m_slotMarkers[chr];
+        for (int c = x0 >> 3; c <= x1 >> 3; ++c)
+        {
+            if (read >> c & 1)
+                continue;
+            const int l0 = std::max(std::max(x0, c * 8) - shift, 0),
+                      l1 = std::min(std::min(x1, c * 8 + 7) - shift, VBGO_TT_WIDTH - 1);
+            bool held = !rightOnly;
+            for (int l = l0 >> 3; held && l0 <= l1 && l <= l1 >> 3; ++l)
+                held = in[l] && ((row[l] | add) == row[l]);
+            if (!held)
+                read |= 1ull << c;
+        }
+    }
+    return read;
 }
 
 __attribute__((noinline)) int ColorPackRenderer::RightBoundMarks(const vbgo_tt_eye_view &v, const uint8_t *eyeBits,

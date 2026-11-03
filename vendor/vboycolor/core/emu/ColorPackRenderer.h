@@ -279,6 +279,9 @@ private:
     // pairs they want (bits in wanted, their worlds out of pairWorlds). Returns how many sprite tags it read.
     int RightSpriteMarks(const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut,
                          ContextGroupBits *markers, bool spriteMarks, uint32_t &wanted, uint32_t &pairWorlds);
+    // The right eye's cells in band b (a bit each) where a sprite the VIP drew there may add a marker its left-eye cells
+    // don't hold yet: all of them when that drawing isn't known.
+    uint64_t RightSpriteCells(const vbgo_tt_eye_view &v, unsigned b, const ContextGroupBits *markers, bool bound) const;
     // The right eye's background tiles with layer-bound markers as its walk reads them: their markers and layers, each
     // at its left-eye cell, in the walk's order per cell, and the layer pairs their runs want (bits in wanted). Returns
     // how many such tags it read.
