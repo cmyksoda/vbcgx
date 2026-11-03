@@ -909,23 +909,28 @@ static VBGO_NOINLINE void DrawBGBlock(uint8 *fb_eye, unsigned block_no, bool lr,
  }
 }
 
+/* An eye's drawing starts: its rows as the background color, its tags cleared (block_drawing's clear, left for now). */
+static INLINE void VbgoStartEye(uint8 *fb_eye, unsigned lr)
+{
+ int y;
+ vbgo_tiletrack_clear_eye(lr);
+ for(y = 0; y < 8; y++)
+  vbgo_fill8(fb_eye + y * 512, (uint8)BKCOL, 384 / 8);
+}
+
 #include "vip_front.inc"
 
 void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
 {
- /* World by world, back to front, each through its 8 rows: each pixel gets the same writes in the same order (rows don't touch
-  * each other), and a background world's rows share their map entries. */
+ /* Eye by eye, and in each world by world, back to front, each through its 8 rows: each pixel gets the same writes in the
+  * same order (eyes and rows don't touch each other), one eye's tags stay in the cache through its worlds, and a
+  * background world's rows share their map entries. */
  static uint16 obj_lists[32][1024];
  const uint16 *drawn[32];
  VbgoWorldAttr attrs[32];
- int counts[32], drawn_count = 0, obj_lists_used = 0, obj_index = 0, active = 0, bg_active = 0;
+ int counts[32], drawn_count = 0, obj_lists_used = 0, active = 0, bg_active = 0;
  bool front_ok = vbgo_tt_on != 0, overplane = false;
  int y, world, lr, k;
- for( y = 0; y < 8; y++)
- {
-  vbgo_fill8(fb_l + y * 512, (uint8)BKCOL, 384 / 8);
-  vbgo_fill8(fb_r + y * 512, (uint8)BKCOL, 384 / 8);
- }
 
  obj_search_which = 3;
 
@@ -992,49 +997,46 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
   return;
  }
 
- for(k = 0; k < drawn_count; k++)
+ for(lr = 0; lr < 2; lr++)
  {
-  VbgoWorldAttr *const a = &attrs[k];
-  const uint32 bgmap_base = a->bgmap_base, scy = a->scy, scx = a->scx, bgm = a->bgm, param_base = a->param_base;
-  const bool over = a->over;
-  bool *const lron = a->lron;
-  const uint16 gx = a->gx, gp = a->gp, gy = a->gy, mx = a->mx, mp = a->mp, my = a->my;
-  const uint16 window_width = a->window_width, window_height = a->window_height, overplane_char = a->overplane_char;
+  uint8 *const fb_eye = lr ? fb_r : fb_l;
+  int obj_index = 0;
 
-  vbgo_tt_world = a->tt_world;
+  VbgoStartEye(fb_eye, lr);
+  for(k = 0; k < drawn_count; k++)
+  {
+   VbgoWorldAttr *const a = &attrs[k];
+   const uint32 bgmap_base = a->bgmap_base, scy = a->scy, scx = a->scx, bgm = a->bgm, param_base = a->param_base;
+   const bool over = a->over;
+   const bool *const lron = a->lron;
+   const uint16 gx = a->gx, gp = a->gp, gy = a->gy, mx = a->mx, mp = a->mp, my = a->my;
+   const uint16 window_width = a->window_width, window_height = a->window_height, overplane_char = a->overplane_char;
 
-  if(bgm == BGM_OBJ)
-  {
-   const uint16 *const list = obj_lists[obj_index++];
-   uint8 *fb[2] = { fb_l, fb_r };
-   DrawOBJ(fb, block_no * 8, lron, list, counts[k]);
-  }
-  else if(bgm == BGM_AFFINE)
-  {
-   for(y = 0; y < 8; y++)
+   vbgo_tt_world = a->tt_world;
+
+   if(bgm == BGM_OBJ)
    {
-    uint8 *fb[2] = { &fb_l[y * 512], &fb_r[y * 512] };
-    for(lr = 0; lr < 2; lr++)
+    const uint16 *const list = obj_lists[obj_index++];
+    /* (a world in neither eye still marks the characters of its sprites in the block, as the left eye's pass) */
+    if(lron[lr] || (!lr && !lron[1]))
     {
-     if(lron[lr])
-     {
-      DrawAffine(fb[lr], (block_no * 8) + y, lr, param_base, bgmap_base * 4096, over, overplane_char, scx, scy,
-                        gx + (lr ? gp : -gp), gy, window_width, window_height);
-     }
+     uint8 *fb[2] = { fb_l, fb_r };
+     bool on[2] = { !lr && lron[0], lr && lron[1] };
+     DrawOBJ(fb, block_no * 8, on, list, counts[k]);
     }
    }
-  }
-  else if(bgm <= 1 && !over && vbgo_tt_on)
-  {
-   for(lr = 0; lr < 2; lr++)
-    if(lron[lr])
-     DrawBGBlock(lr ? fb_r : fb_l, block_no, lr, a);
-  }
-  else
-  for(y = 0; y < 8; y++)
-  {
-   uint8 *fb[2] = { &fb_l[y * 512], &fb_r[y * 512] };
-   for(lr = 0; lr < 2; lr++)
+   else if(!lron[lr])
+    continue;
+   else if(bgm == BGM_AFFINE)
+   {
+    for(y = 0; y < 8; y++)
+     DrawAffine(&fb_eye[y * 512], (block_no * 8) + y, lr, param_base, bgmap_base * 4096, over, overplane_char, scx, scy,
+                       gx + (lr ? gp : -gp), gy, window_width, window_height);
+   }
+   else if(bgm <= 1 && !over && vbgo_tt_on)
+    DrawBGBlock(fb_eye, block_no, lr, a);
+   else
+   for(y = 0; y < 8; y++)
    {
     uint16 srcX, srcY;
     uint16 RealY = (block_no * 8) + y;
@@ -1047,17 +1049,14 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
     DestX = gx + (lr ? gp : -gp);
     DestY = gy;
 
-    if(lron[lr])
+    if(bgm == 1)	/* HBias */
     {
-     if(bgm == 1)	/* HBias */
-     {
-      if((uint16)(RealY - DestY) <= window_height) /* (DrawBG uses it only then) */
-       USE_ROW(param_base + (((RealY - DestY) * 2) | lr));
-      srcX += (int16)DRAM[(param_base + (((RealY - DestY) * 2) | lr)) & 0xFFFF];
-     }
-
-     DrawBG(fb[lr], RealY, lr, bgmap_base, over, overplane_char, (int32)(int16)srcX, (int32)(int16)srcY, scx, scy, DestX, DestY, window_width, window_height);
+     if((uint16)(RealY - DestY) <= window_height) /* (DrawBG uses it only then) */
+      USE_ROW(param_base + (((RealY - DestY) * 2) | lr));
+     srcX += (int16)DRAM[(param_base + (((RealY - DestY) * 2) | lr)) & 0xFFFF];
     }
+
+    DrawBG(&fb_eye[y * 512], RealY, lr, bgmap_base, over, overplane_char, (int32)(int16)srcX, (int32)(int16)srcY, scx, scy, DestX, DestY, window_width, window_height);
    }
   }
  }

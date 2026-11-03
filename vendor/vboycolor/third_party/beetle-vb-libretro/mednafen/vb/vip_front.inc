@@ -645,25 +645,25 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
  }
 }
 
-/* DrawOBJ for a block's open rows (bit y: row y) of both eyes, the sprites last to first (the last drawn is in front),
- * each pixel only where nothing in front has drawn. Rows don't touch each other, so each sprite draws all its rows. */
-static VBGO_NOINLINE void DrawOBJFront(uint8 *fb_l, uint8 *fb_r, VbgoCover *cover, unsigned open, uint16 Y0,
-                                       const bool lron[2], const uint16 *list, int count)
+/* DrawOBJ for a block's open rows (bit y: row y) of one eye (lr; on: the world shows in it), the sprites last to first
+ * (the last drawn is in front), each pixel only where nothing in front has drawn. Rows don't touch each other, so each
+ * sprite draws all its rows. */
+static VBGO_NOINLINE void DrawOBJFront(uint8 *fb, VbgoCover *cover, int lr, unsigned open, uint16 Y0, bool on,
+                                       const uint16 *list, int count)
 {
  const uint16 *CHR16 = CHR_RAM;
  /* (read once: the clip holds for the block, and every byte stored would make the compiler read it again) */
  const int clip0 = ClipX0, clip1 = ClipX1, full = ClipX1 - ClipX0 + 1;
- uint32_t *trows[2][8];
- uint16_t *crows[2][8];
- int k, y, lr;
+ const uint16 eye_bit = lr ? 0x4000 : 0x8000;
+ uint32_t *trows[8];
+ uint16_t *crows[8];
+ int k, y;
 
- for(lr = 0; lr < 2; lr++)
-  for(y = 0; y < 8; y++)
-  {
-   const uint8 *const row = (lr ? fb_r : fb_l) + y * 512;
-   trows[lr][y] = vbgo_tt_row(row);
-   crows[lr][y] = vbgo_tt_cell_row(row);
-  }
+ for(y = 0; y < 8; y++)
+ {
+  trows[y] = vbgo_tt_row(fb + y * 512);
+  crows[y] = vbgo_tt_cell_row(fb + y * 512);
+ }
 
  for(k = count - 1; k >= 0; k--)
  {
@@ -688,7 +688,6 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb_l, uint8 *fb_r, VbgoCover *cove
   if(!rows)
    continue;
   USE_CHR(char_no);
-  for(lr = 0; lr < 2; lr++)
   {
    const int32 x = sign_x_to_s32(10, (oam_ptr[0] + (lr ? jp : -jp)));
    const uint8 *const plt = JPLT_Cache[palette_selector];
@@ -696,17 +695,17 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb_l, uint8 *fb_r, VbgoCover *cove
    const int inside = x >= clip0 && x + 7 <= clip1;
    unsigned left;
 
-   if(!(lron[lr] && (oam_ptr[1] & (lr ? 0x4000 : 0x8000))) || x < -7 || x >= 384 || x + 7 < clip0 || x > clip1)
+   if(!(on && (oam_ptr[1] & eye_bit)) || x < -7 || x >= 384 || x + 7 < clip0 || x > clip1)
     continue;
    for(left = rows; left; left &= left - 1)
    {
     const int y = __builtin_ctz(left);
     const uint32 char_sub_y = vflip ^ ((top + y) & 0xFF);
     const uint32 pixels = chr[char_sub_y];
-    uint8 *const row = (lr ? fb_r : fb_l) + y * 512, *const cv = cover[lr].row[y];
-    uint16 *const covered = &cover[lr].covered[y];
-    uint32_t *const trow = trows[lr][y];
-    uint16_t *const crow = crows[lr][y];
+    uint8 *const row = fb + y * 512, *const cv = cover->row[y];
+    uint16 *const covered = &cover->covered[y];
+    uint32_t *const trow = trows[y];
+    uint16_t *const crow = crows[y];
     const uint32_t obits = obits0 | (char_sub_y << 14);
     int any = 0, n;
 
@@ -839,43 +838,49 @@ static INLINE void VbgoFrontDone(unsigned block_no, bool overplane, unsigned bg_
  memo->worlds = bg_worlds;
 }
 
-/* A block's worlds front to back (none that can draw in it is affine: DrawAffine draws every pixel of its line). */
+/* A block's worlds front to back (none that can draw in it is affine: DrawAffine draws every pixel of its line), eye by
+ * eye: one eye's tags, cells, cover and rows stay in the cache through all its worlds. */
 static VBGO_NOINLINE void VbgoDrawFront(uint8 block_no, uint8 *fb_l, uint8 *fb_r, const VbgoWorldAttr *attrs,
                                         int drawn_count, uint16 (*obj_lists)[1024], int obj_lists_used,
                                         const int *counts)
 {
- static VbgoCover cover[2] __attribute__((aligned(32)));
- int k, y, lr, obj_index = obj_lists_used;
+ /* (one for both eyes: a drawing reads only the columns it clears, inside the clip) */
+ static VbgoCover cover __attribute__((aligned(32)));
+ int k, y, lr;
 
  for(lr = 0; lr < 2; lr++)
+ {
+  uint8 *const fb = lr ? fb_r : fb_l;
+  int obj_index = obj_lists_used;
+
+  VbgoStartEye(fb, lr);
   for(y = 0; y < 8; y++)
   {
    /* (the drawn columns are whole cells of 8) */
    if((ClipX0 | (ClipX1 + 1)) & 7)
-    memset(&cover[lr].row[y][ClipX0], 0, ClipX1 - ClipX0 + 1);
+    memset(&cover.row[y][ClipX0], 0, ClipX1 - ClipX0 + 1);
    else
-    vbgo_fill8(&cover[lr].row[y][ClipX0], 0, (ClipX1 - ClipX0 + 1) / 8);
-   cover[lr].covered[y] = 0;
+    vbgo_fill8(&cover.row[y][ClipX0], 0, (ClipX1 - ClipX0 + 1) / 8);
+   cover.covered[y] = 0;
   }
- for(k = drawn_count - 1; k >= 0; k--)
- {
-  const VbgoWorldAttr *const a = &attrs[k];
-
-  vbgo_tt_world = a->tt_world;
-  if(a->bgm == BGM_OBJ)
+  for(k = drawn_count - 1; k >= 0; k--)
   {
-   const uint16 *const list = obj_lists[--obj_index];
-   unsigned open = 0;
-   /* (the rows with room left in some eye: only a row's own drawing changes its count) */
-   for(y = 0; y < 8; y++)
-    if(cover[0].covered[y] < ClipX1 - ClipX0 + 1 || cover[1].covered[y] < ClipX1 - ClipX0 + 1)
-     open |= 1u << y;
-   if(counts[k] && open)
-    DrawOBJFront(fb_l, fb_r, cover, open, block_no * 8, a->lron, list, counts[k]);
+   const VbgoWorldAttr *const a = &attrs[k];
+
+   vbgo_tt_world = a->tt_world;
+   if(a->bgm == BGM_OBJ)
+   {
+    const uint16 *const list = obj_lists[--obj_index];
+    unsigned open = 0;
+    /* (the rows with room left: only a row's own drawing changes its count) */
+    for(y = 0; y < 8; y++)
+     if(cover.covered[y] < ClipX1 - ClipX0 + 1)
+      open |= 1u << y;
+    if(counts[k] && open)
+     DrawOBJFront(fb, &cover, lr, open, block_no * 8, a->lron[lr], list, counts[k]);
+   }
+   else if(a->bgm != BGM_AFFINE && a->lron[lr])
+    DrawBGBlockFront(fb, &cover, block_no, lr, a);
   }
-  else if(a->bgm != BGM_AFFINE)
-   for(lr = 0; lr < 2; lr++)
-    if(a->lron[lr])
-     DrawBGBlockFront(lr ? fb_r : fb_l, &cover[lr], block_no, lr, a);
  }
 }
