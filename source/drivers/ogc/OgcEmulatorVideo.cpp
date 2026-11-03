@@ -68,6 +68,37 @@ static void StorePicture(const uint8_t *picture, size_t pitch, unsigned w, unsig
     __asm__ volatile("sync" : : : "memory");
 }
 
+// The EFB's top left w x h out as an RGBA8 texture, unfiltered.
+static void CopyTexture(GXRModeObj *mode, void *texture, unsigned w, unsigned h)
+{
+    GX_SetTexCopySrc(0, 0, w, h);
+    GX_SetTexCopyDst(w, h, GX_TF_RGBA8, GX_FALSE);
+    // (vf off loads 0, 0, 21, 22, 21, 0, 0: in a non-AA EFB the three middle taps all read the row itself)
+    GX_SetCopyFilter(GX_FALSE, mode->sample_pattern, GX_FALSE, mode->vfilter);
+    GX_CopyTex(texture, GX_TRUE);
+    GX_SetCopyFilter(mode->aa, mode->sample_pattern, GX_TRUE, mode->vfilter);
+    GX_PixModeSync();
+    GX_InvalidateTexAll();
+}
+
+// Back to OgcVideoDriver::startVideo's state, which pass 2 and the copy to the TV's buffer draw with.
+static void RestoreGameState()
+{
+    GX_SetNumChans(1);
+    GX_SetNumTexGens(1);
+    GX_SetNumTevStages(1);
+    for (int c = 0; c < 3; ++c)
+        GX_SetTevKColorSel(GX_TEVSTAGE0 + c, GX_TEV_KCSEL_1_4);
+    GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
+    GX_SetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_CLEAR);
+    GX_ClearVtxDesc();
+    GX_SetVtxDesc(GX_VA_POS, GX_DIRECT);
+    GX_SetVtxDesc(GX_VA_CLR0, GX_DIRECT);
+    Mtx44 projection;
+    guOrtho(projection, 0, 479, 0, 639, 0, 300);
+    GX_LoadProjectionMtx(projection, GX_ORTHOGRAPHIC);
+}
+
 // A picture shown 1:1 is converted by the GPU into an RGB8 EFB once its size and pitch passed checkGpu; AA modes (an
 // RGB565 EFB) and reduced pictures keep the CPU's conversion.
 bool OgcEmulatorVideo::convertsOnGpu(const uint8_t *buffer, size_t pitch, unsigned w, unsigned h)
@@ -107,6 +138,7 @@ bool OgcEmulatorVideo::checkGpu()
         // (Dolphin's faster texture caches hash only samples of a texture, so a one-byte change could go unseen)
         picture[h / 2 * pitch + w / 2 * 4 + 1] ^= 0x5A;
         exact = exact && convertsAlike(picture, pitch, w, h, expected);
+        exact = exact && samplesAlike(picture, expected, w, h);
     }
     free(picture);
     free(expected);
@@ -125,6 +157,58 @@ bool OgcEmulatorVideo::convertsAlike(const uint8_t *picture, size_t pitch, unsig
     DCInvalidateRange(gpuTexture, bytes);
     ReduceVBFrame(picture, w, h, pitch, expected, w, h);
     return !memcmp(gpuTexture, expected, bytes);
+}
+
+// Pass 2 samples anywhere inside a texel, and a GPU keeping EFB copies at a higher resolution (Dolphin at 3x) reads
+// back right from texel centers only: the texture is drawn 1:1 a quarter texel off center four ways and read back.
+bool OgcEmulatorVideo::samplesAlike(uint8_t *scratch, const uint8_t *expected, unsigned w, unsigned h)
+{
+    GXRModeObj *mode = videoDriver->getVideoMode();
+    const size_t bytes = w * h * 4;
+    GXTexObj tex;
+    GX_InitTexObj(&tex, gpuTexture, w, h, GX_TF_RGBA8, GX_CLAMP, GX_CLAMP, GX_FALSE);
+    GX_InitTexObjFilterMode(&tex, GX_NEAR, GX_NEAR);
+    GX_LoadTexObj(&tex, GX_TEXMAP0);
+    GX_InvalidateTexAll();
+    GX_SetNumChans(0);
+    GX_SetNumTexGens(1);
+    GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
+    GX_SetNumTevStages(1);
+    GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLORNULL);
+    GX_SetTevOp(GX_TEVSTAGE0, GX_REPLACE);
+    GX_SetBlendMode(GX_BM_NONE, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_CLEAR);
+    GX_ClearVtxDesc();
+    GX_SetVtxDesc(GX_VA_POS, GX_DIRECT);
+    GX_SetVtxDesc(GX_VA_TEX0, GX_DIRECT);
+    GX_SetVtxAttrFmt(GX_VTXFMT2, GX_VA_POS, GX_POS_XY, GX_S16, 0);
+    GX_SetVtxAttrFmt(GX_VTXFMT2, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
+    Mtx44 projection;
+    guOrtho(projection, 0, mode->efbHeight, 0, mode->fbWidth, 0, 300);
+    GX_LoadProjectionMtx(projection, GX_ORTHOGRAPHIC);
+
+    bool alike = true;
+    for (int corner = 0; corner < 4 && alike; ++corner) {
+        // (the Wii and vWii sample 0.46-0.5 into a pixel, so a quarter texel either way stays in the same texel)
+        const float du = (corner & 1 ? 0.25f : -0.25f) / w, dv = (corner & 2 ? 0.25f : -0.25f) / h;
+        memset(scratch, 0, bytes);
+        DCFlushRange(scratch, bytes);
+        GX_Begin(GX_QUADS, GX_VTXFMT2, 4);
+        GX_Position2s16(0, 0);
+        GX_TexCoord2f32(du, dv);
+        GX_Position2s16(w, 0);
+        GX_TexCoord2f32(1 + du, dv);
+        GX_Position2s16(w, h);
+        GX_TexCoord2f32(1 + du, 1 + dv);
+        GX_Position2s16(0, h);
+        GX_TexCoord2f32(du, 1 + dv);
+        GX_End();
+        CopyTexture(mode, scratch, w, h);
+        GX_DrawDone();
+        DCInvalidateRange(scratch, bytes);
+        alike = !memcmp(scratch, expected, bytes);
+    }
+    RestoreGameState();
+    return alike;
 }
 
 // Pass 1: the GPU draws the picture 1:1 into the EFB and copies it out as the game's RGBA8 texture. In memory the
@@ -193,28 +277,8 @@ void OgcEmulatorVideo::convertOnGpu(const uint8_t *buffer, size_t pitch, unsigne
     }
     GX_End();
 
-    GX_SetTexCopySrc(0, 0, w, h);
-    GX_SetTexCopyDst(w, h, GX_TF_RGBA8, GX_FALSE);
-    // (vf off loads 0, 0, 21, 22, 21, 0, 0: in a non-AA EFB the three middle taps all read the row itself)
-    GX_SetCopyFilter(GX_FALSE, mode->sample_pattern, GX_FALSE, mode->vfilter);
-    GX_CopyTex(gpuTexture, GX_TRUE);
-    GX_SetCopyFilter(mode->aa, mode->sample_pattern, GX_TRUE, mode->vfilter);
-    GX_PixModeSync();
-    GX_InvalidateTexAll();
-
-    // Back to OgcVideoDriver::startVideo's state, which pass 2 and the copy to the TV's buffer draw with.
-    GX_SetNumChans(1);
-    GX_SetNumTexGens(1);
-    GX_SetNumTevStages(1);
-    for (int c = 0; c < 3; ++c)
-        GX_SetTevKColorSel(GX_TEVSTAGE0 + c, GX_TEV_KCSEL_1_4);
-    GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
-    GX_SetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_CLEAR);
-    GX_ClearVtxDesc();
-    GX_SetVtxDesc(GX_VA_POS, GX_DIRECT);
-    GX_SetVtxDesc(GX_VA_CLR0, GX_DIRECT);
-    guOrtho(projection, 0, 479, 0, 639, 0, 300);
-    GX_LoadProjectionMtx(projection, GX_ORTHOGRAPHIC);
+    CopyTexture(mode, gpuTexture, w, h);
+    RestoreGameState();
 }
 
 void OgcEmulatorVideo::presentFrame(const uint8_t *buffer, size_t pitch)

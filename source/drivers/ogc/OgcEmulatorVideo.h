@@ -23,6 +23,7 @@ public:
 private:
     bool checkGpu();
     bool convertsAlike(const uint8_t *picture, size_t pitch, unsigned w, unsigned h, uint8_t *expected);
+    bool samplesAlike(uint8_t *scratch, const uint8_t *expected, unsigned w, unsigned h);
     bool convertsOnGpu(const uint8_t *buffer, size_t pitch, unsigned w, unsigned h);
     void convertOnGpu(const uint8_t *buffer, size_t pitch, unsigned w, unsigned h);
     void showTexture(void *texture, unsigned w, unsigned h, float logicalW, float logicalH);
