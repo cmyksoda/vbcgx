@@ -113,7 +113,8 @@ private:
     {
         std::array<uint32_t, VBGO_TT_WIDTH / 8> worlds{}; // (as worldsDrawn, with these extents)
         std::array<uint8_t, VBGO_TT_WIDTH / 8> brightest{};
-        // [colors][cell]: left << 9 | right << 6 | top << 3 | bottom
+        // [colors][cell]: a bit per column (8 + x) and row (y) a run starts in: the extent is their lowest and highest
+        // (a start is a bit set, no min or max)
         std::array<std::array<uint16_t, VBGO_TT_WIDTH / 8>, 32> extent{};
     };
     struct CellMarks // (a cell's markers, kept apart: the painting loops never read them)
@@ -345,6 +346,7 @@ private:
     // What a run of pixels (down a column, from one tile in one map cell, or one sprite's tile) shares, looked up once.
     // A run's key (its tag but for the pixel in the tile) decides all of it within an eye's frame, so recent runs are
     // kept by key (kRunCacheSize): a tile's other columns, a layer's other cells showing it, reuse them.
+    static constexpr uint8_t kSpriteColors = 32;
     struct Run
     {
         const TileColorPack::CellTile *cell = nullptr; // its map cell's colors (or the left partner's)
@@ -360,6 +362,7 @@ private:
         bool flat = false; // (the tile is one color on every pixel - see Slot::flatPalettes)
         int16_t band = -1; // (slow: the row of grid cells its markers and tile are for)
         uint8_t kind = 0;  // (PlainKind at full fade by tile and ramp - see FullFadeKind)
+        uint8_t colors = kSpriteColors; // (the world whose colors it takes, as World::colors; a sprite: none)
         uint32_t pairSlot = 0;                         // (as Band::pairSlots keeps it, 0: none)
     };
     struct CachedRun
