@@ -937,6 +937,7 @@ extern "C"
         new (&g_renderer) ColorPackRenderer();
         ApplyColors();
         vbgo_tiletrack_reset();
+        vbgo_vip_fresh();
         g_repaint = true;
     }
 
