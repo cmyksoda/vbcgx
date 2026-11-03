@@ -645,50 +645,69 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
  }
 }
 
-/* DrawOBJ for one row of both eyes, the sprites last to first (the last drawn is in front), each pixel only where
- * nothing in front has drawn. */
-static VBGO_NOINLINE void DrawOBJFront(uint8 *fb[2], VbgoCover *cover, int y, uint16 Y, const bool lron[2],
-                                       const uint16 *list, int count)
+/* DrawOBJ for a block's open rows (bit y: row y) of both eyes, the sprites last to first (the last drawn is in front),
+ * each pixel only where nothing in front has drawn. Rows don't touch each other, so each sprite draws all its rows. */
+static VBGO_NOINLINE void DrawOBJFront(uint8 *fb_l, uint8 *fb_r, VbgoCover *cover, unsigned open, uint16 Y0,
+                                       const bool lron[2], const uint16 *list, int count)
 {
  const uint16 *CHR16 = CHR_RAM;
- int k;
+ uint32_t *trows[2][8];
+ uint16_t *crows[2][8];
+ int k, y, lr;
+
+ for(lr = 0; lr < 2; lr++)
+  for(y = 0; y < 8; y++)
+  {
+   const uint8 *const row = (lr ? fb_r : fb_l) + y * 512;
+   trows[lr][y] = vbgo_tt_row(row);
+   crows[lr][y] = vbgo_tt_cell_row(row);
+  }
 
  for(k = count - 1; k >= 0; k--)
  {
   const int32 oam = list[k];
   const uint16 *oam_ptr = &DRAM[(0x1E000 + (oam * 8)) >> 1];
-  const uint32 tile_y = (Y - oam_ptr[2]) & 0xFF;
+  const uint32 top = (Y0 - oam_ptr[2]) & 0xFF; /* (row 0's tile_y) */
   const uint32 jp = ParallaxDisabled ? 0 : (oam_ptr[1] & 0x3FFF);
   const uint32 palette_selector = oam_ptr[3] >> 14;
-  const uint32 char_sub_y = ((oam_ptr[3] & 0x1000) ? 7 : 0) ^ tile_y;
+  const uint32 vflip = (oam_ptr[3] & 0x1000) ? 7 : 0;
   const uint32 char_no = oam_ptr[3] & 0x7FF;
   const int flipped = (oam_ptr[3] & 0x2000) != 0;
-  uint32 pixels;
-  int lr;
+  const uint16 *const chr = &CHR16[char_no * 8];
+  unsigned rows;
 
-  if(tile_y >= 8)
+  if(top < 8)
+   rows = open & (0xFFu >> top);
+  else if(top > 0xF8)
+   rows = open & (0xFFu << (0x100 - top));
+  else
    continue;
-  pixels = CHR16[char_no * 8 + char_sub_y];
+  if(!rows)
+   continue;
   USE_CHR(char_no);
-  if(!pixels)
-   continue;
   for(lr = 0; lr < 2; lr++)
   {
    const int32 x = sign_x_to_s32(10, (oam_ptr[0] + (lr ? jp : -jp)));
-   uint8 *const row = fb[lr], *const cv = cover[lr].row[y];
-   uint16 *const covered = &cover[lr].covered[y];
+   const uint8 *const plt = JPLT_Cache[palette_selector];
+   const uint16_t ocell = VBGO_TT_OBJ_CELL(oam);
+   unsigned left;
 
-   if(!(lron[lr] && (oam_ptr[1] & (lr ? 0x4000 : 0x8000))) || *covered >= ClipX1 - ClipX0 + 1 || x < -7 ||
-      x >= 384 || x + 7 < ClipX0 || x > ClipX1)
+   if(!(lron[lr] && (oam_ptr[1] & (lr ? 0x4000 : 0x8000))) || x < -7 || x >= 384 || x + 7 < ClipX0 || x > ClipX1)
     continue;
+   for(left = rows; left; left &= left - 1)
    {
-    const uint8 *const plt = JPLT_Cache[palette_selector];
-    uint32_t *const trow = vbgo_tt_row(row);
-    uint16_t *const crow = vbgo_tt_cell_row(row);
+    const int y = __builtin_ctz(left);
+    const uint32 char_sub_y = vflip ^ ((top + y) & 0xFF);
+    const uint32 pixels = chr[char_sub_y];
+    uint8 *const row = (lr ? fb_r : fb_l) + y * 512, *const cv = cover[lr].row[y];
+    uint16 *const covered = &cover[lr].covered[y];
+    uint32_t *const trow = trows[lr][y];
+    uint16_t *const crow = crows[lr][y];
     const uint32_t obits = vbgo_tt_call_bits() | char_no | (char_sub_y << 14) | (palette_selector << 17) | (1u << 19);
-    const uint16_t ocell = VBGO_TT_OBJ_CELL(oam);
     int any = 0, n;
 
+    if(!pixels || *covered >= ClipX1 - ClipX0 + 1)
+     continue;
     if(x >= ClipX0 && x + 7 <= ClipX1)
     {
      uint32 c0, c1;
@@ -842,13 +861,13 @@ static VBGO_NOINLINE void VbgoDrawFront(uint8 block_no, uint8 *fb_l, uint8 *fb_r
   if(a->bgm == BGM_OBJ)
   {
    const uint16 *const list = obj_lists[--obj_index];
-   if(counts[k])
-    for(y = 0; y < 8; y++)
-    {
-     uint8 *fb[2] = { &fb_l[y * 512], &fb_r[y * 512] };
-     if(cover[0].covered[y] < ClipX1 - ClipX0 + 1 || cover[1].covered[y] < ClipX1 - ClipX0 + 1)
-      DrawOBJFront(fb, cover, y, (block_no * 8) + y, a->lron, list, counts[k]);
-    }
+   unsigned open = 0;
+   /* (the rows with room left in some eye: only a row's own drawing changes its count) */
+   for(y = 0; y < 8; y++)
+    if(cover[0].covered[y] < ClipX1 - ClipX0 + 1 || cover[1].covered[y] < ClipX1 - ClipX0 + 1)
+     open |= 1u << y;
+   if(counts[k] && open)
+    DrawOBJFront(fb_l, fb_r, cover, open, block_no * 8, a->lron, list, counts[k]);
   }
   else if(a->bgm != BGM_AFFINE)
    for(lr = 0; lr < 2; lr++)
