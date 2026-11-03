@@ -3150,3 +3150,9 @@ int vbgo_vip_block_sprites(unsigned fb, unsigned block, const vbgo_vip_sprite **
    *sprites = b->sprite;
    return b->sprites;
 }
+
+const uint16_t *vbgo_vip_chr_since_pass(unsigned fb, const uint32_t **changed)
+{
+   *changed = ChrChangedInPass[fb & 1];
+   return CHR_RAM;
+}

@@ -1176,6 +1176,8 @@ __attribute__((noinline)) uint64_t ColorPackRenderer::RightSpriteCells(const vbg
     const int count = vbgo_vip_block_sprites(static_cast<unsigned>(v.fb), b, &sprites);
     if (count < 0)
         return kAllCells;
+    const uint32_t *changed = nullptr;
+    const uint16_t *const chrs = vbgo_vip_chr_since_pass(static_cast<unsigned>(v.fb), &changed);
     const uint8_t *const in = m_markerIn[m_gridCurrent].data() + b * kGridW;
     const ContextGroupBits *const row = markers + b * kGridW;
     uint64_t read = 0;
@@ -1185,21 +1187,55 @@ __attribute__((noinline)) uint64_t ColorPackRenderer::RightSpriteCells(const vbg
         const unsigned chr = s.chr;
         if (!(s.world & 0x20) || !(s.entry[1] & 0x4000) || !(m_spriteMarkerSlots[chr >> 5] >> (chr & 31) & 1))
             continue;
-        const int x0 = std::max<int>(s.x[1], 0), x1 = std::min<int>(s.x[1] + 7, VBGO_TT_WIDTH - 1);
+        const int xr = s.x[1], x0 = std::max(xr, 0), x1 = std::min(xr + 7, VBGO_TT_WIDTH - 1);
+        if (x0 > x1)
+            continue;
         // (a right-only sprite's pixels may go by its pair's disparity: see LeftX)
-        const bool rightOnly = (m_oam[s.oam * 4 + 1] & 0xC000) == 0x4000;
-        const int shift = 2 * vbgo_obj_parallax(m_oam, s.oam);
-        const ContextGroupBits add = bound ? m_slotMarkers[chr] & ~m_layerBound : m_slotMarkers[chr];
+        if ((m_oam[s.oam * 4 + 1] & 0xC000) == 0x4000)
+        {
+            read |= (2ull << (x1 >> 3)) - (1ull << (x0 >> 3));
+            continue;
+        }
+        // (its tags are only in the columns its character has pixels in on the band's rows, when the character is still
+        // as drawn)
+        unsigned columns = 0xFF;
+        const unsigned top = (b * 8 - s.entry[2]) & 0xFF;
+        if (!(changed[chr >> 5] >> (chr & 31) & 1) && (top < 8 || top > 0xF8))
+        {
+            const unsigned first = top < 8 ? top : 0, last = top < 8 ? 7 : top - 0xF9;
+            const unsigned flipY = (s.entry[3] & 0x1000) ? 7 : 0;
+            unsigned pixels = 0;
+            for (unsigned r = first; r <= last; ++r)
+                pixels |= chrs[chr * 8 + (flipY ^ r)];
+            unsigned shown = (pixels | pixels >> 1) & 0x5555;
+            shown = (shown | shown >> 1) & 0x3333;
+            shown = (shown | shown >> 2) & 0x0F0F;
+            columns = (shown | shown >> 4) & 0xFF;
+            if (s.entry[3] & 0x2000)
+            {
+                columns = (columns & 0xF0) >> 4 | (columns & 0x0F) << 4;
+                columns = (columns & 0xCC) >> 2 | (columns & 0x33) << 2;
+                columns = (columns & 0xAA) >> 1 | (columns & 0x55) << 1;
+            }
+        }
+        // (a pixel at column xr + k goes to the left eye's cell (base + k) >> 3: base >> 3 below split, the next above)
+        const int base = xr - 2 * vbgo_obj_parallax(m_oam, s.oam), left = base >> 3;
+        const unsigned split = 8 - static_cast<unsigned>(base & 7);
+        ContextGroupBits masked;
+        const ContextGroupBits *add = &m_slotMarkers[chr];
+        if (bound)
+            masked = *add & ~m_layerBound, add = &masked;
+        const auto holds = [&](int l) {
+            return l < 0 || l >= kGridW || (in[l] && ((row[l] | *add) == row[l]));
+        };
         for (int c = x0 >> 3; c <= x1 >> 3; ++c)
         {
-            if (read >> c & 1)
+            const unsigned k0 = static_cast<unsigned>(std::max(x0, c * 8) - xr),
+                           k1 = static_cast<unsigned>(std::min(x1, c * 8 + 7) - xr);
+            const unsigned here = columns & ((2u << k1) - (1u << k0));
+            if (!here || (read >> c & 1))
                 continue;
-            const int l0 = std::max(std::max(x0, c * 8) - shift, 0),
-                      l1 = std::min(std::min(x1, c * 8 + 7) - shift, VBGO_TT_WIDTH - 1);
-            bool held = !rightOnly;
-            for (int l = l0 >> 3; held && l0 <= l1 && l <= l1 >> 3; ++l)
-                held = in[l] && ((row[l] | add) == row[l]);
-            if (!held)
+            if (((here & ((1u << split) - 1)) && !holds(left)) || ((here >> split) && !holds(left + 1)))
                 read |= 1ull << c;
         }
     }

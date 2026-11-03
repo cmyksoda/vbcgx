@@ -146,6 +146,9 @@ typedef struct
 } vbgo_vip_sprite;
 /* A frame buffer's block's sprites (count), or -1 when not known (not drawn as such, or too many). */
 int vbgo_vip_block_sprites(unsigned fb, unsigned block, const vbgo_vip_sprite **sprites);
+/* The VIP's characters (8 rows each, as vbgo_tt_eye_view's chr) and, a bit each in changed, those written since buffer
+ * fb's last pass began: the others stayed as they were all through that pass. */
+const uint16_t *vbgo_vip_chr_since_pass(unsigned fb, const uint32_t **changed);
 
 /* An eye's pixel y in column x, as the 4 bytes the surface would have held there */
 static inline uint32_t vbgo_eye_word(const uint8_t *bits, const uint32_t *clut, unsigned x, unsigned y)
