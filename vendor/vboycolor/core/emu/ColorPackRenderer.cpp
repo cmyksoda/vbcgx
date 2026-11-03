@@ -937,6 +937,7 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, con
     const unsigned chr = VBGO_TAG_CHAR(t), palette = VBGO_TAG_PALETTE(t), world = VBGO_TAG_WORLD(t);
     const bool sprite = VBGO_TAG_IS_OBJ(t) != 0;
     const unsigned colors = m_worlds[world].colors;
+    run.colors = sprite ? kSpriteColors : static_cast<uint8_t>(colors);
     if (m_auto)
     {
         const bool spriteRamp = sprite || (m_figureWorlds >> colors & 1);
@@ -1858,11 +1859,14 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             c = end + 1;
         }
 
-    // A run starting: the layers' extents, the brightness (a cell's own, or the frame's).
-    auto countRun = [&](uint64_t key, unsigned x, unsigned y, unsigned level, CellSums *cell, unsigned at) {
-        if (!VBGO_TAG_IS_OBJ(key))
+    // A run starting: the layers' extents, the brightness (a cell's own, or the frame's). (colors: the run's, as
+    // Run::colors)
+    auto keyColors = [&](uint64_t key) -> unsigned {
+        return VBGO_TAG_IS_OBJ(key) ? kSpriteColors : m_worlds[VBGO_TAG_WORLD(key)].colors;
+    };
+    auto countRun = [&](unsigned colors, unsigned x, unsigned y, unsigned level, CellSums *cell, unsigned at) {
+        if (colors != kSpriteColors)
         {
-            const unsigned colors = m_worlds[VBGO_TAG_WORLD(key)].colors;
             if (!cell)
             {
                 worldsDrawn |= 1u << colors;
@@ -1873,19 +1877,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             }
             else
             {
-                const unsigned cx = x & 7, cy = y & 7;
+                // (a layer new to the cell starts its sets afresh)
+                const uint32_t seen = cell->worlds[at] >> colors & 1;
                 uint16_t &extent = cell->extent[colors][at];
-                if (!(cell->worlds[at] >> colors & 1))
-                {
-                    cell->worlds[at] |= 1u << colors;
-                    extent = static_cast<uint16_t>(cx << 9 | cx << 6 | cy << 3 | cy);
-                }
-                else
-                {
-                    const unsigned e = extent;
-                    extent = static_cast<uint16_t>(std::min(cx, e >> 9) << 9 | std::max(cx, e >> 6 & 7) << 6 |
-                                                   std::min(cy, e >> 3 & 7) << 3 | std::max(cy, e & 7));
-                }
+                extent = static_cast<uint16_t>((extent & -seen) | 1u << (8 + (x & 7)) | 1u << (y & 7));
+                cell->worlds[at] |= 1u << colors;
             }
         }
         if (cell)
@@ -1928,11 +1924,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
                     if (cells.worlds[c] >> colors & 1)
                     {
-                        const unsigned extent = cells.extent[colors][c];
-                        l = std::min(l, static_cast<int16_t>(c * 8 + (extent >> 9)));
-                        r = std::max(r, static_cast<int16_t>(c * 8 + (extent >> 6 & 7)));
-                        t = std::min(t, static_cast<int16_t>(b * 8 + (extent >> 3 & 7)));
-                        d = std::max(d, static_cast<int16_t>(b * 8 + (extent & 7)));
+                        const unsigned columns = cells.extent[colors][c] >> 8, rows = cells.extent[colors][c] & 0xFF;
+                        l = std::min(l, static_cast<int16_t>(c * 8 + __builtin_ctz(columns)));
+                        r = std::max(r, static_cast<int16_t>(c * 8 + 31 - __builtin_clz(columns)));
+                        t = std::min(t, static_cast<int16_t>(b * 8 + __builtin_ctz(rows)));
+                        d = std::max(d, static_cast<int16_t>(b * 8 + 31 - __builtin_clz(rows)));
                     }
                 sums.left[colors] = l, sums.right[colors] = r, sums.top[colors] = t, sums.bottom[colors] = d;
             }
@@ -2282,7 +2278,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                             continue;
                         runLo = lo, runHi = hi;
                         const uint64_t t = vbgo_tag_compose(column[y], cells[vbgo_tt_cell_at(y)]);
-                        countRun(t & kRunMask, x, y, eyeColumn[static_cast<uint32_t>(y)] >> 26, nullptr, 0);
+                        countRun(keyColors(t), x, y, eyeColumn[static_cast<uint32_t>(y)] >> 26, nullptr, 0);
                         if (pairs && !VBGO_TAG_IS_OBJ(t) && m_pairOfRight[VBGO_TAG_WORLD(t)] >= 0)
                             wanted |= 1u << m_pairOfRight[VBGO_TAG_WORLD(t)],
                                 unwantedPairs &= ~(1u << VBGO_TAG_WORLD(t));
@@ -2494,7 +2490,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         {
                             const uint64_t first = here.first & 0xFFFFFFFFFFFFull;
                             if (first != runKey)
-                                countRun(first, x, b * 8 + (here.first >> 48 & 7),
+                                countRun(keyColors(first), x, b * 8 + (here.first >> 48 & 7),
                                          static_cast<unsigned>(here.first >> 52 & 63), nullptr, 0);
                             runKey = here.last & kKeyBits;
                             runHi = vbgo_tag_key_hi(runKey);
@@ -2559,8 +2555,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         {
                             runKey = t & kRunMask;
                             runHi = vbgo_tag_hi(t), runLo = lo & kRunMaskLo;
-                            countRun(runKey, x, y, rawPixel >> 26, firstHere ? nullptr : &sums, sumsAt);
                             run = setUpRun(t, runKey);
+                            countRun(run.colors, x, y, rawPixel >> 26, firstHere ? nullptr : &sums, sumsAt);
                             runSetUp = true;
                             if (run.pairSlot && !kept)
                                 notePairSlot(band.pairSlots, cellBits | run.pairSlot);
@@ -2791,25 +2787,17 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     before = last, last = key, in.note[notes++] = key;
             };
             // (a copied cell's later run starts, as countRun counts them into its sums: a world's in a row gathered and
-            // written once - min, max and or come out the same in any order)
-            unsigned colors = ~0u, left = 7, right = 0, top = 7, bottom = 0, level = 0;
+            // written once - or comes out the same in any order)
+            unsigned colors = ~0u, spans = 0, level = 0;
             const auto flush = [&]() __attribute__((always_inline)) {
                 if (colors != ~0u)
                 {
+                    const uint32_t seen = sums.worlds[c] >> colors & 1;
                     uint16_t &extent = sums.extent[colors][c];
-                    if (!(sums.worlds[c] >> colors & 1))
-                    {
-                        sums.worlds[c] |= 1u << colors;
-                        extent = static_cast<uint16_t>(left << 9 | right << 6 | top << 3 | bottom);
-                    }
-                    else
-                    {
-                        const unsigned e = extent;
-                        extent = static_cast<uint16_t>(std::min(left, e >> 9) << 9 | std::max(right, e >> 6 & 7) << 6 |
-                                                       std::min(top, e >> 3 & 7) << 3 | std::max(bottom, e & 7));
-                    }
+                    extent = static_cast<uint16_t>((extent & -seen) | spans);
+                    sums.worlds[c] |= 1u << colors;
                 }
-                colors = ~0u, left = 7, right = 0, top = 7, bottom = 0;
+                colors = ~0u, spans = 0;
             };
             const auto countStarts = [&](const uint32_t *tags, uint32_t eyeBand, unsigned cx, uint32_t starts)
                                          __attribute__((always_inline)) {
@@ -2826,8 +2814,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         flush();
                         colors = world;
                     }
-                    left = std::min(left, cx), right = std::max(right, cx);
-                    top = std::min(top, j), bottom = std::max(bottom, j);
+                    spans |= 1u << (8 + cx) | 1u << j;
                 }
             };
             for (unsigned k = 0; k < 8; ++k)
@@ -3084,7 +3071,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     {
                         const uint64_t first = here.first & 0xFFFFFFFFFFFFull;
                         if (first != runKey)
-                            countRun(first, x, b * 8 + (here.first >> 48 & 7),
+                            countRun(keyColors(first), x, b * 8 + (here.first >> 48 & 7),
                                      static_cast<unsigned>(here.first >> 52 & 63), nullptr, 0);
                         runKey = here.last & kKeyBits;
                         runHi = vbgo_tag_key_hi(runKey);
@@ -3257,10 +3244,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     {
                         runKey = t & kRunMask;
                         runHi = cellAt, runLo = lo & kRunMaskLo;
-                        countRun(runKey, x, y, rawPixel >> 26, firstHere ? nullptr : &sums, sumsAt);
                         flags &= firstHere ? ~0u : ~kOneRunHi;
                         starts |= firstHere ? 0u : 1u << (y & 7);
                         cur = &setUpRun(t, runKey);
+                        countRun(cur->colors, x, y, rawPixel >> 26, firstHere ? nullptr : &sums, sumsAt);
                         if (cur->slow)
                             run = *cur, cur = &run;
                         runSetUp = true;
