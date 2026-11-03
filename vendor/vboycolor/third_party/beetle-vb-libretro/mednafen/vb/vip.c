@@ -113,7 +113,7 @@ static bool InstantDisplayHack;
 static bool AllowDrawSkip;
 /* (set by the frontend for Innsmouth no Yakata, whose fog scene is drawn and shown from frame buffer 0 only) */
 bool vbgo_vip_fog_game;
-static bool Fb1Stale, Fb1PassSkipped, Held;
+static bool Fb1Stale, Fb1PassSkipped, Held, LeftOnly;
 bool vbgo_vip_held(void) { return Held; }
 
 /* Its intro mansion, under two screen-wide H-bias fog worlds: each frame a full repaint, too slow to keep up. */
@@ -1864,6 +1864,13 @@ void VIP_StartFrame(EmulateSpecStruct *espec)
    surface = espec->surface;
    skip    = false;
    Held    = false;
+   /* (the fog scene's right eye isn't drawn either, 3D being off; passes drawn the other way are redrawn, as for
+    * a parallax change) */
+   if(LeftOnly != FogHeld())
+   {
+      LeftOnly = !LeftOnly;
+      ForgetPasses();
+   }
    
    if(VidSettingsDirty)
    {
