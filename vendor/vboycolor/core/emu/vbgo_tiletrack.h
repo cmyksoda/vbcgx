@@ -404,6 +404,8 @@ bool vbgo_tiletrack_adopt_block(unsigned fb);
 /* Before drawing the block begun last (rather than keeping it); compare: tell
  * the cells that came out the same by their tags (else only by unchanged). */
 void vbgo_tiletrack_block_drawing(bool compare);
+/* As the drawing of an eye of the block starts: the clear of its tags that block_drawing left for then. */
+void vbgo_tiletrack_clear_eye(unsigned eye);
 /* After drawing it: the characters it used (2048 bits), whether nothing it read had changed since its pass started
  * (else no versions - see cell_version), and per cell (bit per 8 columns) whether its pixels came out as this buffer
  * last held them, and whether nothing it shows could have changed. */

@@ -602,36 +602,51 @@ void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *
       s_block_was = 0;
 }
 
-/* Before drawing into the block begun last: clear these cells' tags in both eyes. */
-static void ClearCells(uint64_t cells)
+/* Eight lines a stride apart from line (a cell's 8 columns of tags, or its 8 rows of cells). */
+static inline void ClearLines8(void *line, unsigned stride)
 {
-   unsigned x;
+   unsigned k;
+#pragma GCC unroll 8
+   for (k = 0; k < 8; k++)
+   {
+#ifdef GEKKO
+      /* (indexed: the offsets stay in registers from cell to cell, one instruction a line) */
+      __asm__ volatile("dcbz %0,%1" : : "b"(line), "r"(k * stride) : "memory");
+#else
+      memset((uint8_t *)line + k * stride, 0, 32);
+#endif
+   }
+}
+
+/* Before drawing into the block begun last: clear these cells' tags in one eye. */
+static void ClearEyeCells(unsigned e, uint64_t cells)
+{
    /* (cell lines span two 8x8 cells: claimed where both are cleared; the pointers are kept in locals so the clears
     * don't reload them) */
    uint64_t pairs = cells & (cells >> 1) & 0x5555555555555555ull;
-   uint32_t *const tags0 = vbgo_tt_dst[0], *const tags1 = vbgo_tt_dst[1];
-   uint16_t *const cells0 = vbgo_tt_cdst[0], *const cells1 = vbgo_tt_cdst[1];
-   memset(vbgo_tt_ocells, 0, sizeof(vbgo_tt_ocells));
+   uint32_t *const tags = vbgo_tt_dst[e];
+   uint16_t *const cell_lines = vbgo_tt_cdst[e];
    for (; cells; cells &= cells - 1)
-   {
-      const unsigned c = (unsigned)__builtin_ctzll(cells);
-      uint32_t *line0 = tags0 + c * 8 * VBGO_TT_COLUMN, *line1 = tags1 + c * 8 * VBGO_TT_COLUMN;
-      for (x = 0; x < 8; x++, line0 += VBGO_TT_COLUMN, line1 += VBGO_TT_COLUMN)
-      {
-         ClearLine(line0);
-         ClearLine(line1);
-      }
-   }
+      ClearLines8(tags + (unsigned)__builtin_ctzll(cells) * 8 * VBGO_TT_COLUMN, VBGO_TT_COLUMN * sizeof(uint32_t));
    for (; pairs; pairs &= pairs - 1)
-   {
-      const unsigned c = (unsigned)__builtin_ctzll(pairs);
-      uint16_t *line0 = cells0 + c * 8, *line1 = cells1 + c * 8;
-      for (x = 0; x < 8; x++, line0 += VBGO_TT_CELL_ROW, line1 += VBGO_TT_CELL_ROW)
-      {
-         ClearLine(line0);
-         ClearLine(line1);
-      }
-   }
+      ClearLines8(cell_lines + (unsigned)__builtin_ctzll(pairs) * 8, VBGO_TT_CELL_ROW * sizeof(uint16_t));
+}
+
+/* ... in both eyes. */
+static void ClearCells(uint64_t cells)
+{
+   memset(vbgo_tt_ocells, 0, sizeof(vbgo_tt_ocells));
+   ClearEyeCells(0, cells);
+   ClearEyeCells(1, cells);
+}
+
+/* The cells block_drawing left each eye to clear (vbgo_tiletrack_clear_eye). */
+static uint64_t s_clear_eye[2];
+
+void vbgo_tiletrack_clear_eye(unsigned eye)
+{
+   if (s_clear_eye[eye])
+      ClearEyeCells(eye, s_clear_eye[eye]), s_clear_eye[eye] = 0;
 }
 
 /* The block begun last as its pass holds it (kept). */
@@ -753,7 +768,9 @@ void vbgo_tiletrack_block_drawing(bool compare)
    }
    else
    {
-      ClearCells(lazy ? s_stale[s_block_slot][s_block_no] : tagged);
+      /* (each eye's lines are cleared as its drawing starts, so they are still in the cache when it writes them) */
+      memset(vbgo_tt_ocells, 0, sizeof(vbgo_tt_ocells));
+      s_clear_eye[0] = s_clear_eye[1] = lazy ? s_stale[s_block_slot][s_block_no] : tagged;
       s_lazy[s_block_slot] &= ~(1u << s_block_no);
    }
    s_tagged[s_block_slot][s_block_no] = 0;
