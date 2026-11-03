@@ -788,6 +788,7 @@ static VBGO_NOINLINE int VbgoBackHRows(uint8 *fb_eye, unsigned block_no, bool lr
  int32 d[8], dmin = 0, i, i_lo, i_hi, len_min = 0x7FFFFFFF;
  uint32 SourceY = 0, BGMap_Base, origin, used_chr = 0xFFFF;
  uint16 shift0 = 0, prev = 0;
+ uint8 wmark[48]; /* (the columns a tagged tile touched, ORed into vbgo_tt_wcells once at the end) */
  int m = 0, runs = 0, k, yy;
  for(yy = y; yy < 8 && (uint16)((block_no * 8 + yy) - a->gy) <= a->window_height; yy++)
  {
@@ -851,6 +852,7 @@ static VBGO_NOINLINE int VbgoBackHRows(uint8 *fb_eye, unsigned block_no, bool lr
   for(xs = 0; xs < (1 << a->scx); xs++)
    USE_ROW(BGMap_Base | (xs << 12));
  }
+ memset(wmark, 0, sizeof(wmark));
 
  for(i = i_lo; i <= i_hi; i++)
  {
@@ -887,7 +889,7 @@ static VBGO_NOINLINE int VbgoBackHRows(uint8 *fb_eye, unsigned block_no, bool lr
     const int t = VbgoBackOne(r[k].tgt + x, r[k].trow + x * VBGO_TT_COLUMN, r[k].crow + x * VBGO_TT_CELL_COLUMN, chr[sub_y],
                               flipped, quad, row_bits, row_bits | (flipped ? 7u << 11 : 0u), cells, bgsc, cell, &fills);
     if(t)
-     vbgo_tt_wcells[x >> 3] |= vbgo_wbit, vbgo_tt_wcells[(x + 7) >> 3] |= vbgo_wbit;
+     wmark[x >> 3] = wmark[(x + 7) >> 3] = 1;
     if(t == 2)
      vbgo_tt_fillc[x >> 3] = vbgo_tt_fillc[(x + 7) >> 3] = 1;
    }
@@ -912,6 +914,9 @@ static VBGO_NOINLINE int VbgoBackHRows(uint8 *fb_eye, unsigned block_no, bool lr
    }
   }
  }
+ for(k = 0; k < 48; k++)
+  if(wmark[k])
+   vbgo_tt_wcells[k] |= vbgo_wbit;
  return yy;
 }
 
