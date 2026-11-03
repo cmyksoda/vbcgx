@@ -856,10 +856,17 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, in
     uint16_t *const vbgo_ocrow = vbgo_tt_cell_row(row);
     const uint32_t vbgo_obits = vbgo_tt_call_bits() | char_no | (char_sub_y << 14) | (palette_selector << 17) | (1u << 19);
     const uint16_t vbgo_ocell = VBGO_TT_OBJ_CELL(oam);
-    if(vbgo_orow) /* VirtualBoyGo: the cells this sprite row may tag */
-     vbgo_tt_ocells[x > 0 ? x >> 3 : 0] = vbgo_tt_ocells[x + 7 < 384 ? (x + 7) >> 3 : 47] = 1;
 ]=]
         "vip_draw.inc (DrawOBJ sprite row)")
+    # The cells a sprite may tag in an eye, once for all its rows (it meets one at least).
+    _vbgo_replace_once(DRAW
+        [=[   for(left = rows; left; left &= left - 1)
+]=]
+        [=[   if(vbgo_tt_on) /* VirtualBoyGo */
+    vbgo_tt_ocells[x > 0 ? x >> 3 : 0] = vbgo_tt_ocells[x + 7 < 384 ? (x + 7) >> 3 : 47] = 1;
+   for(left = rows; left; left &= left - 1)
+]=]
+        "vip_draw.inc (DrawOBJ sprite)")
 
     # vip.c #includes "vip_draw.inc"; a quoted include resolves next to the
     # including file first, so the generated vip.c picks up the generated

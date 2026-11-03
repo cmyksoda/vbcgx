@@ -540,6 +540,9 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, in
     const uint32 char_sub_y = vflip_xor ^ ((top + y) & 0xFF);
     uint8 *const row = fb[lr] + y * 512;
     uint32 pixels = CHR16[char_no * 8 + char_sub_y];
+
+    if(!pixels)
+     continue;
     uint8 *target = &row[x];
 
     if(oam_ptr[3] & 0x2000)

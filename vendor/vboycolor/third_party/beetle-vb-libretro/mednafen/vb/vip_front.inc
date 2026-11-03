@@ -651,6 +651,8 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb_l, uint8 *fb_r, VbgoCover *cove
                                        const bool lron[2], const uint16 *list, int count)
 {
  const uint16 *CHR16 = CHR_RAM;
+ /* (read once: the clip holds for the block, and every byte stored would make the compiler read it again) */
+ const int clip0 = ClipX0, clip1 = ClipX1, full = ClipX1 - ClipX0 + 1;
  uint32_t *trows[2][8];
  uint16_t *crows[2][8];
  int k, y, lr;
@@ -674,6 +676,7 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb_l, uint8 *fb_r, VbgoCover *cove
   const uint32 char_no = oam_ptr[3] & 0x7FF;
   const int flipped = (oam_ptr[3] & 0x2000) != 0;
   const uint16 *const chr = &CHR16[char_no * 8];
+  const uint32_t obits0 = vbgo_tt_call_bits() | char_no | (palette_selector << 17) | (1u << 19);
   unsigned rows;
 
   if(top < 8)
@@ -690,9 +693,10 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb_l, uint8 *fb_r, VbgoCover *cove
    const int32 x = sign_x_to_s32(10, (oam_ptr[0] + (lr ? jp : -jp)));
    const uint8 *const plt = JPLT_Cache[palette_selector];
    const uint16_t ocell = VBGO_TT_OBJ_CELL(oam);
+   const int inside = x >= clip0 && x + 7 <= clip1;
    unsigned left;
 
-   if(!(lron[lr] && (oam_ptr[1] & (lr ? 0x4000 : 0x8000))) || x < -7 || x >= 384 || x + 7 < ClipX0 || x > ClipX1)
+   if(!(lron[lr] && (oam_ptr[1] & (lr ? 0x4000 : 0x8000))) || x < -7 || x >= 384 || x + 7 < clip0 || x > clip1)
     continue;
    for(left = rows; left; left &= left - 1)
    {
@@ -703,12 +707,12 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb_l, uint8 *fb_r, VbgoCover *cove
     uint16 *const covered = &cover[lr].covered[y];
     uint32_t *const trow = trows[lr][y];
     uint16_t *const crow = crows[lr][y];
-    const uint32_t obits = vbgo_tt_call_bits() | char_no | (char_sub_y << 14) | (palette_selector << 17) | (1u << 19);
+    const uint32_t obits = obits0 | (char_sub_y << 14);
     int any = 0, n;
 
-    if(!pixels || *covered >= ClipX1 - ClipX0 + 1)
+    if(!pixels || *covered >= full)
      continue;
-    if(x >= ClipX0 && x + 7 <= ClipX1)
+    if(inside)
     {
      uint32 c0, c1;
      memcpy(&c0, cv + x, 4);
@@ -774,7 +778,7 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb_l, uint8 *fb_r, VbgoCover *cove
     {
      const uint32 pv = (pixels >> (2 * n)) & 3;
      const int32 at = x + (flipped ? 7 - n : n);
-     if(pv && at >= ClipX0 && at <= ClipX1 && cv[at] != 0xFF)
+     if(pv && at >= clip0 && at <= clip1 && cv[at] != 0xFF)
      {
       row[at] = plt[pv];
       trow[at * VBGO_TT_COLUMN] = obits | (uint32_t)n << 11 | pv << 20;
