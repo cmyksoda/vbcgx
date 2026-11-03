@@ -179,6 +179,7 @@ bool LoadState (char * filepath, bool silent)
 	if (offset > 0)
 	{
 		retval = offset == static_cast<int>(retro_serialize_size()) && retro_unserialize(savebuffer, offset);
+		if (retval) vboycolor_fresh_colors();
         if (!retval && !silent) ErrorPrompt("Invalid or incompatible save state");
 	}
 	else

@@ -25,6 +25,8 @@ extern unsigned vbWidth, vbHeight;
 extern float vbAspect;
 void SetPalette();
 extern "C" bool vboycolor_has_pack(void);
+// A loaded save state starts the colorizer fresh (see the core's libretro_core.cpp).
+extern "C" void vboycolor_fresh_colors(void);
 // Which 8x8 cells of a colored picture changed since it was last shown (see the core's libretro_core.cpp).
 extern "C" const uint64_t *vboycolor_changed_cells(const void *frame, uint32_t *since, uint32_t *at);
 void SetVBAudioRate();
