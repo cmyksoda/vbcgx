@@ -962,7 +962,7 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
    a->scx = (world_ptr[0] >> 10) & 3;
    a->bgm = (world_ptr[0] >> 12) & 3;
    a->lron[0] = (bool)(world_ptr[0] & 0x8000);
-   a->lron[1] = (bool)(world_ptr[0] & 0x4000);
+   a->lron[1] = (bool)(world_ptr[0] & 0x4000) && !LeftOnly;
    a->gx = sign_11_to_s16(world_ptr[1]);
    a->gp = ParallaxDisabled ? 0 : sign_9_to_s16(world_ptr[2]);
    a->gy = sign_11_to_s16(world_ptr[3]);
