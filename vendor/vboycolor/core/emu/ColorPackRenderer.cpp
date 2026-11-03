@@ -1139,12 +1139,13 @@ __attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_
 
 __attribute__((noinline)) int ColorPackRenderer::RightBoundMarks(const vbgo_tt_eye_view &v, const uint8_t *eyeBits,
                                                                  const uint32_t *eyeClut, ContextGroupBits *markers,
-                                                                 uint8_t *markerLayers)
+                                                                 uint8_t *markerLayers, uint32_t &wantedPairs)
 {
     const uint32_t *const boundSlots = m_boundMarkerSlots;
     uint8_t isBound[2048]; // (a byte per slot, made once a band needs it: one load a tag in the column test)
     bool made = false;
     int read = 0;
+    uint32_t wanted = wantedPairs;
     for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
     {
         const uint32_t bandKey = v.band_key[b];
@@ -1198,15 +1199,20 @@ __attribute__((noinline)) int ColorPackRenderer::RightBoundMarks(const vbgo_tt_e
                     const unsigned y = b * 8 + j;
                     if (VBGO_TAG_PIXEL(lo) && !(EyeTaggedPixel(eyeBits, eyeClut, x, y) & 0xFFFFFFu))
                         continue;
+                    const unsigned world = VBGO_TAG_WORLD(lo);
                     if (!same)
+                    {
                         runLo = lo & kRunMaskLo, runHi = hi, placed = false;
+                        // (its run's start wants its layer pair, as SetUpRun would: every layer pair is estimated here)
+                        if ((bound >> j & 1) && m_pairOfRight[world] >= 0)
+                            wanted |= 1u << m_pairOfRight[world];
+                    }
                     if (!VBGO_TAG_PIXEL(lo))
                         continue;
                     placed = true;
                     if (!(bound >> j & 1))
                         continue;
                     // (LeftX's background case, written out: one more call of LeftX keeps it out of the sprite scan)
-                    const unsigned world = VBGO_TAG_WORLD(lo);
                     int lx = static_cast<int>(x) - m_rightShift[world];
                     if (m_pairOfRight[world] >= 0)
                     {
@@ -1228,6 +1234,7 @@ __attribute__((noinline)) int ColorPackRenderer::RightBoundMarks(const vbgo_tt_e
                 }
             }
     }
+    wantedPairs = wanted;
     return read;
 }
 
@@ -2150,12 +2157,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         }
                     }
         }
-        // (a background tile's layer-bound markers also set their cell's layer, the walk's last one kept)
-        const int boundRead = markers && spriteMarks && m_anyBoundMarkerSlot
-                                  ? RightBoundMarks(v, eyeBits, eyeClut, markers, markerLayers)
-                                  : 0;
 
         uint32_t wanted = 0; // (bit per pair a start wants)
+        // (a background tile's layer-bound markers also set their cell's layer, the walk's last one kept)
+        const int boundRead = markers && spriteMarks && m_anyBoundMarkerSlot
+                                  ? RightBoundMarks(v, eyeBits, eyeClut, markers, markerLayers, wanted)
+                                  : 0;
         // Sprite pairs: wanted by any counted pixel of a right-only sprite (its run's start is one), as SetUpRun would
         // - its own estimate if the left picture doesn't share its tile, else the left's once there is one.
         bool rightOnly = false;
