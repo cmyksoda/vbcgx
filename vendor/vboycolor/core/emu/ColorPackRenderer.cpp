@@ -2863,12 +2863,14 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             const int8_t *pairOfLeft; // (null without pairs)
             CellSums *sums;
             unsigned b, b0, b1, shift, c;
+            bool claim; // (here's lines may be claimed whole: see copyCell)
             // (out: the run starts' brightest level, and the tiles and pairs to note, in the order painting notes them)
             unsigned level, notes;
             uint32_t note[64];
         };
         const auto copyColumns = [](CopyColumns &in) __attribute__((noinline)) {
             const unsigned b = in.b, b0 = in.b0, b1 = in.b1, shift = in.shift, c = in.c;
+            const bool claim = in.claim;
             const uint32_t bandBit = 1u << b;
             const uint32_t *const words = in.colors->words;
             const int8_t *const pairOfLeft = in.pairOfLeft;
@@ -2917,12 +2919,17 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             for (unsigned k = 0; k < 8; ++k)
             {
                 BandColumn &here = in.here[k * kBands];
+                // (the line's start: on the PC a claim is a memset of the 32 bytes from it)
+                uint8_t *const line = reinterpret_cast<uint8_t *>(&here - (b & 1));
                 const uint8_t *const eye = in.eyeBits + k * 56;
                 const uint32_t active = in.activeFrom[k];
                 if (!shift)
                 {
                     // (the same rows: the source column's bookkeeping, its later runs counted again here)
                     const BandColumn &column = in.upper[k * kBands];
+                    // (where the walk skips the column, the partner may keep a stale active bit)
+                    if (claim && in.columns[k])
+                        ClearLine32(line);
                     here = column;
                     const uint32_t on = active >> b0 & 1;
                     in.activeAt[k] = (in.activeAt[k] & ~bandBit) | on << b;
@@ -2965,6 +2972,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 const uint32_t flags = (starts ? 0 : kOneRunHi) |
                                        ((upperActive ? upper.first : 0) | (lowerActive ? lower.first : 0)) >> 32 &
                                            kAutoColumnHi;
+                if (claim)
+                    ClearLine32(line);
                 here.first = static_cast<uint64_t>(cells[vbgo_tt_cell_at(f)] | f << 16 |
                                                    (words[eyeBand >> (f * 2) & 3] >> 26) << 20 | flags) << 32 |
                              (tags[f] & kRunMaskLo);
@@ -2979,6 +2988,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             in.notes = notes;
         };
 
+        uint32_t copiedHere = 0; // (the bands of the cell column at x copied rather than painted)
         auto copyCell = [&](unsigned b, unsigned c) __attribute__((always_inline)) {
             const vbgo_tt_motion &motion = v.motion[b * kGridW + c];
             if (!motion.version || motion.version != v.cell_version[b * kGridW + c] ||
@@ -3029,6 +3039,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             columns.worlds = m_worlds.data(), columns.pairOfLeft = pairs ? m_pairOfLeft.data() : nullptr;
             columns.sums = &bands[b].cells;
             columns.b = b, columns.b0 = b0, columns.b1 = b1, columns.shift = top & 7, columns.c = c;
+            // (b's partner on a line, neither kept nor copied, is written later or left inactive, as at the walk's
+            // band end; copies go in band order, so a later partner isn't copied yet)
+            columns.claim = !((keptBands[c] | copiedHere) >> (b ^ 1) & 1);
             copyColumns(columns);
             for (unsigned i = 0; i < columns.notes; ++i)
             {
@@ -3051,7 +3064,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             return true;
         };
 
-        uint32_t copiedHere = 0; // (the bands of the cell column at x copied rather than painted)
         // (per cell column, the bands whose cell may have a motion record)
         std::array<uint32_t, kGridW> recordedBands{};
         for (uint32_t bands = copyBands; bands; bands &= bands - 1)
