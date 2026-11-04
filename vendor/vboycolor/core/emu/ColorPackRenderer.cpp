@@ -2109,7 +2109,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
     constexpr int kScanPerCell = 64;
     // The right eye's run starts that can widen a layer's extents, counted as its walk would (the others start inside
     // what the left eye's reach); returns how many cells it walked.
-    auto rightExtents = [&](const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut) -> int {
+    auto rightExtents = [&](const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut,
+                            bool outsideIn) -> int {
         // (no world that may draw in band b at columns x0 - x1 - both eyes', a superset without sprites - could start
         // a run there that resizes its layer; a layer this wide is sized by its width alone)
         constexpr int kSizedByWidth = VBGO_TT_HEIGHT - 1 + 7;
@@ -2251,8 +2252,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         }
 
         int openCells = 0;
-        for (int c = 0; c < kGridW; ++c)
+        for (int i = 0; i < kGridW; ++i)
         {
+            // (outside in, the outermost starts widen the extents first and settle the cells within)
+            const int c = !outsideIn ? i : (i & 1) ? kGridW - 1 - (i >> 1) : (i >> 1);
+            const bool leftward = outsideIn && c >= kGridW / 2;
             // (bands settled for all 8 columns at once - starts only widen the extents - the rest asked per column)
             uint32_t open = 0;
             for (uint32_t todo = openBands[c]; todo; todo &= todo - 1)
@@ -2262,8 +2266,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     open |= 1u << b;
             }
             openCells += __builtin_popcount(open);
-            for (int x = c * 8; open && x < c * 8 + 8; ++x)
+            for (int k = 0; open && k < 8; ++k)
             {
+                const int x = leftward ? c * 8 + 7 - k : c * 8 + k;
                 const uint32_t *column = v.columns[x];
                 if (!column)
                     continue;
@@ -2390,7 +2395,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         // The sprites' tags (only where one may be) for both: markers, and the pairs they want.
         const int scanned = RightSpriteMarks(v, eyeBits, eyeClut, markers, spriteMarks, wanted, spriteWorlds);
 
-        const int openCells = rightExtents(v, eyeBits, eyeClut);
+        const int openCells = rightExtents(v, eyeBits, eyeClut, false);
 
         for (int p = 0; p < m_pairCount; ++p)
             if (wanted >> p & 1)
@@ -2447,7 +2452,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             for (auto &buffered : m_bands[1])
                 for (Band &band : buffered)
                     band.state = 0;
-            rightExtents(v, eyeBits, eyeClut);
+            rightExtents(v, eyeBits, eyeClut, true);
             continue;
         }
 
