@@ -393,12 +393,6 @@ private:
         TileColorPack::Tile tile;
     };
     static constexpr int kTileCopies = 512, kTileCopyIndexBits = 10;
-    std::array<TileCopy, kTileCopies> m_tileCopies;
-    std::array<const TileColorPack::Tile *, kTileCopies> m_tileCopyOf{}; // (nullptr: free)
-    std::array<uint32_t, kTileCopies> m_tileCopyAt{};                   // (m_runCacheAt when last handed out)
-    std::array<uint16_t, 1 << kTileCopyIndexBits> m_tileCopyIndex{};     // by pack tile, linear probing: copy + 1
-    uint32_t m_tileCopiesAt = 0;  // (the Paint m_tileCopiesHeld counts for)
-    int m_tileCopiesHeld = 0, m_tileCopyHand = 0;
     const TileColorPack::Tile *TileCopyOf(const TileColorPack::Tile *tile);
     void DropTileCopy(int k);
     void ForgetTileCopies();
@@ -532,4 +526,11 @@ private:
     std::unordered_set<uint32_t> m_layered; // hashes with per-layer colors
     std::array<Slot, 2048> m_slots{};
     int m_fade[64] = {}; // brightness level -> 0-256, relative to the pack's reference brightness
+    // (the tile copies last: no other member moves away from the object start)
+    std::array<TileCopy, kTileCopies> m_tileCopies;
+    std::array<const TileColorPack::Tile *, kTileCopies> m_tileCopyOf{}; // (nullptr: free)
+    std::array<uint32_t, kTileCopies> m_tileCopyAt{};                   // (m_runCacheAt when last handed out)
+    std::array<uint16_t, 1 << kTileCopyIndexBits> m_tileCopyIndex{};     // by pack tile, linear probing: copy + 1
+    uint32_t m_tileCopiesAt = 0;  // (the Paint m_tileCopiesHeld counts for)
+    int m_tileCopiesHeld = 0, m_tileCopyHand = 0;
 };
