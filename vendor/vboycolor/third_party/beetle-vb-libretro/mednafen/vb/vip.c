@@ -460,13 +460,7 @@ static bool BgChrChanged;
 static uint32 ChangedBgChr[2048 / 32];
 #define CHR_CELLS_MAX 40
 #define MAX_BLOCK_SPRITES 96
-typedef struct
-{
-   uint16 oam, chr;
-   uint8 world;    /* (and its eyes, in bits 5 and 6) */
-   int16 x[2]; /* each eye's */
-   uint16 entry[4]; /* its attributes as drawn */
-} SpriteDrawn;
+typedef vbgo_vip_sprite SpriteDrawn;
 
 typedef struct
 {
@@ -3169,4 +3163,22 @@ void vbgo_vip_fresh(void)
          VbgoFrontMemos[fb][b].retry = VbgoFrontMemos[fb][b].big = PassNo;
          VbgoFrontMemos[fb][b].worlds = 0;
       }
+}
+
+int vbgo_vip_block_sprites(unsigned fb, unsigned block, const vbgo_vip_sprite **sprites)
+{
+   const BlockInputs *b;
+   if(block >= 28)
+      return -1;
+   b = &Blocks[fb & 1][block];
+   if(!b->valid || b->sprites < 0)
+      return -1;
+   *sprites = b->sprite;
+   return b->sprites;
+}
+
+const uint16_t *vbgo_vip_chr_since_pass(unsigned fb, const uint32_t **changed)
+{
+   *changed = ChrChangedInPass[fb & 1];
+   return CHR_RAM;
 }
