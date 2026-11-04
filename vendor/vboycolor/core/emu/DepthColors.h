@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "emu/LineAligned.h"
+#include "emu/StaticBlocks.h"
 
 // Colors by depth the pixels no tile drew (the game's CPU wrote them straight into the frame buffer, e.g. Red Alarm's
 // wireframes): the right picture shows each thing shifted from the left by its disparity (right x - left x: negative
@@ -31,12 +32,17 @@ public:
     // the 32-row groups set in `used` (a group with a lit pixel) are written, so equal masks are the same picture.
     static constexpr int kColumnWords = 7, kColumnStride = 4 * kColumnWords;
 
+    // (kCount buffers of kElements: ~3 MB in all, ten times the L2, so they live where a miss costs least - on the Wii
+    // the MEM1 the platform lends, a third of MEM2's cost - else on the heap, line-aligned as Vec64)
+    template <typename T, size_t kElements, unsigned kCount>
+    using HotVec = std::vector<T, InStaticBlocks<T, LoanBlocks<sizeof(T) * kElements, kCount, T>, 64>>;
+
     // (rows 0-15 of a group at the even bits, 16-31 at the odd ones; MaskRow the other way)
     static unsigned MaskBit(unsigned y) { return (y & 15) << 1 | (y >> 4 & 1); }
     static unsigned MaskRow(unsigned bit) { return (bit & 1) << 4 | bit >> 1; }
     struct LitMasks
     {
-        Vec64<uint32_t> words; // [x * kColumnStride + mask * kColumnWords + group]
+        HotVec<uint32_t, kWidth * kColumnStride, 4> words; // [x * kColumnStride + mask * kColumnWords + group]
         std::array<uint8_t, kWidth> used{};
         bool anyWanted = false;
     };
@@ -89,8 +95,8 @@ private:
     struct State
     {
         // per block and disparity (kStride apart), as last smoothed from - for the next frame
-        Vec64<int16_t> cost;
-        Vec64<int16_t> best;   // per block: its disparity (an index into the disparities)
+        HotVec<int16_t, kBlocks * kStride, 1> cost;
+        HotVec<int16_t, kBlocks, 2> best; // per block: its disparity (an index into the disparities)
         std::array<int, 4> planes{}; // the frame's main disparities (indices; -1 none)
         bool estimated = false;
     };
@@ -114,25 +120,27 @@ private:
     struct CostRowArgs;
     static void CostRow(const CostRowArgs &a);
 
-    Vec64<Row> m_bits[2][3]; // per eye and shade 1-3: kHeight rows (only what changed is rewritten)
+    // per eye and shade 1-3: kHeight rows (only what changed is rewritten)
+    HotVec<Row, kHeight + 2 * kRowPad, 6> m_bits[2][3];
     bool m_bitsValid = false;
 
     // Last Estimate's counts [band][disparity][block]; per eye the blocks changed since (a bit each, per band); per
     // block whether its costs came out as they were (kept while the counts around it hold) and its cheapest disparity.
-    Vec64<uint8_t> m_matchesAll, m_insideAll, m_stable, m_cheapestAt;
+    HotVec<uint8_t, kBlocksY * kDisparities * kBlocksX, 2> m_matchesAll, m_insideAll;
+    HotVec<uint8_t, kBlocks, 4> m_stable, m_cheapestAt;
     std::array<uint64_t, kBlocksY> m_dirtyLeft{}, m_dirtyRight{};
     bool m_countsValid = false;
 
     // To skip a wanted pixel's pick when its surroundings are as at the last pick, per pixel: what it chose (before the
     // flat fills), the update that picked it (m_pickGen counts them), and two bits: its keep rule held (bit 0), its
     // end result matched the update before's (bit 1).
-    Vec64<int16_t> m_pickPrev;
-    Vec64<uint32_t> m_pickAt;
-    Vec64<uint8_t> m_pickBits;
+    HotVec<int16_t, kWidth * kHeight, 3> m_pickPrev;
+    HotVec<uint32_t, kWidth * kHeight, 1> m_pickAt;
+    HotVec<uint8_t, kWidth * kHeight, 1> m_pickBits;
 
     // The last pick's view of the smoothing: per block its best (where it had one), and the main depths.
-    Vec64<int16_t> m_prevBest;
-    Vec64<uint8_t> m_prevBestValid;
+    HotVec<int16_t, kBlocks, 2> m_prevBest;
+    HotVec<uint8_t, kBlocks, 4> m_prevBestValid;
     std::array<int, 4> m_prevPlanes{};
     uint32_t m_pickGen = 1;
     State m_state;
@@ -158,13 +166,13 @@ private:
         const unsigned group = y >> 5;
         return (m.used[x] >> group & 1) && (m.words[x * kColumnStride + 3 * kColumnWords + group] >> MaskBit(y) & 1);
     }
-    Vec64<int16_t> m_disparity;      // the left eye's, per pixel, while Update works them out (kUnknown: none)
-    Vec64<int16_t> m_lastDisparity;  // ... as last worked out (Disparity's; a pixel that hasn't changed keeps it)
+    HotVec<int16_t, kWidth * kHeight, 3> m_disparity;     // the left eye's, per pixel, while Update works them out
+    HotVec<int16_t, kWidth * kHeight, 3> m_lastDisparity; // ... as last worked out (Disparity's; kUnknown: none)
     bool m_haveLast = false;
 
     // The four smoothing chains (left to right, right to left, top down, bottom up) of every block as last worked out,
     // and per line how many blocks from its start still match the costs.
-    Vec64<int16_t> m_chains; // [direction][block][kRecord]
+    HotVec<int16_t, 4 * kBlocks * kRecord, 1> m_chains; // [direction][block][kRecord]
     std::array<std::array<int, kBlocksY>, 2> m_validRow{};
     std::array<std::array<int, kBlocksX>, 2> m_validCol{};
     std::array<bool, kDisparities> m_chainPulled{}; // (the main depths' pull the chains were worked out with)
@@ -172,14 +180,16 @@ private:
 
     // Scratch (kept to avoid reallocating every frame).
     static constexpr int kCandidates = 13;  // (a block's own disparity, its 8 neighbors', 4 main depths)
-    Vec64<uint8_t> m_candidates, m_candidateCount; // per block: Estimate's candidate disparities
-    Vec64<int32_t> m_blockPixels;                   // per block: pixels in the 3x3 blocks around it
+    HotVec<uint8_t, kBlocks * kCandidates, 1> m_candidates; // per block: Estimate's candidate disparities
+    HotVec<uint8_t, kBlocks, 4> m_candidateCount;
+    HotVec<int32_t, kBlocks, 1> m_blockPixels; // per block: pixels in the 3x3 blocks around it
     struct Sample
     {
         int16_t x, y, d;
     };
-    Vec64<int32_t> m_flatLabel, m_area;             // flat fills: per pixel (-1 not flat), an area's pixels
-    Vec64<int32_t> m_flatSeeds;                     // ... the flat pixels, in order (the only ones not -1 after)
-    Vec64<Sample> m_samples;                        // ... the disparities around it
+    HotVec<int32_t, kWidth * kHeight, 1> m_flatLabel; // flat fills: per pixel (-1 not flat)
+    Vec64<int32_t> m_area;                            // ... an area's pixels
+    Vec64<int32_t> m_flatSeeds;                       // ... the flat pixels, in order (the only ones not -1 after)
+    Vec64<Sample> m_samples;                          // ... the disparities around it
     Vec64<int> m_scratch;
 };

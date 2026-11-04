@@ -83,6 +83,8 @@ int main(int argc, char **argv)
 #else
     // (MEM2: the menu's scratch is cold in play, and MEM1 is kept for the renderer's static blocks)
     GuiImageData::setDecodeScratch(SYS_AllocArenaMem2Hi(IMAGE_DECODE_SCRATCH_SIZE, 32), IMAGE_DECODE_SCRATCH_SIZE);
+    // (the packs' zip to MEM2 too: it's read only when a game loads, and its MEM1 holds the depth colors' buffers)
+    vboycolor_packs_move(SYS_AllocArenaMem2Hi(vboycolor_packs_size(), 64));
 #endif
 
     fontSystem = new GuiTextRenderer(font_ttf, font_ttf_size,

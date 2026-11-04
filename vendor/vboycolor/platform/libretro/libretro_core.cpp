@@ -8,6 +8,7 @@
 #include "emu/ColorSchemes.h"
 #include "emu/LineAligned.h"
 #include "emu/ShadeColorizer.h"
+#include "emu/StaticBlocks.h"
 #include "emu/TileColorPack.h"
 #include "vbgo_tiletrack.h"
 
@@ -57,7 +58,7 @@ extern "C"
     size_t beetle_retro_get_memory_size(unsigned id);
 
     // The built-in color packs (generated - cmake/EmbedColorPacks.cmake).
-    extern const unsigned char vbc_packs_zip[];
+    extern unsigned char vbc_packs_zip[];
     extern const size_t vbc_packs_zip_size;
 
     // An id for the picture the VIP displayed in the frame that just ended.
@@ -476,6 +477,7 @@ namespace
     }
 
     // ---- The built-in packs (a zip: the packs and index.txt) ----
+    const uint8_t *g_packsZip = vbc_packs_zip; // (where vboycolor_packs_move put it)
     uint32_t Le16(const uint8_t *p) { return p[0] | (p[1] << 8); }
     uint32_t Le32(const uint8_t *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24); }
 
@@ -483,7 +485,7 @@ namespace
     // local headers may not carry the sizes); empty if it isn't there.
     std::vector<uint8_t> BuiltIn(const std::string &name)
     {
-        const uint8_t *zip = vbc_packs_zip;
+        const uint8_t *zip = g_packsZip;
         const size_t size = vbc_packs_zip_size;
         if (size < 22)
             return {};
@@ -983,6 +985,18 @@ extern "C"
                 return g_shown[k].changed;
             }
         return nullptr;
+    }
+
+    // Moves the built-in packs' zip (read only when a game loads) to `to`, vboycolor_packs_size() bytes, and lends the
+    // storage it leaves to the depth colors' buffers: on the Wii, the zip to MEM2 and its MEM1 to the buffers.
+    RETRO_API size_t vboycolor_packs_size(void) { return vbc_packs_zip_size; }
+    RETRO_API void vboycolor_packs_move(void *to)
+    {
+        if (!to)
+            return;
+        std::memcpy(to, vbc_packs_zip, vbc_packs_zip_size);
+        g_packsZip = static_cast<const uint8_t *>(to);
+        Loan::Lend(vbc_packs_zip, vbc_packs_zip_size);
     }
 
     RETRO_API unsigned retro_get_region(void) { return beetle_retro_get_region(); }
