@@ -407,6 +407,9 @@ typedef struct
 void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *chr_ram, const uint16_t *dram,
                                 unsigned block_no, unsigned fb, const uint8_t *jplt, const vbgo_tt_serials *serials);
 void vbgo_tiletrack_display_column(unsigned fb, unsigned lr, unsigned dest_lr, unsigned column, bool display_active);
+/* The same for columns first..end-1, all shown alike with the current vbgo_tt_clut_serial. */
+void vbgo_tiletrack_display_columns(unsigned fb, unsigned lr, unsigned dest_lr, unsigned first, unsigned end,
+                                    bool display_active);
 void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsigned bytes);
 /* After vbgo_tiletrack_begin_block, for a block the VIP doesn't draw because it would draw what this buffer's last pass
  * did (the frame buffer still holds it): keeps that pass's tags for it as this pass's. False if they're gone (the block

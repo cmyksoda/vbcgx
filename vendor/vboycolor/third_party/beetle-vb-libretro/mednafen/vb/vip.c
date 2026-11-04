@@ -2373,6 +2373,125 @@ static void CopyFBColumnToTarget_SideBySide(void)
       CopyFBColumnToTarget_SideBySide_BASE(DisplayActive, 1, 1 ^ VB3DReverse);
 }
 
+/* Columns column and column + 1 as GatherColumn gathers them, two bands of both from two words a step. */
+static INLINE void GatherColumnPair(uint8 *to, uint8 *to_next, int fb, int lr, int column)
+{
+   const uint8 *from = FB[fb][lr] + 2 * column;
+   int b;
+#pragma GCC unroll 14
+   for(b = 0; b < 28; b += 2)
+   {
+      uint32 band, below, left, right;
+      memcpy(&band, from + FB_BAND * b, 4);
+      memcpy(&below, from + FB_BAND * (b + 1), 4);
+#ifdef MSB_FIRST
+      left = (band & 0xFFFF0000) | (below >> 16);
+      right = (band << 16) | (below & 0xFFFF);
+#else
+      left = (band & 0xFFFF) | (below << 16);
+      right = (band >> 16) | (below & 0xFFFF0000);
+#endif
+      memcpy(to + 2 * b, &left, 4);
+      memcpy(to_next + 2 * b, &right, 4);
+   }
+}
+
+/* An EyeBits line every byte of which is about to be written (on the Wii claimed without reading memory first). */
+static INLINE void ClaimEyeLine(uint8 *line)
+{
+#ifdef GEKKO
+   __asm__ volatile("dcbz 0,%0" : : "r"(line) : "memory");
+#else
+   memset(line, 0, 32);
+#endif
+}
+
+/* CopyFBColumnToTarget_SideBySide_BASE for columns first..first+3 of a frame shown with the display on (one column
+ * table entry: 4 x 56 bytes of EyeBits, 7 whole lines). */
+static INLINE void CopyQuadSideBySide(int fb, int lr, int eye, int first, uint32 version)
+{
+   uint8 *const bits = &EyeBits[fb][eye][first][0];
+   const uint32 serial = vbgo_tt_clut_serial;
+   unsigned gather = 0, i;
+   int c;
+
+   for(c = first; c < first + 4; c++)
+   {
+      const unsigned clean = 1u << (eye << 3 | (c & 7));
+      const bool sameClut = ShownClut[fb][eye][c] == serial, sameBits = ShownLr[fb][eye][c] == lr;
+
+      if(!sameClut)
+         ShownClut[fb][eye][c] = serial;
+      if(sameClut && version && ShownVersion[fb][eye][c] == version && sameBits)
+         continue;
+      if(!(sameClut && sameBits && ShownVersion[fb][eye][c]))
+         vbgo_copy8(EyeClut[fb][eye][c], BrightCLUT[lr], sizeof(EyeClut[0][0][0]) / 8);
+      ShownVersion[fb][eye][c] = version;
+      if(sameBits && (CellClean[fb][c >> 3] & clean))
+         continue;
+      ShownLr[fb][eye][c] = lr;
+      CellClean[fb][c >> 3] |= clean;
+      gather |= 1u << (c - first);
+   }
+   if(!gather)
+      return;
+   /* (line i holds bytes of columns i / 2 and (i + 1) / 2: claimed only where both are gathered) */
+   for(i = 0; i < 7; i++)
+   {
+      const unsigned need = 1u << (i >> 1) | 1u << ((i + 1) >> 1);
+      if((gather & need) == need)
+         ClaimEyeLine(bits + 32 * i);
+   }
+   for(i = 0; i < 4; i += 2)
+   {
+      if((gather >> i & 3) == 3)
+         GatherColumnPair(EyeBits[fb][eye][first + i], EyeBits[fb][eye][first + i + 1], fb, lr, first + i);
+      else if(gather >> i & 1)
+         GatherColumn(EyeBits[fb][eye][first + i], fb, lr, first + i);
+      else if(gather >> (i + 1) & 1)
+         GatherColumn(EyeBits[fb][eye][first + i + 1], fb, lr, first + i + 1);
+   }
+}
+
+/* The instant display's 768 CopyFBColumnToTarget_SideBySide calls, in one pass: the same brightness table changes in
+ * the same order, the tile tracker told once per run of columns between them. */
+static void CopyFrameSideBySide(void)
+{
+   const int fb = DisplayFB;
+   const uint32 version = FBVersion[fb];
+   int lr;
+
+   ShownFB = fb;
+   for(lr = 0; lr < 2; lr++)
+   {
+      const int dest_lr = lr ^ VB3DReverse, out = dest_lr & 1;
+      int c, run = 0;
+
+      for(c = 0; c < 384; c += 4)
+      {
+         const uint16 ctdata = VIP_MA16R16(DRAM, 0x1DFFE - ((c >> 2) * 2) - (lr ? 0 : 0x200));
+
+         if((ctdata >> 8) != Repeat)
+         {
+            vbgo_tiletrack_display_columns(fb, lr, dest_lr, run, c, DisplayActive);
+            run = c;
+            Repeat = ctdata >> 8;
+            RecalcBrightnessCache();
+         }
+         if(DisplayActive)
+            CopyQuadSideBySide(fb, lr, out, c, version);
+      }
+      vbgo_tiletrack_display_columns(fb, lr, dest_lr, run, 384, DisplayActive);
+      if(!DisplayActive)
+      {
+         memset(ShownVersion[fb][out], 0, sizeof(ShownVersion[fb][out]));
+         for(c = 0; c < 48; c++)
+            CellClean[fb][c] &= ~(0xFFu << (out << 3));
+         memset(EyeClut[fb][out], 0, sizeof(EyeClut[fb][out]));
+      }
+   }
+}
+
 static INLINE void CopyFBColumnToTarget_VLI_BASE(const bool DisplayActive_arg, const int lr, const int dest_lr)
 {
    const int fb           = DisplayFB;
@@ -2881,25 +3000,28 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   int32 save_Column = Column;
                   uint8 save_Repeat = Repeat;
 
-                  for(lr = 0; lr < 2; lr++)
-                  {
-                     DisplayRegion = lr << 1;
-                     for(Column = 0; Column < 384; Column++)
+                  if(CopyFBColumnToTarget == CopyFBColumnToTarget_SideBySide)
+                     CopyFrameSideBySide();
+                  else
+                     for(lr = 0; lr < 2; lr++)
                      {
-                        if(!(Column & 3))
+                        DisplayRegion = lr << 1;
+                        for(Column = 0; Column < 384; Column++)
                         {
-                           uint16 ctdata = VIP_MA16R16(DRAM, 0x1DFFE - ((Column >> 2) * 2) - (lr ? 0 : 0x200));
-
-                           if((ctdata >> 8) != Repeat)
+                           if(!(Column & 3))
                            {
-                              Repeat = ctdata >> 8;
-                              RecalcBrightnessCache();
-                           }
-                        }
+                              uint16 ctdata = VIP_MA16R16(DRAM, 0x1DFFE - ((Column >> 2) * 2) - (lr ? 0 : 0x200));
 
-                        CopyFBColumnToTarget();
+                              if((ctdata >> 8) != Repeat)
+                              {
+                                 Repeat = ctdata >> 8;
+                                 RecalcBrightnessCache();
+                              }
+                           }
+
+                           CopyFBColumnToTarget();
+                        }
                      }
-                  }
                   DisplayRegion = save_DisplayRegion;
                   Column = save_Column;
                   Repeat = save_Repeat;

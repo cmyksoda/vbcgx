@@ -1302,15 +1302,25 @@ void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
    s_last_fb = (int)fb;
 }
 
+void vbgo_tiletrack_display_columns(unsigned fb, unsigned lr, unsigned dest_lr, unsigned first, unsigned end,
+                                    bool display_active)
+{
+   const uint8_t shown = display_active ? (uint8_t)((fb & 1) | ((lr & 1) << 1) | 4) : 0;
+   unsigned x;
+   if (!vbgo_tt_on)
+      return;
+   for (x = first; x < end && x < VBGO_TT_WIDTH; x++)
+   {
+      if (s_disp[dest_lr & 1][x] != shown)
+         s_disp[dest_lr & 1][x] = shown;
+      if (s_disp_clut[dest_lr & 1][x] != vbgo_tt_clut_serial) /* (a line left clean is not written back) */
+         s_disp_clut[dest_lr & 1][x] = vbgo_tt_clut_serial;
+   }
+}
+
 void vbgo_tiletrack_display_column(unsigned fb, unsigned lr, unsigned dest_lr, unsigned column, bool display_active)
 {
-   if (!vbgo_tt_on || column >= VBGO_TT_WIDTH)
-      return;
-   const uint8_t shown = display_active ? (uint8_t)((fb & 1) | ((lr & 1) << 1) | 4) : 0;
-   if (s_disp[dest_lr & 1][column] != shown)
-      s_disp[dest_lr & 1][column] = shown;
-   if (s_disp_clut[dest_lr & 1][column] != vbgo_tt_clut_serial) /* (a line left clean is not written back) */
-      s_disp_clut[dest_lr & 1][column] = vbgo_tt_clut_serial;
+   vbgo_tiletrack_display_columns(fb, lr, dest_lr, column, column + 1, display_active);
 }
 
 void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsigned bytes)
