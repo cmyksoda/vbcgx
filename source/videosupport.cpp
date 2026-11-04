@@ -7,6 +7,7 @@
  *
  * Generic video glue: frame pacing/timing, screenshot capture.
  ****************************************************************************/
+
 #include "videosupport.h"
 #include "fceugx.h"
 #include "fceusupport.h"
@@ -14,12 +15,16 @@
 #include "utils/pngcodec.h"
 #include "drivers/Platform.h"
 #include <cstdlib>
+
 GameScreenPng gameScreenPng = {};
+
 void ClearScreenshot()
 {
     free(gameScreenPng.buffer);
-    gameScreenPng.buffer = nullptr; gameScreenPng.size = 0;
+    gameScreenPng.buffer = nullptr;
+    gameScreenPng.size = 0;
 }
+
 void TakeScreenshot()
 {
     ClearScreenshot();

@@ -102,6 +102,7 @@ struct EyeColumn
             words[i] = EyeTaggedWord(eyeClut[x * 4 + i]);
     }
     uint32_t operator[](uint32_t y) const { return words[bits[y >> 2] >> ((y & 3) * 2) & 3]; }
+
     // The 8 rows of band b together (row j in bits 2j, 2j + 1), and a row of them: a band's pixels need its bytes once.
     uint32_t band(uint32_t b) const { return bits[b * 2] | bits[b * 2 + 1] << 8; }
     uint32_t at(uint32_t band, uint32_t y) const { return words[band >> ((y & 7) * 2) & 3]; }
@@ -562,6 +563,7 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
         m_cellStart[i] += m_cellStart[i - 1];
     for (const TileColorPack::CellTile &cell : cells)
         m_cellHasTiles[cell.cell >> 5] |= 1u << (cell.cell & 31);
+
     // Fills: a cell has some if an entry colors a pixel its tile leaves transparent; marking every cell with an entry
     // is simplest (the tracker only uses this to decide where tagging fills is worth it).
     if (!cells.empty())
@@ -579,6 +581,7 @@ void ColorPackRenderer::SetFadeReference(unsigned level)
 {
     m_fadeReference = level;
     m_fadeLutValid = false;
+
     // Same fade as the Multicolor palette (see ShadeColorizer): the brightest shade's level from the core's tag byte,
     // through the core's gamma, relative to the brightness the paintings were made at (without a pack: the brightest
     // the game has shown), so a game that normally runs below full brightness shows exactly the painted colors.
@@ -1085,6 +1088,7 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, con
                 NoteLeftPair(chr, 1u << m_pairOfLeft[world]);
                 run.pairSlot = chr | 1u << m_pairOfLeft[world] << 11;
             }
+
             // (a kept cell's tiles are as when walked, so the replay of its pair slots agrees with this)
             else if (eye && m_pairOfRight[world] >= 0 && ReadsLayerPair(m_boundMarkerSlots, chr))
             {
@@ -1111,6 +1115,7 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, con
     if (!eye) // (only the left eye paints)
     {
         PlainKind kind = FullFadeKind(run.tile, run.ramp);
+
         // A tile uncolored only where its character is transparent is all its own where it shows: unless the game
         // wrote the character during the pass, whose tags may then name pixels the copy has transparent.
         if (kind == PlainKind::kMixed && run.plain && c.pack &&
@@ -1144,6 +1149,7 @@ __attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_
     const ContextGroupBits spriteGroups = ~m_layerBound;
     uint32_t wanted = wantedPairs, spriteWorlds = pairWorlds;
     int scanned = 0;
+
     // (with no sprite pairs to want, cells whose sprites add no marker are only counted; v.clut says every column came
     // from this eye's half of buffer v.fb, the one whose block records RightSpriteCells reads)
     const bool skim = markers && spriteMarks && m_oam && v.clut && !spriteWorlds;
@@ -1156,6 +1162,7 @@ __attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_
         const uint64_t spriteCells = v.tagged && v.obj_cells ? v.obj_cells[b] & v.tagged[b] : kAllCells;
         const uint64_t read =
             skim && bandKey && used && spriteCells ? RightSpriteCells(v, b, markers, bound) : kAllCells;
+
         // (the run LeftX last placed - its offset is the same in every column of the band - and the cell its marker
         // last went into)
         uint32_t knownLo = ~0u, knownHi = 0, knownCell = ~0u;
@@ -1183,6 +1190,7 @@ __attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_
             }
             return true;
         };
+
         // (a right-only sprite's counted pixel wants its pair, as SetUpRun would - its own estimate if the left picture
         // doesn't share its tile, else the left's once there is one)
         const auto pairPixel = [&](uint32_t lo, uint32_t hi, unsigned x, unsigned y) __attribute__((noinline)) {
@@ -1231,6 +1239,7 @@ __attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_
                     continue;
                 scanned += kBits8[sprites];
                 const uint16_t *const his = v.cells[x] + vbgo_tt_cell_at(b * 8);
+
                 // (without sprite pairs left to want, as nearly always, a pixel can only add its marker)
                 const auto rows = [&](auto pairsLeft) __attribute__((always_inline)) {
                     uint32_t doneLo = ~0u, doneHi = 0; // (the run whose marker went in: its other pixels add the same)
@@ -1296,12 +1305,14 @@ __attribute__((noinline)) uint64_t ColorPackRenderer::RightSpriteCells(const vbg
         const int xr = s.x[1], x0 = std::max(xr, 0), x1 = std::min(xr + 7, VBGO_TT_WIDTH - 1);
         if (x0 > x1)
             continue;
+
         // (a right-only sprite's pixels may go by its pair's disparity: see LeftX)
         if ((m_oam[s.oam * 4 + 1] & 0xC000) == 0x4000)
         {
             read |= (2ull << (x1 >> 3)) - (1ull << (x0 >> 3));
             continue;
         }
+
         // (column xr + k is at base + k in the left eye: toLeft marks the k in cell `left`, the rest are in the next)
         const int base = xr - 2 * vbgo_obj_parallax(m_oam, s.oam), left = base >> 3;
         const unsigned toLeft = (1u << (8 - static_cast<unsigned>(base & 7))) - 1;
@@ -1312,10 +1323,12 @@ __attribute__((noinline)) uint64_t ColorPackRenderer::RightSpriteCells(const vbg
         const auto holds = [&](int l) {
             return l < 0 || l >= kGridW || (in[l] && ((row[l] | *add) == row[l]));
         };
+
         // (the sprite's columns whose left-eye cell lacks its markers: nearly always none)
         unsigned lacking = (holds(left) ? 0 : toLeft) | (toLeft == 0xFF || holds(left + 1) ? 0 : 0xFF & ~toLeft);
         if (!lacking)
             continue;
+
         // (its tags are only in the columns its character has pixels in on the band's rows, when the character is still
         // as drawn)
         const unsigned top = (b * 8 - s.entry[2]) & 0xFF;
@@ -1395,6 +1408,7 @@ __attribute__((noinline)) int ColorPackRenderer::RightBoundMarks(const vbgo_tt_e
                     continue;
                 read += __builtin_popcount(bound);
                 const uint16_t *const his = v.cells[x] + vbgo_tt_cell_at(b * 8);
+
                 // (as the walk: a marker at each stretch of one run's counted pixels, at its first with a pixel value -
                 // any other run's counted pixel ends the stretch)
                 uint32_t runLo = ~0u, runHi = 0;
@@ -1415,6 +1429,7 @@ __attribute__((noinline)) int ColorPackRenderer::RightBoundMarks(const vbgo_tt_e
                     if (!same)
                     {
                         runLo = lo & kRunMaskLo, runHi = hi, placed = false;
+
                         // (its run's start wants its layer pair, as SetUpRun would: every layer pair is estimated here)
                         if ((bound >> j & 1) && m_pairOfRight[world] >= 0)
                             wanted |= 1u << m_pairOfRight[world];
@@ -1424,6 +1439,7 @@ __attribute__((noinline)) int ColorPackRenderer::RightBoundMarks(const vbgo_tt_e
                     placed = true;
                     if (!(bound >> j & 1))
                         continue;
+
                     // (LeftX's background case, written out: one more call of LeftX keeps it out of the sprite scan)
                     int lx = static_cast<int>(x) - m_rightShift[world];
                     if (m_pairOfRight[world] >= 0)
@@ -1520,6 +1536,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         ForgetBands();
         return;
     }
+
     // (what carries over to later frames, to tell whether this one changed it)
     const uint32_t autoWorldsBefore = m_autoWorlds, figuresBefore = m_figureWorlds;
     const unsigned maxLevelBefore = m_autoMaxLevel;
@@ -1550,9 +1567,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
     const TileColorPack::ContextTile *contexts = pack ? pack->ContextTiles().data() : nullptr;
     const bool haveContexts = pack && !m_markerGrid[0].empty();
     const bool pairs = pack && m_pairCount > 0;
+
     // (only where the game's CPU drew - else every pixel shown came from tiles)
     const bool depth =
         m_auto && ((have[0] && view[0].cpu_drawn) || (have[1] && view[1].cpu_drawn) || !have[0] || !have[1]);
+
     // The bands kept from each eye's buffer as it was last painted (see m_bands).
     const int buffer = have[0] ? (view[0].fb & 1) : 0, rightBuffer = have[1] ? (view[1].fb & 1) : 0;
     std::array<Band, kBands> &bands = m_bands[0][buffer];
@@ -1608,6 +1627,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             m_paintStateWas = state;
             ++m_paintState;
         }
+
         // (the right eye's scan paints nothing: the shade colors, the picture's size and the fade don't reach it)
         state.shade = state.fbWidth = state.eyeOffset = state.fadeReference = 0;
         std::fill(state.bg, state.bg + 3, 0);
@@ -1653,6 +1673,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         {
             const Band &band = bands[b];
             const bool sameClut = band.clut == view[0].clut;
+
             // (an unreached band's tags are an older pass's: its cells are painted as now, never kept)
             if ((!sameClut && !(pack && band.clut && band.onShades == leftOnShades)) || band.state != m_paintState ||
                 !view[0].band_key[b])
@@ -1665,6 +1686,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             for (unsigned c = 0; !ambiguousHere && c < static_cast<unsigned>(kGridW); ++c)
             {
                 const uint32_t version = view[0].cell_version[b * kGridW + c];
+
                 // (not on depth frames: depth colors are painted over cells after them, and aren't in the copies)
                 // (nor a cell last painted with its band unreached)
                 keptCell[b][c] = version && band.version[c] == version &&
@@ -1756,6 +1778,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             {
                 Band &cache = bands[band];
                 const unsigned row = band * kGridW;
+
                 // (only cells holding markers need anything: the rest are clear, kept or not)
                 for (uint64_t w = cache.marksAny & keep[band]; w; w &= w - 1)
                 {
@@ -1783,6 +1806,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     if (!used)
                         continue;
                 }
+
                 // (where no tile the band uses has layer-bound markers only sprites' markers count: cells without a
                 // sprite add none)
                 bool boundHere = bound;
@@ -1936,6 +1960,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 for (int k = 0; k < sourceCount; ++k)
                     byRow[next[sources[k] / kGridW]++] = sources[k];
             }
+
             // (a row's sources with the same groups are one span: the cells they reach and come close to, ORed into
             // once - and a target row's spans of the same groups from the rows within reach are merged again)
             const auto cellsWithin = [](int gx, int r) {
@@ -1988,6 +2013,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 const ContextGroupBits *mergedBits[kMerged];
                 uint64_t mergedNear[kMerged], mergedClose[kMerged];
                 int merged = 0;
+
                 // (groups ORed into a row's cells: a source of one word of groups - nearly all - ORs in just that word)
                 const auto spread = [&](const ContextGroupBits &bits, uint64_t nearCells, uint64_t closeCells) {
                     unsigned word = 0, words = 0;
@@ -2054,11 +2080,13 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
     left.fill(VBGO_TT_WIDTH), right.fill(-1), top.fill(VBGO_TT_HEIGHT), bottom.fill(-1);
 
     UpdateFadeLut(bg);
+
     // (at a faded level with a pack, while the level moves, painting keeps the colors before fading too - see
     // m_unfaded; at a steady level the copies would cost every painted pixel and pay only at a fade's first step)
     uint8_t *unfaded = nullptr;
     const bool levelMoved = leftLevel != m_lastLeftLevel;
     m_lastLeftLevel = leftLevel;
+
     // (rows of whole cache lines, for dcbz)
     if (pack && have[0] && !depth && view[0].clut && eyeOffset[0] == 0 && m_fade[leftLevel] != 256 && levelMoved &&
         static_cast<size_t>(fbWidth) * 4 <= kUnfadedRowBytes && fbWidth % 8 == 0)
@@ -2310,6 +2338,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
 
     constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
     constexpr int kScanPerCell = 64;
+
     // The right eye's run starts that can widen a layer's extents, counted as its walk would (the others start inside
     // what the left eye's reach); returns how many cells it walked.
     auto rightExtents = [&](const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut,
@@ -2351,6 +2380,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 const uint32_t *column = v.columns[x];
                 if (!column)
                     continue;
+
                 // (the rows showing lit, bit 2j for row j: without fills, the ones with a pixel counted)
                 const uint8_t *bits = eyeBits + x * 56 + b * 2;
                 const uint32_t band = bits[0] | bits[1] << 8;
@@ -2358,6 +2388,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 if (noFills && !rows)
                     continue;
                 const uint32_t *tags = column + b * 8;
+
                 // (all 8 tags one run's - a drawn tag's run key is never 0 - and a pixel lit: that layer has a pixel
                 // counted, and its first row stands for the others)
                 const uint32_t apart = (tags[0] ^ tags[1]) | (tags[0] ^ tags[2]) | (tags[0] ^ tags[3]) |
@@ -2434,6 +2465,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     for (uint32_t rest = worlds; rest; rest &= rest - 1)
                     {
                         const unsigned w = static_cast<unsigned>(__builtin_ctz(rest)), k = m_worlds[w].colors;
+
                         // (a world not reached in this band even at its own columns: no cell column is)
                         if (!reached(w, static_cast<int>(b), left[k], right[k]))
                         {
@@ -2444,6 +2476,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         to = std::min(to, right[k] < 7 ? -1 : (right[k] - 7) >> 3);
                     }
                 }
+
                 // (a cell with nothing counted - no fills, nothing lit - is settled whatever the extents)
                 if (static_cast<int>(c) < from || static_cast<int>(c) > to)
                 {
@@ -2460,6 +2493,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             // (outside in, the outermost starts widen the extents first and settle the cells within)
             const int c = !outsideIn ? i : (i & 1) ? kGridW - 1 - (i >> 1) : (i >> 1);
             const bool leftward = outsideIn && c >= kGridW / 2;
+
             // (bands settled for all 8 columns at once - starts only widen the extents - the rest asked per column)
             uint32_t open = 0;
             for (uint32_t todo = openBands[c]; todo; todo &= todo - 1)
@@ -2477,6 +2511,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     continue;
                 const uint16_t *cells = v.cells[x];
                 const EyeColumn eyeColumn(eyeBits, eyeClut, static_cast<uint32_t>(x));
+
                 // (as the walk counts a pixel: drawn by the pass, and lit unless it's a fill)
                 auto counted = [&](int y) {
                     const uint32_t lo = column[y];
@@ -2537,6 +2572,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             --m_endsRest;
             return false;
         }
+
         // (only worth it where the walk would walk many cells - changed ones, and those skipped before, walked once
         // more when kept - and where its tries lately read less than the walk would each frame, as this costs about
         // the same however little changed; tried again after 16 Paints, as what it reads changes with the scene)
@@ -2557,6 +2593,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
             if (keepRight[b] & (v.band_key[b] ? rightBands[b].unreached : ~rightBands[b].unreached))
                 return false;
+
         // (marker pixels add markers, each at its left-eye cell: added here as the walk would, kept cells too - the
         // walk reads those again; without the tracker's cells that may hold sprites, any marker tile is walked instead)
         const bool spriteMarks = v.tagged && v.obj_cells;
@@ -2587,6 +2624,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         const int boundRead = markers && spriteMarks && m_anyBoundMarkerSlot
                                   ? RightBoundMarks(v, eyeBits, eyeClut, markers, m_markerLayer[m_gridCurrent].data(), wanted)
                                   : 0;
+
         // Sprite pairs: wanted by any counted pixel of a right-only sprite (its run's start is one), as SetUpRun would
         // - its own estimate if the left picture doesn't share its tile, else the left's once there is one.
         bool rightOnly = false;
@@ -2595,6 +2633,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         uint32_t spriteWorlds = 0; // (the worlds of the sprite pairs no start wants yet)
         for (unsigned w = 0; rightOnly && w < 32; ++w)
             spriteWorlds |= static_cast<uint32_t>(m_spritePairOf[w] >= 0) << w;
+
         // The sprites' tags (only where one may be) for both: markers, and the pairs they want.
         const int scanned = RightSpriteMarks(v, eyeBits, eyeClut, markers, spriteMarks, wanted, spriteWorlds);
 
@@ -2626,6 +2665,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         if (eye)
             for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
                 m_rightLit[x] = static_cast<uint8_t>(LitValues(eyeClut, x));
+
         // (a mask per band, a bit per cell, turned around: per 8 columns, a bit per band - all set without a mask)
         const auto bandsByCell = [](const uint64_t *cells, uint32_t (&bands)[kGridW]) __attribute__((noinline)) {
             for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
@@ -2736,6 +2776,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 }
                 continue;
             }
+
             // (cells whose walk a Paint skipped count as not kept; the kept ones are walked as they would have been
             // then, their band reached or not)
             bandsByCell(v.tagged, taggedBands);
@@ -2841,6 +2882,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     const unsigned sumsAt = kept ? 0 : x >> 3;
                     const uint64_t cellBits = static_cast<uint64_t>(x >> 3) << 32;
                     bool counted = false, slowHere = false;
+
                     // (runHi once a pixel of the band is counted: until then each one is looked at)
                     uint32_t skipHi = VBGO_TAG_NO_HI;
                     const uint32_t eyeBand = eyeColumn.band(b);
@@ -2964,6 +3006,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         // A kept cell's slow columns are painted again only if the markers their context goes by
         // moved (without layer-bound groups, only sprites' count; their marker writes are the pre-pass's).
         uint8_t contextSame[kBands][kGridW] = {};
+
         // (layer-bound groups: slow columns stay if no marker within reach changed since the buffer's last Paint, or
         // the cell has no context tile - and painting them moves no marker)
         if (haveContexts && m_layerBound.Any())
@@ -3074,6 +3117,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         // does; copies need every column's colors the same, so one table serves all)
         const EyeColumn copyColors(eyeBits, eyeClut, 0);
         const LitRows copyLit(copyColors);
+
         // (a copied cell's columns, apart from Paint so that their loop keeps its values in registers: see copyCell)
         struct CopyColumns
         {
@@ -3103,6 +3147,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             const int8_t *const pairOfLeft = in.pairOfLeft;
             const World *const worlds = in.worlds;
             CellSums &sums = *in.sums;
+
             // (a copy's last two tiles and pairs noted: noting one again changes nothing, pairSlots being a set)
             uint32_t last = ~0u, before = ~0u;
             unsigned notes = 0;
@@ -3112,6 +3157,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 if (pair >= 0 && key != last && key != before)
                     before = last, last = key, in.note[notes++] = key;
             };
+
             // (a copied cell's later run starts, as countRun counts them into its sums: a world's in a row gathered and
             // written once - or comes out the same in any order)
             unsigned colors = ~0u, spans = 0, level = 0;
@@ -3146,6 +3192,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             for (unsigned k = 0; k < 8; ++k)
             {
                 BandColumn &here = in.here[k * kBands];
+
                 // (the line's start: on the PC a claim is a memset of the 32 bytes from it)
                 uint8_t *const line = reinterpret_cast<uint8_t *>(&here - (b & 1));
                 const uint8_t *const eye = in.eyeBits + k * 56;
@@ -3154,6 +3201,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 {
                     // (the same rows: the source column's bookkeeping, its later runs counted again here)
                     const BandColumn &column = in.upper[k * kBands];
+
                     // (where the walk skips the column, the partner may keep a stale active bit)
                     if (claim && in.columns[k])
                         ClearLine32(line);
@@ -3167,6 +3215,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         countStarts(in.columns[k] + b * 8, eye[0] | eye[1] << 8, k, starts);
                     continue;
                 }
+
                 // (rows from two bands: counted by this column's tags, runs starting where the sources' did - but a
                 // source's first row here is the column's first, and band b1's first starts one if its key is new)
                 const uint32_t *column = in.columns[k];
@@ -3221,6 +3270,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             if (!motion.version || motion.version != v.cell_version[b * kGridW + c] ||
                 motion.stamp != m_paintedStamp[otherBuffer])
                 return false;
+
             // (from the other picture's cells c0 - c1 of bands b0 - b1: the record holds the first and last ones'
             // versions, and a nonzero version of the others is their pass's too)
             const unsigned sx = c * 8 + motion.dx, top = b * 8 + motion.dy;
@@ -3241,10 +3291,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 unfadedFrom[b1][c0] || unfadedFrom[b1][c1] ||
                 (((from[b0].unreached | from[b1].unreached) >> c0 | (from[b0].unreached | from[b1].unreached) >> c1) & 1))
                 return false;
+
             // (the worlds noted as shown there include every world CellWorlds finds, and seldom one that moved)
             if (moved && (!(v.shown_bands >> b & 1) || (v.cell_shown[b * kGridW + c] & moved)) &&
                 (CellWorlds(v, b, c) & moved))
                 return false;
+
             // (the source columns' flags: nothing slow, and the ramps an automatic color came from still as they were)
             const uint32_t *const activeFrom = &fromActive[sx];
             const BandColumn *const upperFrom = &fromColumns[sx * kBands + b0];
@@ -3266,6 +3318,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             columns.worlds = m_worlds.data(), columns.pairOfLeft = pairs ? m_pairOfLeft.data() : nullptr;
             columns.sums = &bands[b].cells;
             columns.b = b, columns.b0 = b0, columns.b1 = b1, columns.shift = top & 7, columns.c = c;
+
             // (b's partner on a line, neither kept nor copied, is written later or left inactive, as at the walk's
             // band end; copies go in band order, so a later partner isn't copied yet)
             columns.claim = !((keptBands[c] | copiedHere) >> (b ^ 1) & 1);
@@ -3302,6 +3355,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             for (uint32_t half = static_cast<uint32_t>(cells >> 32); half; half &= half - 1)
                 recordedBands[32 + __builtin_ctz(half)] |= 1u << b;
         }
+
         // (the bands of the cell column walked so far that painted an automatic color: their autoCells bits are
         // set once per cell - nothing reads them until the next Paint)
         uint32_t autoBands = 0;
@@ -3364,6 +3418,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
 
             const EyeColumn eyeColumn(eyeBits, eyeClut, x);
             const LitRows litRows(eyeColumn);
+
             // (all of the column's shades at full brightness: painting is plain stores - see write)
             const bool fullFade = m_fade[eyeColumn.words[0] >> 26] == 256 && m_fade[eyeColumn.words[1] >> 26] == 256 &&
                                   m_fade[eyeColumn.words[2] >> 26] == 256 && m_fade[eyeColumn.words[3] >> 26] == 256;
@@ -3430,6 +3485,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 CellSums &sums = kept ? m_unkept : band.cells;
                 const unsigned sumsAt = kept ? 0 : x >> 3;
                 const uint64_t cellBits = static_cast<uint64_t>(x >> 3) << 32;
+
                 // (a pixel of this band counted in this column yet; flags: a slow run's, an automatic color's, no run
                 // started after the first)
                 bool counted = false;
@@ -3440,6 +3496,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 // (the rows that can count: those showing a color, and with a fill, any)
                 const bool fillHere = filled >> b & 1;
                 const bool plainRows = fullFade && bandKey == VBGO_TT_BAND_REACHED && !fillHere;
+
                 // (rows: the row y and those after it, a pair of bits each, as the loop below steps through them)
                 uint32_t y = b * 8, rows = fillHere ? 0x5555u : litRows(eyeBand);
                 bool cellRows = false; // (the run in progress has a map cell's colors, no context or flash: kCell)
@@ -3560,6 +3617,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     if (!vbgo_tag_drawn(lo, bandKey))
                         continue; // nothing tracked here this frame (background)
                     const uint32_t cellAt = columnCells[vbgo_tt_cell_at(y)];
+
                     // B, G, R, tag (shade, brightness) from the low byte up
                     const uint32_t rawPixel = eyeColumn.at(eyeBand, y);
                     uint64_t t = vbgo_tag_compose(lo, cellAt);
@@ -3609,6 +3667,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     }
 
                     flags |= cur->slow ? kSlowColumnHi : 0;
+
                     // (the run's pixels from here to the band's end take only the tile's colors)
                     bool plainRest = cur->plain;
 
@@ -3617,6 +3676,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         const unsigned chr = VBGO_TAG_CHAR(t);
                         if (m_slots[chr].ambiguous)
                             m_ambiguousPixels.emplace_back(static_cast<uint16_t>(x), static_cast<uint16_t>(y));
+
                         // (markers and context: the same for the run's pixels in a row of grid cells)
                         const bool newBand = static_cast<int>(y >> 3) != run.band;
                         if (newBand)
@@ -3661,6 +3721,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                         // stay in the run (most tiles need no per-pixel look at which pixels are painted: all or none).
                         const TileColorPack::Tile *const tile = cur->tile;
                         const AutoColors::Ramp *const ramp = cur->ramp;
+
                         // (a slow run's tile goes by where it is: its kind too)
                         const PlainKind kind =
                             cur->slow ? FullFadeKind(tile, ramp) : static_cast<PlainKind>(cur->kind);
@@ -3678,6 +3739,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     const size_t i = columnBase + y * rowBytes;
                     const unsigned shade = (rawPixel >> 24) & 3, index = VBGO_TAG_INDEX(t);
                     const uint8_t *rgb = nullptr;
+
                     // 1. The map cell's own colors for this tile (and fills).
                     if (cur->cell)
                     {
@@ -3765,6 +3827,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
     if (depth)
     {
         brightest = std::max(brightest, PaintDepth(frame, fbWidth, eyeOffset, view, have, bg));
+
         // (the cells depth colors were painted into aren't as their versions say: painted again next time)
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
         {
@@ -4026,6 +4089,7 @@ static void GatherLit(const uint8_t *eyeBits, const uint32_t *eyeClut, const vbg
                       DepthColors::LitMasks &masks, DepthColors::PixelList &wanted, bool &any, unsigned &brightest)
 {
     constexpr int kWords = DepthColors::kColumnWords;
+
     // (bit per band the pass reached, and per band it reached in part: only a tag its key names is drawn)
     uint32_t reachedBands = 0, partialBands = 0;
     if (have)
@@ -4035,6 +4099,7 @@ static void GatherLit(const uint8_t *eyeBits, const uint32_t *eyeClut, const vbg
             reachedBands |= static_cast<uint32_t>(key == VBGO_TT_BAND_REACHED) << band;
             partialBands |= static_cast<uint32_t>(key != 0 && key != VBGO_TT_BAND_REACHED) << band;
         }
+
     // (bit per band whose 8x8 cell here may hold tags: elsewhere every tag is 0, never drawn - and of those the bands
     // reached, and reached in part)
     uint32_t taggedBands = 0, taggedReached = 0, taggedPartial = 0;
@@ -4079,6 +4144,7 @@ static void GatherLit(const uint8_t *eyeBits, const uint32_t *eyeClut, const vbg
 
         if (!lit)
             continue;
+
         // (values 1-3 in shades 1-3 and 0 off, as most columns are: each shade's pixels are one value's)
         const bool plain = lit == 14 && shadeOf[1] == 1 && shadeOf[2] == 2 && shadeOf[3] == 3;
 
@@ -4088,6 +4154,7 @@ static void GatherLit(const uint8_t *eyeBits, const uint32_t *eyeClut, const vbg
         unsigned used = 0;
         uint32_t wantedOf[4] = {}; // (per pixel value, its pixels that need a color)
         bool anyWant = false;
+
         // (32 rows at a time, as two words of 16 pixels: a bit per pixel of each value at the even bits)
         for (uint32_t g = 0; g < VBGO_TT_HEIGHT / 32; ++g)
         {
@@ -4113,6 +4180,7 @@ static void GatherLit(const uint8_t *eyeBits, const uint32_t *eyeClut, const vbg
                     for (unsigned v = 0; v < 4; ++v)
                         if (lit >> v & 1)
                             shade[shadeOf[v] - 1] |= value[v], on |= value[v];
+
                 // (the lit pixels no tile drew: those a tile drew only where its cell may hold tags)
                 uint32_t want = clean ? 0 : on;
                 if (!clean && column && (taggedBands >> (y0 / 8) & 3))
@@ -4166,6 +4234,7 @@ static void GatherLit(const uint8_t *eyeBits, const uint32_t *eyeClut, const vbg
                             *wantedAt++ = wantedBase[w >> bit & 3] | (y0 + bit / 2) << 12;
                         }
                 }
+
                 // (a group's first 16 rows at the even bits, the next 16 at the odd ones)
                 group[0] |= shade[0] << part, group[1] |= shade[1] << part;
                 group[2] |= shade[2] << part, group[3] |= want << part;
@@ -4204,6 +4273,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
     bool any = false, rightWanted = false;
     unsigned brightest = 0;
     m_depthCells.fill(0);
+
     // (the masks only matter to Update: after a frame that didn't need it, the wanted pixels come first)
     const bool light = m_depthLight;
     const auto gather = [&](bool masks) {
@@ -4258,6 +4328,7 @@ unsigned ColorPackRenderer::PaintDepth(uint8_t *frame, uint32_t fbWidth, const u
     }
     const uint8_t *const leftBits = vbgo_vip_eye_bits(0);
     const uint32_t *const leftClut = vbgo_vip_eye_clut(0);
+
     // (DepthColors::Color for every disparity a pixel can have and shades 0-3, worked out once)
     constexpr int kSpan = DepthColors::kMaxDisparity;
     alignas(64) static const auto kDepthRgb = [] {
@@ -4301,6 +4372,7 @@ bool ColorPackRenderer::PairDue(const Pair &pair, const uint16_t *worlds, std::a
         return false;
     std::copy(&worlds[pair.left * 16], &worlds[pair.left * 16] + 16, attributes.begin());
     std::copy(&worlds[pair.right * 16], &worlds[pair.right * 16] + 16, attributes.begin() + 16);
+
     // (a pair's other left worlds: any change there is another picture)
     others = 2166136261u;
     for (int w = 0; w < 32; ++w)
@@ -4545,6 +4617,7 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
                         continue;
 
                     const uint32_t *tags = column + b * 8;
+
                     // (less a shade's row: shades count from 1)
                     uint32_t *at = bits + static_cast<size_t>(eye) * eyeRows + kGuardWords + (x >> 5) +
                                    (b * 8 * 3 - 1) * kGuardedRow;

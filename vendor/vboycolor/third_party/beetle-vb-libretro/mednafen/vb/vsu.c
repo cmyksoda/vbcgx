@@ -505,6 +505,7 @@ static void VSU_RunWave(unsigned ch, int32 *clocks, int32 *running_timestamp)
          } while(at < span);
       }
    }
+
    /* (the span's last step: one landing on its end counts there, before the effects) */
    FreqCounter[ch] = at - span;
    if(!FreqCounter[ch])

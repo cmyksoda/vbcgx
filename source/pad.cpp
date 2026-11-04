@@ -7,15 +7,18 @@
  *
  * Controller input
  ****************************************************************************/
+
 #include "pad.h"
 #include "fceusupport.h"
 #include "drivers/Platform.h"
 #include "drivers/InputController.h"
 #include <cstring>
 #include "vbinput.h"
+
 uint32_t btnmap[CTRL_BTN_MAPPINGS][INPUT_HW_MAX][MAXJP];
 static bool menuRequested;
 static_assert(MAXJP == VB_BUTTON_COUNT);
+
 void ResetControls(int controllerType, int hardwareType)
 {
     for (int c = 0; c < CTRL_BTN_MAPPINGS; ++c) {
@@ -27,7 +30,13 @@ void ResetControls(int controllerType, int hardwareType)
         }
     }
 }
-void SetControllers() { menuRequested = false; SetVBInput(0); }
+
+void SetControllers()
+{
+    menuRequested = false;
+    SetVBInput(0);
+}
+
 bool isMenuRequested()
 {
     for (int i = 0; i < 4; ++i) {
@@ -39,6 +48,7 @@ bool isMenuRequested()
     }
     return false;
 }
+
 bool HasGameplayController()
 {
     platform->getInput()->update();
@@ -49,6 +59,7 @@ bool HasGameplayController()
     }
     return false;
 }
+
 void GetJoy()
 {
     platform->getInput()->update();

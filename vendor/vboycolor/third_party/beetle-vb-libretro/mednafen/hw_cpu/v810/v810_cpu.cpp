@@ -104,7 +104,8 @@ static bool StoreFreeLoop(const uint8 *code, uint32 head, uint8 *const *fastMap)
       const unsigned h = LoadU16_LE((const uint16 *)(code + at)), op = h >> 10;
       if(op == 0x2B)
       {
-         const uint32 target = head + at + (uint32)(((int32)(((h & 0x3FF) << 16) | LoadU16_LE((const uint16 *)(code + at + 2))) << 6) >> 6);
+         const uint32 target =
+            head + at + (uint32)(((int32)(((h & 0x3FF) << 16) | LoadU16_LE((const uint16 *)(code + at + 2))) << 6) >> 6);
          if(((head >> 24) & 7) != 7 || ((target >> 24) & 7) != 7 || (target & 1) || !fastMap[target >> V810_FAST_MAP_SHIFT] ||
             !StoreFreeLeaf(&fastMap[target >> V810_FAST_MAP_SHIFT][target]))
             return false;
@@ -209,6 +210,7 @@ static inline void SaveRegs(uint32 *saved, const uint32 *p, const uint32 *s)
 v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
 {
    const uint32 head = code - PC_base;
+
    /* (an event in between may have changed what the loop read before it) */
    if(head == IdleHead && IdleNext == next_event_ts)
    {
@@ -220,7 +222,8 @@ v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
          IdleShape &seen = IdleShapeSeen;
          seen.code = code;
          seen.storeFree = StoreFreeLoop(code, head, FastMap);
-         seen.counter = !seen.storeFree && CounterLoop(code, &seen.addr, &seen.counterBase, &seen.step, &seen.pollBase, &seen.pollDisp);
+         seen.counter = !seen.storeFree &&
+                        CounterLoop(code, &seen.addr, &seen.counterBase, &seen.step, &seen.pollBase, &seen.pollDisp);
       }
       if(idle && !IdleShapeSeen.storeFree)
       {
@@ -247,6 +250,7 @@ v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
          {
             v810_timestamp_t unused = 0;
             const uint32 value = ::VBReadWord(unused, counter & ~3u);
+
             /* every skipped add must carry as the last one did */
             const uint32 adds = step > 0 ? (0xFFFFFFFFu - value) / step : value / -step;
             if((uint32)k > adds)
@@ -255,11 +259,13 @@ v810_timestamp_t V810::IdleLoop(v810_timestamp_t timestamp, const uint8 *code)
             ::VBWriteWord(unused, counter & ~3u, value + (uint32)(k * step));
          }
          timestamp += k * d;
+
          /* (the events skipped over are handled together at the horizon's; the carry limit can cut k short:
           * the loop may then exit before the horizon) */
          if(!carryLimited && horizon > next_event_ts)
             next_event_ts = horizon;
       }
+
       /* (the pass that reaches the horizon arms the check again, so d stays one pass) */
       IdleQuiet = 0;
       IdleHead = ~0u;
@@ -317,6 +323,7 @@ v810_timestamp_t V810::WaitTarget(v810_timestamp_t timestamp, const uint8 *code,
    if(code == WaitAt && EventNotices == WaitNotice + 1 && !IPendingCache && SameRegs(WaitRegs, P_REG, S_REG))
    {
       v810_timestamp_t q = VB_QuietHorizon(to, vb_idle_unsteady != 0);
+
       /* (it must wake at q as it would have: no event within one pass before; nor SBOUT changing in between) */
       if(q > to && (VB_LastEventBefore(q) + 3 + WaitBodyCycles >= q || vbgo_vip_steady_until(timestamp) < q))
          q = to;

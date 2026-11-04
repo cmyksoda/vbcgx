@@ -20,6 +20,7 @@ uint8_t vbgo_tt_bkcol;
 #define VBGO_TT_SLOTS 3
 /* (64-byte aligned, like the other statics depth reads: see FB in vip.c) */
 static uint32_t s_tags[VBGO_TT_SLOTS][2][VBGO_TT_WIDTH * VBGO_TT_COLUMN] __attribute__((aligned(64)));
+
 /* ... and each tag's cell, [slot][eye][row * VBGO_TT_CELL_ROW + column] (8 more rows to draw a block aside in). Only
  * read where the tag is drawn, so they're cleared only as whole lines (16 columns), to claim what drawing writes. */
 static uint16_t s_cells[VBGO_TT_SLOTS][2][(VBGO_TT_HEIGHT + 8) * VBGO_TT_CELL_ROW] __attribute__((aligned(64)));
@@ -44,12 +45,14 @@ static unsigned s_settings_serial = 1;
 static uint16_t s_chr[VBGO_TT_SLOTS][2048 * 8];
 static uint32_t s_hash[VBGO_TT_SLOTS][2048];
 static uint8_t s_blank[VBGO_TT_SLOTS][2048];
+
 /* The world attribute blocks and OBJ attributes as each slot's pass started. */
 #define VBGO_WORLD_HALFWORDS (32 * 16)
 #define VBGO_OAM_HALFWORDS (1024 * 4)
 static uint16_t s_worlds[VBGO_TT_SLOTS][VBGO_WORLD_HALFWORDS];
 static uint16_t s_oam[VBGO_TT_SLOTS][VBGO_OAM_HALFWORDS];
 static int s_have_attrs[VBGO_TT_SLOTS];
+
 /* Per slot: the core's change serial (and epoch) its characters, hashes and sprite attributes are up to date with, so
  * the next pass copies only what the core stamped after it. */
 static uint32_t s_sync_at[VBGO_TT_SLOTS];
@@ -60,9 +63,11 @@ static unsigned s_flat[VBGO_TT_SLOTS]; /* flat sprite palettes as its pass start
  * buffer's last one can take the new stamp instead of being drawn again (vbgo_tiletrack_keep_block). */
 #define VBGO_TT_BLOCKS (VBGO_TT_HEIGHT / 8)
 static uint16_t s_block_stamp[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
+
 /* Per slot and block: the pass its tags last counted for (s_block_stamp also forgets blocks only so they aren't
  * kept). */
 static uint16_t s_band_pass[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
+
 /* ... the characters its drawing used (a bit each), and per 8x8 cell the version of what it shows (0: one a renderer
  * can't count on - see vbgo_tiletrack_block_drawn). */
 #define VBGO_TT_CELLS (VBGO_TT_WIDTH / 8)
@@ -72,8 +77,10 @@ static uint64_t s_cell_black[VBGO_TT_SLOTS][VBGO_TT_BLOCKS]; /* (cells the color
 /* Per slot and block: the cells (bit per 8 columns, both eyes) that may hold a tag - elsewhere every tag is 0,
  * so clearing skips them. */
 static uint64_t s_tagged[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
+
 /* ... and of those, the cells that may hold a sprite's tag (more than hold one, never less). */
 static uint64_t s_obj_cells[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
+
 /* ... and the cells that may hold a fill's tag (also a superset). */
 static uint64_t s_filled_cells[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 
@@ -85,10 +92,13 @@ static uint64_t s_stale[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 
 /* Per cell, the worlds its tags showed as last drawn (bit per world; all: unknown). */
 static uint32_t s_cell_worlds[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
+
 /* Per cell, its left eye's motion record (see vbgo_tt_motion); kept wherever the cell versions are. */
 static vbgo_tt_motion s_motion[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS] __attribute__((aligned(32)));
+
 /* Per block, a bit per cell whose record may still hold for its version (the rest can't: the renderer skips them). */
 static uint64_t s_motion_cells[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
+
 /* Per cell, the worlds its left eye may show (see NoteShown), while s_shown_at is the slot's stamp: worked out as its
  * latest pass noted the block's motion. */
 static uint32_t s_cell_shown[VBGO_TT_SLOTS][VBGO_TT_BLOCKS][VBGO_TT_CELLS];
@@ -97,6 +107,7 @@ static uint16_t s_shown_at[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 /* Per slot and block, whether it was drawn (or kept) with background color 0, which no colorizer lights;
  * cleared when a state is loaded, its frame buffer's pixels then not those its tags were drawn with. */
 static uint8_t s_band_bk0[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
+
 /* ... and the cells (bit per 8 columns) the CPU has written into since. */
 static uint64_t s_cpu_cells[VBGO_TT_SLOTS][VBGO_TT_BLOCKS];
 
@@ -109,11 +120,13 @@ static uint32_t s_versions;
 /* The block being drawn as it was (this buffer's last pass's, if s_old_valid), and what that pass's copies said about
  * tiles and sprites, to tell which cells come out the same. */
 static int s_old_valid;
+
 /* Such a block is drawn aside, in the spare rows, and put in place after: its old tags and cells (or its slot's stale
  * ones, if lazy) stay where they are meanwhile. */
 static int s_aside;
 static const uint32_t *s_aside_tags[2];
 static const uint16_t *s_aside_cells[2];
+
 /* (the cells that may hold old tags to clear, and whether the block is lazy) */
 static uint64_t s_aside_clear;
 static int s_aside_lazy;
@@ -683,6 +696,7 @@ bool vbgo_tiletrack_adopt_block(unsigned fb)
    if (s_lazy[from] >> b & 1)
       CopyBlock(from, b);
    SettleFrom(to);
+
    /* (as CopyBlock: lines with no tags in either only cleared, if at all; a lazy block's own are its stale ones) */
    clear = (s_lazy[to] >> b & 1) ? s_stale[to][b] : s_tagged[to][b];
    copy = s_tagged[from][b];
@@ -705,6 +719,7 @@ bool vbgo_tiletrack_adopt_block(unsigned fb)
                        &s_cells[from][e][(b * 8 + x) * VBGO_TT_CELL_ROW + c * 8], 2);
       }
    }
+
    /* (the versions too: equal ones mean the same tags and pixels, so a picture painted from either buffer serves both;
     * the records were made against the other pass, so none holds) */
    memcpy(s_block_chr[to][b], s_block_chr[from][b], sizeof(s_block_chr[0][0]));
@@ -726,6 +741,7 @@ bool vbgo_tiletrack_keep_cells(uint64_t cells)
    if (!s_block_was)
       return false;
    Materialize();
+
    /* (the cells drawn again start clear, the kept ones stay as they are) */
    ClearCells(s_tagged[s_block_slot][s_block_no] & ~cells);
    s_tagged[s_block_slot][s_block_no] &= cells;
@@ -747,6 +763,7 @@ void vbgo_tiletrack_block_drawing(bool compare)
 
    s_old_valid = compare && s_block_was && s_prev_valid;
    tagged = s_tagged[s_block_slot][s_block_no];
+
    /* (a lazy block's old tags are still in its source; its own stale ones are what's cleared) */
    lazy = (int)(s_lazy[s_block_slot] >> s_block_no & 1);
    if (s_old_valid)
@@ -796,6 +813,7 @@ static __attribute__((noinline)) int SameCell(unsigned c)
          uint32_t tags[8], differ = 0, any = 0;
          for (y = 0; y < 8; y++)
             tags[y] = is[y], differ |= was[y] ^ tags[y], any |= tags[y];
+
          /* (the column's 8 tags at once: most cells that differ differ there) */
          if (differ)
             return 0;
@@ -833,6 +851,7 @@ static void PutAside(uint64_t same)
    const uint64_t tagged = s_tagged[s_block_slot][s_block_no];
    const uint64_t skip = s_aside_lazy ? 0 : same;
    const uint64_t put = (s_aside_clear | tagged) & ~skip, copy = tagged & ~skip;
+
    /* (cell lines span two 8x8 cells: claimed where both are put) */
    uint64_t pairs = copy & (copy >> 1) & 0x5555555555555555ull, m;
    uint32_t *const to_tags[2] = { &s_tags[s_block_slot][0][s_block_no * 8], &s_tags[s_block_slot][1][s_block_no * 8] };
@@ -1086,6 +1105,7 @@ void vbgo_tiletrack_note_shown(uint32_t noleft)
    unsigned c;
    if (!vbgo_tt_on || s_block_slot < 0 || s_block_no >= VBGO_TT_BLOCKS || !s_versions)
       return;
+
    /* (a cell one world drew is judged by that world alone) */
    for (c = 0; c < VBGO_TT_CELLS; c++)
    {
@@ -1141,6 +1161,7 @@ unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, uint32_t nol
          }
          only[0] = (uint64_t)half0[1] << 32 | half0[0], only[1] = (uint64_t)half1[1] << 32 | half1[0];
       }
+
       /* (cells other worlds drew in too go by the worlds their left eye's tags show: a hidden world shows nothing) */
       scan = base & s_tagged[slot][b] & ~(only[0] | only[1]);
       NoteShown(scan, noleft);
@@ -1190,6 +1211,7 @@ unsigned vbgo_tiletrack_note_motion(uint32_t moved, uint32_t still, uint32_t nol
             int sx, top;
             c = k * 32 + (unsigned)__builtin_ctz(half[k]);
             sx = (int)c * 8 + d[g], top = (int)b * 8 + e[g];
+
             /* (its first and last source cells: the other two, if any, the renderer checks) */
             was0 = s_cell_version[from][top >> 3][(unsigned)sx >> 3];
             was1 = s_cell_version[from][(top + 7) >> 3][(unsigned)(sx + 7) >> 3];
@@ -1376,10 +1398,12 @@ void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsi
          continue;
       if (row / 8 < VBGO_TT_BLOCKS)
          s_cpu_cells[slot][row / 8] |= 1ull << (column / 8);
+
       /* (a cell that may hold no tag has all of them 0 already) */
       if (row / 8 >= VBGO_TT_BLOCKS || (s_tagged[slot][row / 8] >> (column / 8) & 1))
          for (p = 0; p < 4; p++)
             s_tags[slot][lr & 1][column * VBGO_TT_COLUMN + row + p] = 0;
+
       /* (a block reset again with nothing written there since is already as this leaves it) */
       if (row / 8 < VBGO_TT_BLOCKS && !(s_cpu_reset[slot] >> (row / 8) & 1))
       {

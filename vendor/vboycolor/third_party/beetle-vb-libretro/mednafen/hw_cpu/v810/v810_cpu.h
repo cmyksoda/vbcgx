@@ -244,6 +244,7 @@ class V810
  uint32 IdleQuiet = 0, IdleHead = ~0u;
  v810_timestamp_t IdleAt = 0, IdleNext = 0;
  uint32 IdleRegs[64];
+
  /* (what StoreFreeLoop and CounterLoop found at the loop last looked at: only its code decides) */
  struct IdleShape
  {
@@ -461,6 +462,7 @@ class V810
  void JitProbate(unsigned page);
  void JitEvict(unsigned page);
  void JitForgetInto(unsigned page);
+
  /* Compiled blocks start only where a branch lands, after one, or after an op left to the interpreter:
     an event can stop a block anywhere, and starting new ones there would never end. */
  bool BlockEntryOk = true;
@@ -473,7 +475,11 @@ class V810
 
  public:
  /* Work RAM (VB 0x05000000, 64 KiB) for compiled loads and stores. */
- void SetJitWorkRam(uint8 *ram) { JitWorkRam = ram; FlushBlocks(); }
+ void SetJitWorkRam(uint8 *ram)
+ {
+  JitWorkRam = ram;
+  FlushBlocks();
+ }
 #endif
 };
 

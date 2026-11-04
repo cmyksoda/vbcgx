@@ -90,6 +90,7 @@ static INLINE bool VbgoChunkCovered(const VbgoFrontChunk *c, int x, unsigned run
  const uint8 *const cov = c->cv + x;
  if(run != 8)
   return VbgoChunkCoveredRows(c, x, run);
+
  /* (every chunk ends at imagined row 7, and most tiles aren't covered there) */
  if(!VbgoCovered8(cov + 7 * VBGO_COVER_WIDTH))
   return false;
@@ -374,6 +375,7 @@ static VBGO_NOINLINE void VbgoFrontTiles(const VbgoFrontChunk *c, const VbgoFron
   const unsigned first_y = vflip ? 7 - c->sy7 : c->sy7;
   const uint8 *chr = (const uint8 *)&CHR_RAM[(bgsc & 0x7FF) * 8 + first_y];
   const int chr_step = vflip ? -2 : 2;
+
   /* (the tile's first row's tag bits: in-tile y first_y, in-tile x 0, or 7 flipped; and what each next row changes) */
   uint32_t bits = vbgo_tt_call_bits() | VBGO_TT_BG_BITS(bgsc & 0x7FF, 0, first_y, palette_selector, 0) |
                   (flipped ? 7u << 11 : 0u);
@@ -398,6 +400,7 @@ static VBGO_NOINLINE void VbgoFrontTiles(const VbgoFrontChunk *c, const VbgoFron
   case 7: VBGO_FRONT_ROW(7)
   }
   covered_total += covered_rows;
+
   /* (only rows of a tile that can leave fills) */
   for(; later; later &= later - 1)
   {
@@ -472,6 +475,7 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
   uint32 SourceY = 0, BGMap_Base, used_chr = 0xFFFF;
   int32 x;
   uint32 sx;
+
   /* (the next rows that share a map row, but not those outside the window or covered all along: nothing to draw; a
    * covered row ends the chunk, and the rows after it are the next) */
   for(; y < 8; y++)
@@ -530,6 +534,7 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
 
   x = start_x;
   sx = (uint32)(int32)(int16)row_srcX + SourceX_shift;
+
   /* (H-bias rows were one-row chunks: each counts the groups it steps over as then, so VbgoFrontDone decides alike) */
   const bool per_row = hbias && n > 1;
   while(x <= final_x)
@@ -541,6 +546,7 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
    run = 8 - offset;
    if(run > (unsigned int)(final_x - x + 1))
     run = final_x - x + 1;
+
    /* (a tile covered in every row is stepped over before its map entry is read) */
    if(VbgoChunkCovered(&chunk, x, run))
    {
@@ -589,6 +595,7 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
        sx += 8;
        continue;
       }
+
       /* (the next tiles' entries are the next halfwords, to the end of the map's row or of the line) */
       entry = &BGMap[(BGMap_Base | ((s2 << 3) & ~0xFFF) | column) & 0xFFFF];
       last = x + 8 * (int32)(63 - column);
@@ -652,6 +659,7 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb, VbgoCover *cover, int lr, unsi
                                        const uint16 *list, int count)
 {
  const uint16 *CHR16 = CHR_RAM;
+
  /* (read once: the clip holds for the block, and every byte stored would make the compiler read it again) */
  const int clip0 = ClipX0, clip1 = ClipX1, full = ClipX1 - ClipX0 + 1;
  const uint16 eye_bit = lr ? 0x4000 : 0x8000;
@@ -872,6 +880,7 @@ static VBGO_NOINLINE void VbgoDrawFront(uint8 block_no, uint8 *fb_l, uint8 *fb_r
    {
     const uint16 *const list = obj_lists[--obj_index];
     unsigned open = 0;
+
     /* (the rows with room left: only a row's own drawing changes its count) */
     for(y = 0; y < 8; y++)
      if(cover.covered[y] < ClipX1 - ClipX0 + 1)

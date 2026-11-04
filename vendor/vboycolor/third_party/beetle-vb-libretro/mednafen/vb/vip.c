@@ -426,7 +426,8 @@ static uint32 PassNo;        /* the passes begun (what the front to back waits c
  * a block reads (vip_draw.inc); writes note when, in DrawSerial terms. */
 static uint32 GlobalChangedAt;    /* world attributes, palettes, background color */
 static uint32 SptChangedAt;       /* sprite groups (some games move them every frame) */
-static uint64 ObjSerial = 1;      /* bumped by every change to a sprite attribute or group: sorted sprite lists stay good until it moves */
+/* bumped by every change to a sprite attribute or group: sorted sprite lists stay good until it moves */
+static uint64 ObjSerial = 1;
 static uint32 RowChangedAt[1024]; /* DRAM, per 64 halfwords */
 static uint32 ChrChangedAt[2048];
 static uint32 LastChrChangeAt; /* (the latest of them) */
@@ -437,6 +438,7 @@ static INLINE void ChrChanged(uint32 c)
    ChrChangedInPass[0][c >> 5] |= 1u << (c & 31);
    ChrChangedInPass[1][c >> 5] |= 1u << (c & 31);
 }
+
 /* Per BG map row (64 halfwords), the columns written in its two latest generations (a pass each): since[k] is the
  * first write of generation k, last1 the last of generation 1; writes before since[1] are forgotten. */
 typedef struct
@@ -479,12 +481,14 @@ const uint32 *vbgo_vip_block_pixels(unsigned fb, unsigned lr, unsigned block)
 {
    return (const uint32 *)(FB[fb & 1][lr & 1] + block * FB_BAND);
 }
+
 /* Each buffer's side-by-side picture has a half of the surface of its own,
  * where a column's block is converted again only if the buffer's pixels there
  * (per 8x8 cell) or the brightness table changed since. */
 static uint32 CellContent[2][28][48]; /* a version per cell's pixels, 0: unknown */
-/* Per frame buffer and cell column: a bit per (output eye, column of the cell) that has found every block's CellContent converted
- * since the last edit to any of them (bit 8 * eye + column - cell * 8); every edit clears the bits, even one that left it as it was. */
+/* Per frame buffer and cell column: a bit per (output eye, column of the cell) that has found every block's CellContent
+ * converted since the last edit to any of them (bit 8 * eye + column - cell * 8); every edit clears the bits, even one
+ * that left it as it was. */
 static uint16 CellClean[2][48];
 static void EditBlock(int fb) { memset(CellClean[fb], 0, sizeof(CellClean[fb])); }
 static uint32 Contents;
@@ -492,6 +496,7 @@ static uint32 ShownClut[2][2][384];        /* [fb][output eye][column]: vbgo_tt_
 static uint32 ShownVersion[2][2][384];     /* ... FBVersion as converted, and from which eye's buffer (0: not all of it) */
 static uint8 ShownLr[2][2][384];
 static int ShownFB;
+
 /* VirtualBoyGo: the colorizer reads the picture, never shows it, so each eye is kept compact - per
  * frame buffer and column, its 2-bit pixels and the 4 values they stand for (vbgo_tiletrack.h). */
 static uint8 EyeBits[2][2][384][56] __attribute__((aligned(64)));
@@ -551,6 +556,7 @@ static void NoteSprites(int world, const uint16 *list, int count)
       Drawing->sprites++;
    }
 }
+
 /* What each frame shows, to tell a frame that shows the same picture as the
  * last: each buffer's contents get a fresh version when drawn or written, the
  * display's brightness and settings a serial, and a frame that changes either
@@ -563,6 +569,7 @@ static uint32 ShownKey[2];       /* FBVersion of the buffer shown and DisplaySer
 static uint32 FramePicture, LastFramePicture;
 
 uint32 vbgo_vip_last_frame_picture(void) { return LastFramePicture; }
+
 /* Until when VIP register reads can't change but at an event (XPSTTS's SBOUT bit times out on its own). */
 int32 vbgo_vip_steady_until(int32 timestamp) { return timestamp < SBOUT_InactiveTime ? SBOUT_InactiveTime : 0x7FFFFFFF; }
 
@@ -746,6 +753,7 @@ static void DramChanging(uint32 a, uint16 v)
    {
       ObjSerial++;
       ObjEntryChangedAt[(h - (0x1E000 >> 1)) >> 2] = at;
+
       /* (a sprite's: the rows it's on, and will be on) */
       ObjRowsChanged(DRAM[(h & ~3u) + 2], at);
       if((h & 3) == 2)
@@ -767,6 +775,7 @@ static int BlockChange(const BlockInputs *block)
    if(!block->valid || GlobalChangedAt > block->drawnAt)
       return 2;
    wholeWorld = WorldChangedAt[DrawingBlock] > block->drawnAt;
+
    /* (world attributes written since but back as they were - a game switching worlds off and on between passes: nothing
     * to redraw, whatever the writes marked; only the worlds whose writes marked this block are compared) */
    {
@@ -815,6 +824,7 @@ static int BlockChange(const BlockInputs *block)
       change = 1;
    for(i = 0; i < 48 && !worldsSame && WorldCellMaxAt[DrawingBlock] > block->drawnAt; i++)
       WorldDirty |= (uint64)(WorldCellChangedAt[DrawingBlock][i] > block->drawnAt) << i;
+
    /* (with a world changed too, drawn whole as before) */
    if(BgChrChanged && (wholeWorld || WorldDirty))
    {
@@ -864,7 +874,8 @@ static uint64 SpriteChangedCells(const BlockInputs *was, int wasCount, uint32 dr
    for(k = 0; k < is->sprites; k++)
    {
       unsigned h = (is->sprite[k].oam * 5 + is->sprite[k].world * 41) & 255;
-      while(isAt[h] && !(is->sprite[isAt[h] - 1].oam == is->sprite[k].oam && is->sprite[isAt[h] - 1].world == is->sprite[k].world))
+      while(isAt[h] && !(is->sprite[isAt[h] - 1].oam == is->sprite[k].oam &&
+                         is->sprite[isAt[h] - 1].world == is->sprite[k].world))
          h = (h + 1) & 255;
       if(!isAt[h])
          isAt[h] = k + 1;
@@ -872,7 +883,8 @@ static uint64 SpriteChangedCells(const BlockInputs *was, int wasCount, uint32 dr
    for(i = 0; i < wasCount; i++)
    {
       unsigned h = (was->sprite[i].oam * 5 + was->sprite[i].world * 41) & 255;
-      while(wasAt[h] && !(was->sprite[wasAt[h] - 1].oam == was->sprite[i].oam && was->sprite[wasAt[h] - 1].world == was->sprite[i].world))
+      while(wasAt[h] && !(was->sprite[wasAt[h] - 1].oam == was->sprite[i].oam &&
+                          was->sprite[wasAt[h] - 1].world == was->sprite[i].world))
          h = (h + 1) & 255;
       if(!wasAt[h])
          wasAt[h] = i + 1;
@@ -888,8 +900,10 @@ static uint64 SpriteChangedCells(const BlockInputs *was, int wasCount, uint32 dr
             b = &is->sprite[isAt[h] - 1];
          h = (h + 1) & 255;
       }
+
       /* (an entry written and written back as it was drawn is no change) */
-      if(!b || (ObjEntryChangedAt[a->oam] > drawnAt && memcmp(a->entry, b->entry, sizeof(a->entry))) || ChrChangedAt[a->chr] > passAt)
+      if(!b || (ObjEntryChangedAt[a->oam] > drawnAt && memcmp(a->entry, b->entry, sizeof(a->entry))) ||
+         ChrChangedAt[a->chr] > passAt)
          cells |= SpriteCells(a) | (b ? SpriteCells(b) : 0);
    }
    for(k = 0; k < is->sprites; k++)
@@ -913,7 +927,8 @@ static uint64 SpriteChangedCells(const BlockInputs *was, int wasCount, uint32 dr
 static bool BlockSettled(const BlockInputs *block)
 {
    int i;
-   if(GlobalChangedAt > PassStartedAt || WorldChangedAt[DrawingBlock] > PassStartedAt || ObjChangedAt[DrawingBlock] > PassStartedAt)
+   if(GlobalChangedAt > PassStartedAt || WorldChangedAt[DrawingBlock] > PassStartedAt ||
+      ObjChangedAt[DrawingBlock] > PassStartedAt)
       return false;
    if(WorldCellMaxAt[DrawingBlock] > PassStartedAt)
       return false;
@@ -951,6 +966,7 @@ static uint64 WorldCellsWritten(const uint16 *a, uint32 since)
    const uint16 gy = sign_11_to_s16(a[3]), height = a[8] & 0x3FF;
    const uint16 gp = ParallaxDisabled ? 0 : sign_9_to_s16(a[2]), mp = ParallaxDisabled ? 0 : sign_9_to_s16(a[5]);
    const int32 dest = (int16)sign_10_to_s16((uint16)(sign_11_to_s16(a[1]) - gp));
+
    /* (screen x shows the map's pixel column (x + off) & xmask) */
    const uint32 row_off = (uint32)((int32)(int16)(uint16)(a[4] - mp) - dest);
    uint64 cells = 0;
@@ -1071,6 +1087,7 @@ static void NoteBlockMotion(void)
    int8_t dx[32], dy[32];
    uint64_t bad[32];
    uint32 worlds = 0, moved = 0, still = 0;
+
    /* (SourceRowsSame's answers per vertical move tried: the same for every world moving alike) */
    int rowsDy[2] = { 0, 0 }, rowsTried = 0;
    bool rowsSame[2] = { false, false };
@@ -1091,6 +1108,7 @@ static void NoteBlockMotion(void)
    }
    if(!src->valid || GlobalChangedAt > src->drawnAt)
       return;
+
    /* (a character changed since that pass started, if the block uses it, or a drawing an older pass made: nothing
     * recorded) */
    if(LastChrChangeAt > src->passAt)
@@ -1175,6 +1193,7 @@ static void NoteBlockMotion(void)
       dx[w] = (int8_t)d;
       dy[w] = (int8_t)e;
       bad[w] |= WorldCellsWritten(a, since);
+
       /* (an overplane's entry shows wherever its map doesn't reach: written since, it changed them all) */
       if((a[0] & 0x80) && RowChangedAt[(a[10] & 0xFFFF) >> 6] > since)
          bad[w] = ~0ull;
@@ -1250,6 +1269,7 @@ static NO_INLINE bool OtherBlockCurrent(void)
          if(RowChangedAt[i * 32 + __builtin_ctz(m)] > other->drawnAt)
             return false;
    }
+
    /* (drawn in that buffer's latest pass, the characters changed since are the ones above) */
    for(i = 0; other->passAt != PassSerial[!DrawingFB] && i < 2048 / 32; i++)
    {
@@ -1859,6 +1879,7 @@ void VIP_StartFrame(EmulateSpecStruct *espec)
    surface = espec->surface;
    skip    = false;
    Held    = false;
+
    /* (the fog scene's right eye isn't drawn either, 3D being off; passes drawn the other way are redrawn, as for
     * a parallax change) */
    if(LeftOnly != FogHeld())
@@ -2058,6 +2079,7 @@ static INLINE uint8 *GatherColumn(uint8 *to, int fb, int lr, int column)
 {
    const uint8 *from = FB[fb][lr] + 2 * column;
    int b;
+
    /* (unrolled: a load and a store a band, the band's offset in the instruction) */
 #pragma GCC unroll 28
    for(b = 0; b < 28; b++)
@@ -2336,6 +2358,7 @@ static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, c
       const bool sameClut = ShownClut[fb][eye][Column] == vbgo_tt_clut_serial;
       if(!sameClut)
          ShownClut[fb][eye][Column] = vbgo_tt_clut_serial;
+
       /* (a buffer as it was converted, with the same brightness table: nothing to copy) */
       if(sameClut && FBVersion[fb] && ShownVersion[fb][eye][Column] == FBVersion[fb] && ShownLr[fb][eye][Column] == lr)
          return;
@@ -2343,12 +2366,14 @@ static void CopyFBColumnToTarget_SideBySide_BASE(const bool DisplayActive_arg, c
       /* (a column converted since the display was last off, with these shades and from this eye, holds them already) */
       if(!(sameClut && sameBits && ShownVersion[fb][eye][Column]))
          vbgo_copy8(EyeClut[fb][eye][Column], BrightCLUT[lr], sizeof(EyeClut[0][0][0]) / 8);
+
       /* (no block's content edited since every one was found converted: the loop would skip them all) */
       if(sameBits && (CellClean[fb][Column >> 3] >> (eye << 3 | (Column & 7)) & 1))
       {
          ShownVersion[fb][eye][Column] = FBVersion[fb];
          return;
       }
+
       /* (the whole column, as the eye's buffer is fixed: every edit to its pixels clears the cell's bits) */
       GatherColumn(EyeBits[fb][eye][Column], fb, lr, Column);
       ShownVersion[fb][eye][Column] = FBVersion[fb];
@@ -2435,6 +2460,7 @@ static INLINE void CopyQuadSideBySide(int fb, int lr, int eye, int first, uint32
    }
    if(!gather)
       return;
+
    /* (line i holds bytes of columns i / 2 and (i + 1) / 2: claimed only where both are gathered) */
    for(i = 0; i < 7; i++)
    {
@@ -2653,6 +2679,7 @@ static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1, uint8 *differs,
    {
       const uint8 *rows = buffers[lr] + 8;
       uint32 *const band = (uint32 *)(FB[DrawingFB][lr] + DrawingBlock * FB_BAND);
+
       /* 4 columns at a time, a byte each in a word: each row masked to the bits that stay in its byte, as the byte
          arithmetic of one column keeps them */
       for(x = x0; x + 3 <= x1; x += 4)
@@ -2713,13 +2740,16 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
 
             BlockInputs *block = &Blocks[DrawingFB][DrawingBlock];
             if((skip || (DrawingFB && FogHeld())) && InstantDisplayHack && AllowDrawSkip)
-               Fb1Stale |= DrawingFB, Fb1PassSkipped |= DrawingFB, PassTouched[DrawingFB] = true, NewContents(DrawingFB), block->valid = false, memset(CellContent[DrawingFB][DrawingBlock], 0, sizeof(CellContent[0][0])), EditBlock(DrawingFB);
+               Fb1Stale |= DrawingFB, Fb1PassSkipped |= DrawingFB, PassTouched[DrawingFB] = true, NewContents(DrawingFB),
+                  block->valid = false, memset(CellContent[DrawingFB][DrawingBlock], 0, sizeof(CellContent[0][0])),
+                  EditBlock(DrawingFB);
             else if(PassRepeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB] &&
                     (PassShared || vbgo_tiletrack_pass_reusable(!DrawingFB))) /* (options can change after BeginPass) */
             {
                if(!PassShared)
                   vbgo_tiletrack_share_pass(DrawingFB, !DrawingFB), PassShared = true;
                CopyRepeatedBlock();
+
                /* (it holds the other buffer's drawing now, with what that read) */
                if(Blocks[!DrawingFB][DrawingBlock].valid)
                   *block = Blocks[!DrawingFB][DrawingBlock];
@@ -2777,6 +2807,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   const bool hadDrawing = block->valid;
                   uint64 same = 0, unchanged = change == 0 ? all : 0, dirty = all, spriteDirty = all;
                   bool partial = false;
+
                   /* (drawn aside and compared only where the block's last drawing came out nearly as before:
                    * comparing a cell costs about what painting it again does) */
                   static uint8 LastSame[2][28];
@@ -2801,6 +2832,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      if(BgChrChanged && __builtin_popcountll(dirty & ~(dirty << 1)) > 2)
                         dirty = all;
                      unchanged = ~dirty & all;
+
                      /* (the cells it covers drawn again, the rest kept) */
                      partial = hadDrawing && dirty != all && vbgo_tiletrack_keep_cells(unchanged);
                      if(BgChrChanged && !partial)
@@ -2834,6 +2866,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                      }
                      ClipX0 = 0;
                      ClipX1 = 383;
+
                      /* (cells drawn again only for a world's change: as before unless that world shows there) */
                      unchanged |= WorldDirty & ~spriteDirty & ~vbgo_tiletrack_world_cells(ChangedWorlds, dirty);
                   }
@@ -2870,6 +2903,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                            unchanged = ~(maybe | spriteDirty) & all;
                      }
                   }
+
                   /* (a partial drawing changes only its cells' pixels) */
                   if(partial)
                      same = ~dirty & all;
@@ -3128,6 +3162,7 @@ int VIP_StateAction(StateMem *sm, int load, int data_only)
       }
       ForgetPasses();
       Fb1Stale = Fb1PassSkipped = false;
+
       /* (a load mid-pass would leave the slot's character hashes from before it: count every character as changed) */
       LastChrChangeAt = ++DrawSerial;
       memset(ChrChangedInPass, 0xFF, sizeof(ChrChangedInPass));

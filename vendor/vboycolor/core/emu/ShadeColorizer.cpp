@@ -89,7 +89,8 @@ void ShadeColorizer::BuildGradient()
     }
 }
 
-void ShadeColorizer::Observe(const uint8_t *const bits[2], const uint32_t *const clut[2], size_t width, size_t height, size_t rightX)
+void ShadeColorizer::Observe(const uint8_t *const bits[2], const uint32_t *const clut[2], size_t width, size_t height,
+                             size_t rightX)
 {
     if (!m_gradient)
         return;
@@ -105,9 +106,10 @@ void ShadeColorizer::Observe(const uint8_t *const bits[2], const uint32_t *const
         for (size_t x = 0; x < width; x += 3)
         {
             // (each eye's bytes as the side-by-side picture held them; between the eyes, nothing)
-            const uint32_t word = x < VBGO_TT_WIDTH ? vbgo_eye_word(bits[0], clut[0], static_cast<unsigned>(x), static_cast<unsigned>(y))
-                                  : x >= rightX   ? vbgo_eye_word(bits[1], clut[1], static_cast<unsigned>(x - rightX), static_cast<unsigned>(y))
-                                                  : 0;
+            const uint32_t word =
+                x < VBGO_TT_WIDTH ? vbgo_eye_word(bits[0], clut[0], static_cast<unsigned>(x), static_cast<unsigned>(y))
+                : x >= rightX     ? vbgo_eye_word(bits[1], clut[1], static_cast<unsigned>(x - rightX), static_cast<unsigned>(y))
+                                  : 0;
             uint8_t p[4];
             std::memcpy(p, &word, 4);
             const int shade = p[3] & 3, level = p[3] >> 2;
@@ -167,6 +169,7 @@ uint32_t ShadeColorizer::ColorOf(uint32_t pixel) const
 void ShadeColorizer::PrepareColumns(const uint32_t *clut)
 {
     static_assert(kColumns == VBGO_TT_WIDTH, "PrepareColumns");
+
     // (the same table under the same colors as last time: everything below would come out as it is)
     if (m_columnsVersion == m_version && std::equal(m_columnClut.begin(), m_columnClut.end(), clut))
         return;
@@ -254,7 +257,8 @@ void ShadeColorizer::ColorizeCells(const uint8_t *bits, unsigned x, uint32_t ban
     }
 }
 
-void ShadeColorizer::ColorizeColumn(const uint8_t *bits, unsigned x, unsigned y, unsigned count, uint8_t *dst, size_t rowBytes) const
+void ShadeColorizer::ColorizeColumn(const uint8_t *bits, unsigned x, unsigned y, unsigned count, uint8_t *dst,
+                                    size_t rowBytes) const
 {
     const uint8_t *column = bits + x * 56;
     const uint32_t *colors = &m_columnColors[x * 4];

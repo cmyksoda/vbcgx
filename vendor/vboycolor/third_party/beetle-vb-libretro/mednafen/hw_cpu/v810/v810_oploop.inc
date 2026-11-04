@@ -965,7 +965,11 @@
                 PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
                 goto op_INVALID;
             if (TESTCOND_E) {
-                { const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1); if (timestamp < to) timestamp = to; }
+                {
+                    const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1);
+                    if (timestamp < to)
+                        timestamp = to;
+                }
                 ADDCLOCK(3);
                 RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
             } else {
@@ -980,7 +984,11 @@
                 PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
                 goto op_INVALID;
             if (TESTCOND_NE) {
-                { const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1); if (timestamp < to) timestamp = to; }
+                {
+                    const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1);
+                    if (timestamp < to)
+                        timestamp = to;
+                }
                 ADDCLOCK(3);
                 RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
             } else {
@@ -995,7 +1003,11 @@
                 PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
                 goto op_INVALID;
             if (TESTCOND_P) {
-                { const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1); if (timestamp < to) timestamp = to; }
+                {
+                    const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1);
+                    if (timestamp < to)
+                        timestamp = to;
+                }
                 ADDCLOCK(3);
                 RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
             } else {
@@ -1010,7 +1022,11 @@
                 PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
                 goto op_INVALID;
             if (TESTCOND_LT) {
-                { const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1); if (timestamp < to) timestamp = to; }
+                {
+                    const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1);
+                    if (timestamp < to)
+                        timestamp = to;
+                }
                 ADDCLOCK(3);
                 RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
             } else {
@@ -1025,7 +1041,11 @@
                 PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
                 goto op_INVALID;
             if (TESTCOND_L) {
-                { const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1); if (timestamp < to) timestamp = to; }
+                {
+                    const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1);
+                    if (timestamp < to)
+                        timestamp = to;
+                }
                 ADDCLOCK(3);
                 RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
             } else {
@@ -1040,7 +1060,11 @@
                 PC_ptr != &FastMap[RB_GETPC() >> V810_FAST_MAP_SHIFT][RB_GETPC()])
                 goto op_INVALID;
             if (true) {
-                { const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1); if (timestamp < to) timestamp = to; }
+                {
+                    const v810_timestamp_t to = WaitTarget(timestamp, PC_ptr, arg1);
+                    if (timestamp < to)
+                        timestamp = to;
+                }
                 ADDCLOCK(3);
                 RB_PCRELCHANGE(sign_9(arg1) & 0xFFFFFFFE);
             } else {

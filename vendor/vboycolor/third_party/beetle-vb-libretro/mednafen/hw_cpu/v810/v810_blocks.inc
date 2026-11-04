@@ -17,10 +17,12 @@ void WutCodegenEndWrite();
  * event handler it ran ended the frame (likewise), the interpreter must run the next op, or at a branch to
  * JitTarget that isn't linked yet. */
 enum { JIT_EXIT_STOPPED = 0, JIT_EXIT_BRANCH = 1, JIT_EXIT_INTERPRET = 2, JIT_EXIT_FRAME_END = 3 };
+
 /* JitStub[JIT_STUB_ENTER](P_REG, &timestamp, code) runs compiled code; the exit leaves the next PC in JitTarget. */
 enum { JIT_STUB_ENTER, JIT_STUB_LEAVE, JIT_STUB_LEAVE_TS, JIT_STUB_EVENTS, JIT_STUB_INTERPRET, JIT_STUB_INTERPRET_FIRST,
        JIT_STUB_BRANCH, JIT_STUB_IDLE, JIT_STUB_READ8, JIT_STUB_READ16, JIT_STUB_READ32, JIT_STUB_WRITE8,
        JIT_STUB_WRITE16, JIT_STUB_WRITE32, JIT_STUB_WAIT, JIT_STUB_SAME16, JIT_STUB_SAME32, JIT_STUBS };
+
 /* The code buffer is pages: hot code, then the cold code that goes with it (slow paths, exits), so what runs sits
  * packed together. A page is as far as a conditional branch reaches. */
 enum { JIT_PAGE_WORDS = 32 * 1024 / 4, JIT_HOT_WORDS = 18 * 1024 / 4 };
@@ -165,6 +167,7 @@ const V810::Decoded *V810::DecodeBlock(uint32 pc)
       const uint32 op_pc = pc + (code - PC_ptr);
       if(kind == BK_NONE)
          break;
+
       /* (as op_WAIT_BE and the rest check, else they're invalid ops) */
       if(kind == BK_WAIT && (!idlePatches || ((op_pc >> 24) & 7) != 7
                              || code != &FastMap[op_pc >> V810_FAST_MAP_SHIFT][op_pc]))

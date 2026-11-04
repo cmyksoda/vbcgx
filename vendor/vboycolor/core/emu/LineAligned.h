@@ -26,6 +26,7 @@ struct LineAligned
     template <typename U>
     bool operator!=(const LineAligned<U, kAlign> &) const { return false; }
 };
+
 // (depth's buffers: each starts a 64-byte L2 line, so malloc's 8/16-byte phases can't change what shares a line)
 template <typename T>
 using Vec64 = std::vector<T, LineAligned<T, 64>>;

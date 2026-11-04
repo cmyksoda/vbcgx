@@ -7,6 +7,7 @@
  *
  * This file controls overall program flow. Most things start and end here!
  ****************************************************************************/
+
 #include <malloc.h>
 #include "fceugx.h"
 #include "fceusupport.h"
@@ -21,6 +22,7 @@
 #include "libgui/Gui.h"
 #include "drivers/Platform.h"
 #include "drivers/Thread.h"
+
 #ifdef __WIIU__
 #include "drivers/Logger.h"
 #include "drivers/wut/WutPlatform.h"
@@ -32,16 +34,19 @@ bool vbgo_jit_attach(void);
 #include <ogc/system.h>
 static WiiPlatform platformInstance;
 #endif
+
 Platform *platform = &platformInstance;
 AppRequest appRequest = AppRequest::NONE;
 char appPath[MAXPATHLEN] = {};
 unsigned char *nesrom = nullptr;
 static bool autoboot = false;
+
 static void SaveAppData()
 {
     SavePrefsAndWait();
     if (romLoaded) SaveRAMAuto(SILENT);
 }
+
 void ExitApp()
 {
     WaitForBackgroundTasks(15000);
@@ -51,6 +56,7 @@ void ExitApp()
     Thread::JoinAll();
     platform->requestExit(EmuSettings.exitAction, autoboot);
 }
+
 int main(int argc, char **argv)
 {
     PlatformConfig config;
@@ -61,6 +67,7 @@ int main(int argc, char **argv)
     config.assetScaleX = 3.0f;
     config.assetScaleY = 2.25f;
 #endif
+
     platform->init(config);
     platform->setSaveHandler(SaveAppData);
 #ifdef __WIIU__
@@ -68,6 +75,7 @@ int main(int argc, char **argv)
     if (!vbgo_jit_attach())
         LOG_WARN("[JIT] no codegen area: every game runs in the interpreter");
 #endif
+
     InitFileOpThreads();
     MountAllFAT();
 #ifdef __WIIU__
@@ -76,10 +84,12 @@ int main(int argc, char **argv)
     // (MEM2: the menu's scratch is cold in play, and MEM1 is kept for the renderer's static blocks)
     GuiImageData::setDecodeScratch(SYS_AllocArenaMem2Hi(IMAGE_DECODE_SCRATCH_SIZE, 32), IMAGE_DECODE_SCRATCH_SIZE);
 #endif
+
     fontSystem = new GuiTextRenderer(font_ttf, font_ttf_size,
         platform->getVideo()->getGlyphRenderer(), platform->getVideo()->getUIScale());
     textTranslator = new GuiTextTranslator();
     textTranslator->loadLanguage(en_lang, en_lang_size);
+
     DefaultSettings();
     ApplySettings();
     platform->getVideo()->startMenuVideo();
@@ -87,6 +97,7 @@ int main(int argc, char **argv)
 #ifndef __WIIU__
     InitMem2Manager();
 #endif
+
     savebuffer = (unsigned char *)memalign(FILE_BUFFER_ALIGN, SAVEBUFFERSIZE);
     browserList = (BROWSERENTRY *)memalign(32, sizeof(BROWSERENTRY) * MAX_BROWSER_SIZE);
     nesrom = (unsigned char *)memalign(FILE_BUFFER_ALIGN, 16 * 1024 * 1024);
@@ -95,8 +106,10 @@ int main(int argc, char **argv)
         ExitApp();
         return 1;
     }
+
     InitGUIThreads();
     InitVBCore();
+
     // (a loader such as WiiFlow passes the game's folder and file name, as FCE Ultra GX takes them: it starts at once)
     if (argc > 2 && argv[1] && argv[2]) {
         LoadPrefs();
@@ -111,23 +124,27 @@ int main(int argc, char **argv)
         EmuSettings.autoloadGame = AutoloadGame(argv[1], argv[2]);
         autoboot = EmuSettings.autoloadGame;
     }
+
     while (!platform->shouldExit()) {
         appRequest = AppRequest::MENU;
         if (!autoboot) {
             platform->getAudio()->startMenuAudio();
             MainMenu(romLoaded ? MENU_GAME : MENU_GAMESELECTION);
         }
+
         platform->getAudio()->stopMenuAudio();
         if (platform->shouldExit()) break;
         WaitForBackgroundTasks(15000);
         autoboot = false;
         appRequest = AppRequest::NONE;
+
         SetControllers();
         SetPalette();
         platform->getVideo()->getEmulatorVideo()->resetVideo();
         platform->getAudio()->getEmulatorAudio()->resetAudio();
         SetVBAudioRate();
         platform->getAudio()->startEmulatorAudio();
+
         while (appRequest == AppRequest::NONE && !platform->shouldExit()) {
             SystemEvent event = platform->getSystemEvent();
             if (event == SystemEvent::ShutdownRequested) break;
@@ -136,10 +153,12 @@ int main(int argc, char **argv)
             if (appRequest != AppRequest::NONE) break;
             RunVBFrame();
         }
+
         platform->getAudio()->stopEmulatorAudio();
         TakeScreenshot();
         platform->getVideo()->startMenuVideo();
     }
+
     ExitApp();
     return 0;
 }

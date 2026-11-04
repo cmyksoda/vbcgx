@@ -54,22 +54,28 @@ public:
         std::function<void(unsigned band, unsigned first, unsigned count)> cells;
         std::function<void(unsigned x, unsigned first, unsigned count)> column;
         uint32_t version = 0;
+
         // The cell at column first of each band in bands (a bit each), all in one call.
         std::function<void(unsigned first, uint32_t bands)> cellColumn;
     };
+
     // frame: B,G,R,A bytes, ShownBuffer's picture as its last Paint left it (bands not kept are shaded and painted
     // again), fbWidth pixels per row, the eyes side by side at eyeOffset[0/1] (the core's picture comes from
     // vbgo_vip_eye_bits). other: the other buffer's picture as its last Paint left it, laid out alike (nullptr: none).
     // background: what painted colors fade toward.
     void Paint(uint8_t *frame, const uint8_t *other, uint32_t fbWidth, const uint32_t eyeOffset[2],
                const ShadeRgb &background, const Shade &shade);
+
     // The frame buffer the left eye shows (0 or 1): each keeps a colored picture of its own.
     static int ShownBuffer();
+
     // Per band, the left eye's cells (bit per 8 columns) the last Paint may have written: the rest of the
     // picture is as it was.
     const uint64_t *PaintedCells() const { return m_painted.data(); }
+
     // Forget what the colored pictures hold (something else drew in them).
     void ForgetBands();
+
     // Instead of painting the same frame again after a Paint that left everything carried over to the next frame as it
     // found it: false if it still needs painting.
     bool Coast();
@@ -88,9 +94,11 @@ private:
     // ambiguous tiles. Slow runs' columns are painted again (their surroundings move); the band's
     // bookkeeping is kept, except each column's first run start, which depends on the band above.
     static constexpr uint64_t kNoKey = ~0ull, kKeyBits = 0xFFFFFFFFFFFFull;
+
     // (left eye: kOneRun - no run starts after the first pixel counted; kAutoColumn - a pixel in an automatic ramp's
     // color)
     static constexpr uint64_t kSlowColumn = 1ull << 58, kOneRun = 1ull << 59, kAutoColumn = 1ull << 60;
+
     // (the same, as bits of first's high word: the painter sets them without 64-bit arithmetic)
     static constexpr uint32_t kSlowColumnHi = kSlowColumn >> 32, kOneRunHi = kOneRun >> 32,
                               kAutoColumnHi = kAutoColumn >> 32;
@@ -98,9 +106,11 @@ private:
     {
         // first pixel counted: run key | row in band << 48 | fade level << 52 | kSlowColumn | kOneRun | kAutoColumn
         uint64_t first = kNoKey;
+
         // the last one's run key (kKeyBits) | (left eye) a bit per row starting a run after the first << 48
         uint64_t last = kNoKey;
     };
+
     // What the kept walk of a column adds to the frame's layer extents and brightness: its bands' first runs that
     // differ from the last run of the band before (made while all its bands are kept; 0 once one is painted)
     struct alignas(32) ColumnSummary
@@ -108,14 +118,17 @@ private:
         static constexpr unsigned kLayers = 8;
         uint32_t slow = 0; // (bands whose first run is a slow one: those need their cell's markers unchanged)
         uint8_t brightest = 0, layers = 0;
+
         // per drawing world: its first and last row
         uint8_t world[kLayers] = {}, top[kLayers] = {}, bottom[kLayers] = {};
     };
+
     // (what a band's 8x8 cells' runs added, as last painted: by field, so a band is read in a few lines)
     struct CellSums
     {
         std::array<uint32_t, VBGO_TT_WIDTH / 8> worlds{}; // (as worldsDrawn, with these extents)
         std::array<uint8_t, VBGO_TT_WIDTH / 8> brightest{};
+
         // [colors][cell]: a bit per column (8 + x) and row (y) a run starts in: the extent is their lowest and highest
         // (a start is a bit set, no min or max)
         std::array<std::array<uint16_t, VBGO_TT_WIDTH / 8>, 32> extent{};
@@ -150,6 +163,7 @@ private:
         uint64_t contextCells = 0; // (left eye: a bit per cell with a slow run whose colors go by markers nearby)
         // (left eye: a bit per cell whose painting moved a marker in the grid - not to be skipped)
         uint64_t markMoves = 0;
+
         // (right eye: a bit per cell whose runs add markers; a kept cell's other slow columns aren't scanned)
         uint64_t markCells = 0;
         uint64_t autoCells = 0;    // (left eye: a bit per cell with a pixel in an automatic ramp's color)
@@ -167,6 +181,7 @@ private:
     // (line-aligned - Paint claims lines of them whole)
     alignas(32) std::array<std::array<std::array<BandColumn, (VBGO_TT_HEIGHT / 8) * VBGO_TT_WIDTH>, 2>, 2>
         m_bandColumns;
+
     // [eye][buffer][column]: a bit per band whose BandColumn has a run; only those are read, the rest of first is stale
     std::array<std::array<std::array<uint32_t, VBGO_TT_WIDTH>, 2>, 2> m_bandsActive{};
     std::array<std::array<std::array<ColumnSummary, VBGO_TT_WIDTH>, 2>, 2> m_columnSummary; // [eye][buffer][column]
@@ -174,15 +189,19 @@ private:
     // painted costs a byte rather than a cache line
     std::array<std::array<std::array<uint8_t, VBGO_TT_WIDTH>, 2>, 2> m_summaryState{};
     static uint8_t MakeSummary(ColumnSummary &summary, const BandColumn *columns, uint32_t active);
+
     // Left eye, per colored picture: the pack colors painted at a faded level, before fading, laid out like the picture
     // (alpha kUnfaded), so a cell drawn as before is faded again from them; m_unfadedCell: the cell's copy is whole.
     static constexpr uint8_t kUnfaded = 0xFE;
+
     // (in the renderer, off the heap - MEM1 on the Wii: sized for the frontend's rows, a cache line of padding each)
     static constexpr size_t kUnfadedRowBytes = (VBGO_TT_WIDTH + 8) * 4;
+
     // (dcbz clears whole lines)
     alignas(32) std::array<std::array<uint8_t, kUnfadedRowBytes * VBGO_TT_HEIGHT>, 2> m_unfaded;
     std::array<uint32_t, 2> m_unfadedWidth{}; // (the picture width each copy is laid out for; 0: none yet)
     std::array<std::array<std::array<uint8_t, VBGO_TT_WIDTH / 8>, VBGO_TT_HEIGHT / 8>, 2> m_unfadedCell{};
+
     // What painting a band depends on beyond its drawing (bumps m_paintState when it changes).
     struct PaintState
     {
@@ -197,6 +216,7 @@ private:
     uint32_t m_paintState = 1, m_paintStateRight = 1; // (the right eye's: only what its scan reads)
     // The automatic colors' layers and figures change apart from m_paintState and reach only cells with ramp colors.
     uint32_t m_paintAuto = 1, m_autoWorldsWas = 0, m_figuresWas = 0;
+
     // Painting goes by a world's layer and pair numbers only (its eyes, type and partner act through them), so those
     // count per world: m_paintWorlds counts the frames one moved in, m_worldChangedAt says when each did.
     uint32_t m_paintWorlds = 1;
@@ -284,14 +304,17 @@ private:
     // pairs they want (bits in wanted, their worlds out of pairWorlds). Returns how many sprite tags it read.
     int RightSpriteMarks(const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut,
                          ContextGroupBits *markers, bool spriteMarks, uint32_t &wanted, uint32_t &pairWorlds);
+
     // The right eye's cells in band b (a bit each) where a sprite the VIP drew there may add a marker its left-eye cells
     // don't hold yet: all of them when that drawing isn't known.
     uint64_t RightSpriteCells(const vbgo_tt_eye_view &v, unsigned b, const ContextGroupBits *markers, bool bound) const;
+
     // The right eye's background tiles with layer-bound markers as its walk reads them: their markers and layers, each
     // at its left-eye cell, in the walk's order per cell, and the layer pairs their runs want (bits in wanted). Returns
     // how many such tags it read.
     int RightBoundMarks(const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut,
                         ContextGroupBits *markers, uint8_t *markerLayers, uint32_t &wanted);
+
     // Paint's marker pre-pass in one band of the left eye: the cells (a bit each) where its drawing used a marker's
     // tile, their markers into the grid and the band's cache.
     void LeftBandMarks(const vbgo_tt_eye_view &v, unsigned band, uint64_t cells, const uint8_t *leftBits,
@@ -320,6 +343,7 @@ private:
     bool PairDue(const Pair &pair, const uint16_t *worlds, std::array<uint16_t, 32> &attributes, uint32_t &others,
                  bool &scrolled) const;
     void EstimatePair(Pair &pair, const uint32_t *leftBits, const uint32_t *rightBits, bool scrolled);
+
     // (EstimatePairs: the pictures' shades as bit rows, per frame buffer, with what they were gathered from - a
     // cell whose version and band are unchanged keeps its bits when the rest is unchanged too)
     struct GatherCache
@@ -334,6 +358,7 @@ private:
         std::vector<uint32_t> version[2];
     };
     std::array<GatherCache, 2> m_gatherCache;
+
     // (vectors read hot in Paint, kept in static blocks: MEM1 on the Wii)
     template <typename T, size_t kElements, unsigned kCount>
     using HotVector = std::vector<T, InStaticBlocks<T, StaticBlocks<sizeof(T) * kElements, kCount, T>>>;
@@ -425,6 +450,7 @@ private:
     // (per grid: the cells with markers - all others are clear - so a frame's work is the few in use)
     std::vector<uint16_t> m_markerCells[3];
     std::array<uint8_t, kGridW * kGridH> m_markerIn[3]{};
+
     // The markers Near and SpriteNear read around each grid cell that has any, as a frame buffer's last Paint saw them:
     // its kept cells' slow columns are painted again only if one within reach changed.
     struct WindowCell
@@ -446,6 +472,7 @@ private:
     };
     std::array<Window, 2> m_window; // per frame buffer, then the one being made
     Window m_windowNow;
+
     // (this frame's layer-bound markers, by grid row: what Near looks through)
     struct NearMark
     {
@@ -469,9 +496,11 @@ private:
     void CopyMarkers(unsigned to, unsigned from);
     std::array<ContextGroupBits, 2048> m_slotMarkers{}; // per slot: the context groups its tile is a marker of
     std::array<bool, 2048> m_slotHasMarkers{};
+
     // (ResolveSlots' compact copies of the slots' hashes and flags, bit per slot: a frame's checks stay in cache)
     std::array<uint32_t, 2048> m_slotHashes{};
     uint32_t m_slotsResolved[2048 / 32] = {}, m_ambiguousSlots[2048 / 32] = {}, m_markerSlots[2048 / 32] = {};
+
     // (the marker slots with sprites' groups, and with layer-bound ones - whether any has those)
     uint32_t m_spriteMarkerSlots[2048 / 32] = {}, m_boundMarkerSlots[2048 / 32] = {};
     bool m_anyBoundMarkerSlot = false;
@@ -494,6 +523,7 @@ private:
     std::array<HotVector<NearCell, kGridW * kGridH, 3>, 32> m_nearCache; // (Near's, per layer and grid cell)
     // per grid cell: sprites' groups with a marker within reach (this frame and the last two)
     HotVector<ContextGroupBits, kGridW * kGridH, 5> m_nearSprites;
+
     // (Paint's scratch for those)
     std::array<ContextGroupBits, kGridW * kGridH> m_gridHere;
     std::array<uint64_t, kGridH> m_spreadRows{}; // (per row, a bit per cell those reached last frame; all if m_spreadAll)
@@ -504,9 +534,11 @@ private:
         uint64_t nearCells = 0, closeCells = 0;
     };
     std::vector<SpreadSpan> m_spreadSpans;
+
     // With layer-bound groups only sprites' context tiles ask, so the cells
     // with markers are kept and a cell's groups worked out when asked (once a frame).
     std::vector<std::pair<uint16_t, ContextGroupBits>> m_spriteSources;
+
     // (the same by cell: their groups, and per row a bit per cell that has any)
     std::array<ContextGroupBits, kGridW * kGridH> m_spriteGrid{};
     std::array<uint64_t, kGridH> m_spriteRows{};

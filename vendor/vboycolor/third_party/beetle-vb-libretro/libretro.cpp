@@ -1906,6 +1906,7 @@ static void PatchIdleLoops(V810_Emu_Mode mode)
          match |= game.checksums[c] == crc;
       if (!match || !game.patch_address[0])
          continue;
+
       // Validate the entire entry before changing any instruction.
       for (unsigned j = 0; j < 512 && game.patch_address[j]; ++j) {
          uint32 addr = game.patch_address[j] & GPROM_Mask;

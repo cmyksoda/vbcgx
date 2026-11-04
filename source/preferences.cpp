@@ -426,11 +426,13 @@ void FixInvalidSettings()
 		EmuSettings.sfxVolume = 40;
 	if(EmuSettings.language < 0 || EmuSettings.language >= LANG_LENGTH)
 		EmuSettings.language = LANG_ENGLISH;
-	if(!(EmuSettings.videoAspectRatioCorrection >= SCALING_MAINTAIN_ASPECT && EmuSettings.videoAspectRatioCorrection < SCALING_LENGTH))
+	if(!(EmuSettings.videoAspectRatioCorrection >= SCALING_MAINTAIN_ASPECT
+		&& EmuSettings.videoAspectRatioCorrection < SCALING_LENGTH))
 		EmuSettings.videoAspectRatioCorrection = SCALING_MAINTAIN_ASPECT;
 	if(!(EmuSettings.videoFixedRatio >= 0 && EmuSettings.videoFixedRatio <= VIDEO_FIXED_RATIO_MAX))
 		EmuSettings.videoFixedRatio = 0;
-	if(!(EmuSettings.videoMode >= VIDEOMODE_AUTO && EmuSettings.videoMode < VIDEOMODE_LENGTH) || !VideoModeAvailable(EmuSettings.videoMode))
+	if(!(EmuSettings.videoMode >= VIDEOMODE_AUTO && EmuSettings.videoMode < VIDEOMODE_LENGTH)
+		|| !VideoModeAvailable(EmuSettings.videoMode))
 		EmuSettings.videoMode = VIDEOMODE_AUTO;
 }
 

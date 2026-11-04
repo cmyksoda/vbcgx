@@ -10,13 +10,16 @@
  * This performs the functions of LoadGame and iNESLoad from a single module
  * Helper function for GameCube injected ROMS
  ****************************************************************************/
+
 #include "fceugx.h"
 #include "fceusupport.h"
 #include "filebrowser.h"
 #include "menu.h"
 #include "drivers/Platform.h"
 #include <cstring>
+
 bool romLoaded = false;
+
 int GCMemROM(int size)
 {
     CloseVBGame();
@@ -24,6 +27,7 @@ int GCMemROM(int size)
         ErrorPrompt("Invalid Virtual Boy ROM size");
         return 0;
     }
+
     char path[MAXPATHLEN];
     snprintf(path, sizeof(path), "%s/%s", browser.dir, browserList[browser.selIndex].filename);
     retro_game_info game{path, nesrom, static_cast<size_t>(size), nullptr};

@@ -2688,7 +2688,8 @@ static int MenuSettingsMappingsMap()
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,30);
 
-	sprintf(menuSubtitle, "%s - %s", textTranslator->getText(ctrlName[CTRL_PAD]), textTranslator->getText(ctrlrName[mapMenuCtrl]));
+	sprintf(menuSubtitle, "%s - %s", textTranslator->getText(ctrlName[CTRL_PAD]),
+		textTranslator->getText(ctrlrName[mapMenuCtrl]));
 	GuiText subtitleTxt(menuSubtitle, 20, MenuPaletteCurrent().textOnAccent);
 	subtitleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	subtitleTxt.setPosition(50,60);
@@ -3175,7 +3176,8 @@ class TintSliders : public GuiWindow
 			const float r = value[0] / 100.0f, g = value[1] / 100.0f, b = value[2] / 100.0f;
 			swatch->setPaint(GuiPaint().color(MenuRGBA(Byte(r), Byte(g), Byte(b))).stroke(1.5f, p.outlineStrong));
 			for (int i = 0; i < 4; ++i)
-				shade[i]->setPaint(GuiPaint().color(MenuRGBA(Byte(r * kLevels[i]), Byte(g * kLevels[i]), Byte(b * kLevels[i])))
+				shade[i]->setPaint(GuiPaint()
+				                       .color(MenuRGBA(Byte(r * kLevels[i]), Byte(g * kLevels[i]), Byte(b * kLevels[i])))
 				                       .stroke(1.0f, p.outline));
 			for (int k = 0; k < 3; ++k)
 			{
@@ -3186,7 +3188,8 @@ class TintSliders : public GuiWindow
 				                                 MenuRGBA(Byte(hi[0]), Byte(hi[1]), Byte(hi[2])), 0.0f)
 				                       .stroke(1.5f, k == row && active ? p.accent : p.outlineStrong));
 				knob[k]->setPosition(kTrackX + value[k] * kTrackW / 100 - 4, -46 + k * 46);
-				knob[k]->setPaint(GuiPaint().color(p.textOnAccent).stroke(1.5f, k == row && active ? p.accent : p.outlineStrong));
+				knob[k]->setPaint(GuiPaint().color(p.textOnAccent)
+				                       .stroke(1.5f, k == row && active ? p.accent : p.outlineStrong));
 				label[k]->setColor(k == row && active ? p.accent : p.label);
 				char v[8];
 				snprintf(v, sizeof(v), "%.2f", value[k] / 100.0f);
@@ -3221,9 +3224,11 @@ static int MenuVBOptions(bool colors)
     int selection = MENU_NONE;
     OptionList options;
     bool firstRun = true;
-    const char *videoNames[] = {"Output Mode", "Aspect Ratio Correction", "Bilinear Filtering", "Screen Zoom", "Fixed Pixel Ratio", "Screen Position"};
+    const char *videoNames[] = {"Output Mode", "Aspect Ratio Correction", "Bilinear Filtering", "Screen Zoom",
+                                "Fixed Pixel Ratio", "Screen Position"};
     enum { kColorsRow, kPacksRow, kMulticolorRow, kGradientRow, kTintColorRow, kCustomTintRow };
-    const char *colorNames[] = {"Colors", "Color Packs", "Multicolor Palette", "Gradient", "Tint Color", "Custom Tint Color"};
+    const char *colorNames[] = {"Colors", "Color Packs", "Multicolor Palette", "Gradient", "Tint Color",
+                                "Custom Tint Color"};
     int rows[6], rowCount = 0;
     auto layoutColorRows = [&]() {
         rowCount = 0;
@@ -3245,7 +3250,8 @@ static int MenuVBOptions(bool colors)
     // (an empty name hides a row and keeps the indices; Fixed Pixel Ratio sets the size itself)
     auto layoutVideoRows = [&]() {
         for (int i = 0; i < 6; ++i)
-            snprintf(options.name[i], 100, "%s", EmuSettings.videoFixedRatio && (i == 1 || i == 3) ? "" : videoNames[i]);
+            snprintf(options.name[i], 100, "%s",
+                     EmuSettings.videoFixedRatio && (i == 1 || i == 3) ? "" : videoNames[i]);
 #ifdef __WIIU__
         options.name[0][0] = 0; // (the Wii U picks its own output from the system settings)
 #endif
@@ -3253,7 +3259,9 @@ static int MenuVBOptions(bool colors)
 #ifdef __WIIU__
     auto is240p = []() { return false; }; // (the Wii's mode, from a shared settings.xml, doesn't apply here)
 #else
-    auto is240p = []() { return EmuSettings.videoMode == VIDEOMODE_ORIGINAL_240P || EmuSettings.videoMode == VIDEOMODE_240P_PAL; };
+    auto is240p = []() {
+        return EmuSettings.videoMode == VIDEOMODE_ORIGINAL_240P || EmuSettings.videoMode == VIDEOMODE_240P_PAL;
+    };
 #endif
     if (colors)
         layoutColorRows();
@@ -3263,7 +3271,8 @@ static int MenuVBOptions(bool colors)
             options.value[i][0] = 0;
         layoutVideoRows();
     }
-	GuiText titleTxt(colors ? "Game Settings - Colors" : "Game Settings - Video", 26, MenuPaletteCurrent().textOnAccent);
+	GuiText titleTxt(colors ? "Game Settings - Colors" : "Game Settings - Video", 26,
+		MenuPaletteCurrent().textOnAccent);
 	titleTxt.setAlignment(ALIGN_H::LEFT, ALIGN_V::TOP);
 	titleTxt.setPosition(50,50);
 
@@ -3304,17 +3313,27 @@ static int MenuVBOptions(bool colors)
         if (ret >= 0) {
             if (colors) {
                 switch (rows[ret]) {
-                case kColorsRow: EmuSettings.colorMode = (EmuSettings.colorMode + 1) % 5; break;
-                case kPacksRow: EmuSettings.colorPacks = !EmuSettings.colorPacks; break;
-                case kMulticolorRow: EmuSettings.currentPalette = (EmuSettings.currentPalette + 1) % ColorSchemes::kMulticolorCount; break;
-                case kGradientRow: EmuSettings.gradient = (EmuSettings.gradient + 1) % ColorSchemes::kGradientCount; break;
+                case kColorsRow:
+                    EmuSettings.colorMode = (EmuSettings.colorMode + 1) % 5;
+                    break;
+                case kPacksRow:
+                    EmuSettings.colorPacks = !EmuSettings.colorPacks;
+                    break;
+                case kMulticolorRow:
+                    EmuSettings.currentPalette = (EmuSettings.currentPalette + 1) % ColorSchemes::kMulticolorCount;
+                    break;
+                case kGradientRow:
+                    EmuSettings.gradient = (EmuSettings.gradient + 1) % ColorSchemes::kGradientCount;
+                    break;
                 case kTintColorRow: // Default (Red), the other presets, then Custom
                     if (EmuSettings.tintCustom)
                         EmuSettings.tintCustom = 0, EmuSettings.tint = 0;
                     else if (++EmuSettings.tint >= ColorSchemes::kTintCount)
                         EmuSettings.tintCustom = 1, EmuSettings.tint = 0;
                     break;
-                case kCustomTintRow: CustomTintWindow(); break;
+                case kCustomTintRow:
+                    CustomTintWindow();
+                    break;
                 }
                 SetPalette();
                 layoutColorRows();
@@ -3327,11 +3346,23 @@ static int MenuVBOptions(bool colors)
                     if (is240p() && EmuSettings.videoFixedRatio > 1) EmuSettings.videoFixedRatio = 1;
                     platform->getVideo()->startMenuVideo();
                     break;
-                case 1: EmuSettings.videoAspectRatioCorrection = (EmuSettings.videoAspectRatioCorrection + 1) % SCALING_LENGTH; break;
-                case 2: EmuSettings.videoBilinearFilter = !EmuSettings.videoBilinearFilter; break;
-                case 3: ScreenZoomWindow(); break;
-                case 4: EmuSettings.videoFixedRatio = (EmuSettings.videoFixedRatio + 1) % ((is240p() ? 1 : VIDEO_FIXED_RATIO_MAX) + 1); break;
-                case 5: ScreenPositionWindow(); break;
+                case 1:
+                    EmuSettings.videoAspectRatioCorrection =
+                        (EmuSettings.videoAspectRatioCorrection + 1) % SCALING_LENGTH;
+                    break;
+                case 2:
+                    EmuSettings.videoBilinearFilter = !EmuSettings.videoBilinearFilter;
+                    break;
+                case 3:
+                    ScreenZoomWindow();
+                    break;
+                case 4:
+                    EmuSettings.videoFixedRatio =
+                        (EmuSettings.videoFixedRatio + 1) % ((is240p() ? 1 : VIDEO_FIXED_RATIO_MAX) + 1);
+                    break;
+                case 5:
+                    ScreenPositionWindow();
+                    break;
                 }
                 layoutVideoRows();
             }
@@ -3343,28 +3374,38 @@ static int MenuVBOptions(bool colors)
                 for (int i = 0; i < rowCount; ++i) {
                     char *v = options.value[i];
                     switch (rows[i]) {
-                    case kColorsRow: snprintf(v, 100, "%s", modes[EmuSettings.colorMode]); break;
-                    case kPacksRow: snprintf(v, 100, "%s", EmuSettings.colorPacks ? "On" : "Off"); break;
-                    case kMulticolorRow: snprintf(v, 100, "%s", ColorSchemes::kMulticolorNames[EmuSettings.currentPalette]); break;
-                    case kGradientRow: snprintf(v, 100, "%s", ColorSchemes::kGradientNames[EmuSettings.gradient]); break;
+                    case kColorsRow:
+                        snprintf(v, 100, "%s", modes[EmuSettings.colorMode]);
+                        break;
+                    case kPacksRow:
+                        snprintf(v, 100, "%s", EmuSettings.colorPacks ? "On" : "Off");
+                        break;
+                    case kMulticolorRow:
+                        snprintf(v, 100, "%s", ColorSchemes::kMulticolorNames[EmuSettings.currentPalette]);
+                        break;
+                    case kGradientRow:
+                        snprintf(v, 100, "%s", ColorSchemes::kGradientNames[EmuSettings.gradient]);
+                        break;
                     case kTintColorRow:
                         snprintf(v, 100, "%s", EmuSettings.tintCustom ? "Custom"
                                                : EmuSettings.tint ? ColorSchemes::kTintNames[EmuSettings.tint]
                                                                   : "Default (Red)");
                         break;
                     case kCustomTintRow:
-                        snprintf(v, 100, "%.2f, %.2f, %.2f", EmuSettings.tintRed / 100.0f, EmuSettings.tintGreen / 100.0f,
-                                 EmuSettings.tintBlue / 100.0f);
+                        snprintf(v, 100, "%.2f, %.2f, %.2f", EmuSettings.tintRed / 100.0f,
+                                 EmuSettings.tintGreen / 100.0f, EmuSettings.tintBlue / 100.0f);
                         break;
                     }
                 }
             } else {
-                const char *modes[] = {"Automatic", "NTSC (480i)", "Progressive (480p)", "PAL (576i)", "PAL60 (480i)", "240p (60Hz)", "240p (50Hz)"};
+                const char *modes[] = {"Automatic", "NTSC (480i)", "Progressive (480p)", "PAL (576i)", "PAL60 (480i)",
+                                       "240p (60Hz)", "240p (50Hz)"};
                 snprintf(options.value[0], 100, "%s", modes[EmuSettings.videoMode]);
                 const char *scaling[] = {"Maintain Aspect Ratio", "Partial Stretch", "Stretch to Fit"};
                 snprintf(options.value[1], 100, "%s", scaling[EmuSettings.videoAspectRatioCorrection]);
                 snprintf(options.value[2], 100, "%s", EmuSettings.videoBilinearFilter ? "On" : "Off");
-                snprintf(options.value[3], 100, "%.0f%%, %.0f%%", EmuSettings.videoZoomHor * 100, EmuSettings.videoZoomVert * 100);
+                snprintf(options.value[3], 100, "%.0f%%, %.0f%%", EmuSettings.videoZoomHor * 100,
+                         EmuSettings.videoZoomVert * 100);
                 if (EmuSettings.videoFixedRatio)
                     snprintf(options.value[4], 100, "%dx", EmuSettings.videoFixedRatio);
                 else
@@ -4428,7 +4469,8 @@ void MainMenu (int selection)
 		bgMusic->play(); // startup music
 
 	auto isSettings = [](int m) {
-		return (m >= MENU_SETTINGS && m <= MENU_SETTINGS_NETWORK) || (m >= MENU_GAMESETTINGS && m <= MENU_GAMESETTINGS_EMULATION);
+		return (m >= MENU_SETTINGS && m <= MENU_SETTINGS_NETWORK)
+			|| (m >= MENU_GAMESETTINGS && m <= MENU_GAMESETTINGS_EMULATION);
 	};
 	while(currentMenu != MENU_EXIT || !romLoaded)
 	{

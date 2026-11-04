@@ -10,8 +10,10 @@ namespace
  * lives, the PSW, work RAM, and the cycles left before the next event. */
 enum { JR_LEFT = 26, JR_RAM = 27, JR_PSW = 28, JR_TSP = 29, JR_TS = 30, JR_REGS = 31 };
 enum { BO_TRUE = 12, BO_FALSE = 4, CR_LT = 0, CR_GT = 1, CR_EQ = 2 };
+
 /* The PSW flags an op sets, by group (S and Z always go together). */
 enum { FLAG_SZ = 1, FLAG_OV = 2, FLAG_CY = 4 };
+
 /* The flags an op sets when it does nothing else (the ALU ops); 0 for the rest, whose flags are always worked out. */
 unsigned FlagsSetBy(int kind)
 {
@@ -33,7 +35,13 @@ public:
    bool full;
 
    PpcWriter(uint32 *from, uint32 *to) : at(from), end(to), full(false) {}
-   void Word(uint32 w) { if(at < end) *at++ = w; else full = true; }
+   void Word(uint32 w)
+   {
+      if(at < end)
+         *at++ = w;
+      else
+         full = true;
+   }
 
    void Li(unsigned rt, int32 v) { D(14, rt, 0, v); }
    void Lis(unsigned rt, int32 v) { D(15, rt, 0, v); }
@@ -113,10 +121,17 @@ public:
    void Blr() { Word(0x4E800020); }
    void Bclr(unsigned bo, unsigned bi) { Word(19u << 26 | bo << 21 | bi << 16 | 16u << 1); }
    void Blrl() { Word(0x4E800021); }
+
    /* b / bl to code already written */
    void BTo(const uint32 *to, unsigned link = 0) { Word(BranchWord(at, to, link)); }
+
    /* Branches to be pointed somewhere later (Patch). */
-   uint32 *B() { uint32 *w = at; Word(18u << 26); return full ? NULL : w; }
+   uint32 *B()
+   {
+      uint32 *w = at;
+      Word(18u << 26);
+      return full ? NULL : w;
+   }
    uint32 *Bc(unsigned bo, unsigned bi)
    {
       uint32 *w = at;
@@ -194,10 +209,20 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
    uint32 *const flushFrom = JitCode + JitCodeUsed, *const coldFrom = JitCode + JitColdUsed;
    PpcWriter w(flushFrom, JitCode + page * JIT_PAGE_WORDS + JIT_HOT_WORDS),
        away(coldFrom, JitCode + (page + 1) * JIT_PAGE_WORDS);
+
    /* (w and away trade places while the code that seldom runs is written: slow paths, exits) */
    bool inCold = false;
-   auto Cold = [&]() { if(!inCold) std::swap(w, away); inCold = true; };
-   auto Hot = [&]() { if(inCold) std::swap(w, away); inCold = false; };
+   auto Cold = [&]() {
+      if(!inCold)
+         std::swap(w, away);
+      inCold = true;
+   };
+   auto Hot = [&]() {
+      if(inCold)
+         std::swap(w, away);
+      inCold = false;
+   };
+
    /* ts = next_event_ts - JR_LEFT, and back */
    auto LeftToTs = [&]() {
       w.Lwz(0, offNext, JR_REGS);
@@ -224,6 +249,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Imm32(JR_RAM, (uint32)(uintptr_t)JitWorkRam);
       w.Mtlr(5);
       w.Blr();
+
       /* LEAVE(exit code), and LEAVE_TS with the cycle count already in JR_TS and *timestamp */
       JitStub[JIT_STUB_LEAVE] = w.at;
       LeftToTs();
@@ -234,6 +260,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Mtlr(0);
       w.Addi(1, 1, 32);
       w.Blr();
+
       /* Exits, reached by bl with their data in the words after it: the PC, then (all but INTERPRET_FIRST, before
        * a block's first op, where lastop stays as it is) lastop. A branch's bl is the one RunBlock links. */
       for(unsigned stub : {JIT_STUB_INTERPRET, JIT_STUB_INTERPRET_FIRST, JIT_STUB_BRANCH})
@@ -255,6 +282,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          w.Li(3, stub == JIT_STUB_BRANCH ? JIT_EXIT_BRANCH : JIT_EXIT_INTERPRET);
          w.BTo(JitStub[JIT_STUB_LEAVE]);
       }
+
       /* EVENTS (data: PC, lastop, where to leave to, where to go on or 0): before an op, runs the event handler as
        * the interpreter loop would while one is due, then goes on unless the frame ended or an interrupt is due. */
       JitStub[JIT_STUB_EVENTS] = w.at;
@@ -269,6 +297,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Lwz(0, offNext, JR_REGS);
       w.Cmpw(JR_TS, 0);
       uint32 *const noEvent = w.Bc(BO_TRUE, CR_LT);
+
       /* (counted as the interpreter loop counts its handler calls, for WaitTarget) */
       w.Lwz(6, offNotices, JR_REGS);
       w.Addi(6, 6, 1);
@@ -332,6 +361,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          w.Add(6, JR_TS, 6);
          w.Imm32(10, (uint32)(uintptr_t)nextVip);
          w.Stw(6, 0, 10);
+
          /* (the handler's CalcNextTS: the earliest of the three) */
          for(int32 *other : {nextTimer, nextInput})
          {
@@ -382,6 +412,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Lwz(4, 8, 5);
       w.Stw(4, offResumeAt, JR_REGS);
       w.BTo(JitStub[JIT_STUB_LEAVE_TS]);
+
       /* IDLE (data: the branch target): the interpreter's idle check after a short branch back */
       JitStub[JIT_STUB_IDLE] = w.at;
       w.Stwu(1, -16, 1);
@@ -403,6 +434,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Mtlr(12);
       w.Addi(1, 1, 16);
       w.Blr();
+
       /* WAIT (data: its PC, its displacement): WaitTarget before a taken WAIT, which then sets the cycle count */
       JitStub[JIT_STUB_WAIT] = w.at;
       w.Stwu(1, -16, 1);
@@ -423,11 +455,13 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Mtlr(12);
       w.Addi(1, 1, 16);
       w.Blr();
+
       /* Memory accesses through the C side, fn(timestamp, r4, r5), with the cycle count and PSW where it sees
        * them. */
       const void *const fns[6] = {(const void *)&::MemRead8,   (const void *)&::MemRead16,
                                   (const void *)&::VBReadWord, (const void *)&::MemWrite8,
                                   (const void *)&::MemWrite16, (const void *)&::VBWriteWord};
+
       /* Branches to miss[] unless r4 is a frame buffer address (region 0, below 0x20000, under 0x6000 of its 0x8000;
        * word: 4-aligned), as VIP_ReadFBWord and VIP_WriteFBWord check one; A & 0x7FFF left in rOffset. */
       auto CheckFrameBuffer = [&](uint32 *miss[4], unsigned rOffset, bool word) {
@@ -466,6 +500,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
             /* A frame buffer read has no side effects: its bytes straight from FB, no call. */
             uint32 *miss[4] = {};
             CheckFrameBuffer(miss, 5, k == 2);
+
             /* (FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)], as VIP_Read8 indexes it) */
             w.Rlwinm(0, 4, 21, 26, 26);
             w.Rlwinm(6, 4, 23, 25, 25);
@@ -561,11 +596,16 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
    }
 
    uint32 *const start = w.at;
+
    /* flagsOf: the op before, whose flags in flagsLeft are still to work out (from CR0 and XER as it left them) */
    struct Exit
    {
-      uint32 offset; int32 lastop; uint32 stub; std::vector<uint32 *> from;
-      const BlockOp *flagsOf; unsigned flagsLeft;
+      uint32 offset;
+      int32 lastop;
+      uint32 stub;
+      std::vector<uint32 *> from;
+      const BlockOp *flagsOf;
+      unsigned flagsLeft;
    };
    std::vector<Exit> exits;
    std::vector<std::pair<uint32, uint32 *>> opAt; /* (each op's offset and code) */
@@ -589,9 +629,11 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       if(vreg) /* (what the interpreter writes to r0 is never seen: it zeroes r0 before every op) */
          w.Stw(host, 4 * vreg, JR_REGS);
    };
+
    /* The flags of the op being compiled that are left for its exit to work out (its next op sets them again); the
     * lambdas below leave those out. */
    unsigned skip = 0;
+
    /* PSW Z and S from CR0; OV and CY from XER. */
    auto FlagsSZ = [&]() {
       if(skip & FLAG_SZ)
@@ -618,6 +660,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       if(!(skip & FLAG_OV))
          w.Rlwinm(JR_PSW, JR_PSW, 0, 30, 28);
    };
+
    /* A shift's CY: the last bit shifted out (a shift by 0 clears it); r4 the value, r3 a register shift's count */
    auto ShiftCY = [&](const BlockOp &o) {
       if(skip & FLAG_CY)
@@ -633,6 +676,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          }
          return;
       }
+
       /* (srw by 32 or more gives 0, as a shift by 0 must) */
       if(o.kind == BK_SHL)
          w.Subfic(6, 3, 32);
@@ -667,6 +711,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          break;
       }
    };
+
    /* An op's last cycles, then the check before the op at next: out there if the event is due. */
    auto Spend = [&](int32 cycles, uint32 next, int32 lastopNext, bool signedOnly = false) {
       if(cycles == 1 && !signedOnly && skip)
@@ -683,6 +728,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          w.Cmpwi(JR_LEFT, 0);
       ExitBefore(w.Bc(BO_FALSE, CR_GT), next, lastopNext, JIT_STUB_EVENTS);
    };
+
    /* The same with the cycle count in r9. */
    auto SpendR9 = [&](int32 plus, uint32 next, int32 lastopNext) {
       w.Subf(JR_LEFT, 9, JR_LEFT, plus ? 0 : 1);
@@ -690,20 +736,24 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          w.AddicDot(JR_LEFT, JR_LEFT, -plus);
       ExitBefore(w.Bc(BO_FALSE, CR_GT), next, lastopNext, JIT_STUB_EVENTS);
    };
+
    /* One cycle, no check (an op's first cycle) */
    auto FirstCycle = [&]() { w.Addi(JR_LEFT, JR_LEFT, -1); };
+
    /* After an access that called the C side: an interrupt it raised is taken before the next op. */
    auto PendingExit = [&](uint32 next, int32 lastopNext) {
       w.Lwz(0, offPending, JR_REGS);
       w.Cmpwi(0, 0);
       ExitBefore(w.Bc(BO_FALSE, CR_EQ), next, lastopNext, JIT_STUB_EVENTS);
    };
+
    /* Into r4: a load or store's address. */
    auto Address = [&](unsigned vbase, uint32 imm) {
       Get(4, vbase);
       if(sign_16(imm))
          w.Addi(4, 4, (int32)sign_16(imm));
    };
+
    /* The load and store cycles that depend on the op before: known, or (a block's first) into r9 at run time. */
    auto LoadExtra = [&](int32 before, bool word) -> int32 {
       if(before != kLastopUnknown)
@@ -731,6 +781,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Patch(other, w.at);
       return -1;
    };
+
    /* r3 = 1 if condition cond (0-15, as Bcond's and SETF's) holds, else 0 */
    auto Condition = [&](unsigned cond) {
       switch(cond & 7)
@@ -759,6 +810,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       if(cond >= 8) /* (8-15 are 0-7 negated) */
          w.Xori(3, 3, 1);
    };
+
    /* CR0 EQ if the condition cond (0-7, not T) fails: shorter than Condition's 0 or 1 in r3 */
    auto TestCondition = [&](unsigned cond) {
       switch(cond)
@@ -775,6 +827,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          break;
       }
    };
+
    /* Events due at a branch target, then straight on (EVENTS' data: leaving, it starts at the target afresh). */
    auto EventsAt = [&](uint32 target, unsigned opcode, uint32 *goOn) {
       w.BTo(JitStub[JIT_STUB_EVENTS], 1);
@@ -783,6 +836,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Word(0);
       w.Word((uint32)(uintptr_t)goOn);
    };
+
    /* A branch's cycles and a known target: straight on into its code once compiled (RunBlock points the bl there),
     * else back to the C side; events due first. back: the interpreter's idle check after a short branch back. */
    auto BranchTo = [&](uint32 target, unsigned opcode, bool back, int32 cycles) {
@@ -828,6 +882,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       const BlockOp &op = block->ops[i];
       const unsigned arg1 = op.r1, arg2 = op.r2;
       const uint32 pc = block->pc + offset;
+
       /* (flags the next op sets again: only this op's exit could see them, and it works them out) */
       skip = i + 1 < n ? FlagsSetBy(op.kind) & FlagsSetBy(block->ops[i + 1].kind) : 0;
       switch(op.kind)
@@ -988,6 +1043,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          w.Rlwinm(5, 4, 8, 29, 31);
          w.Cmpwi(5, 5);
          uint32 *slow = w.Bc(BO_FALSE, CR_EQ);
+
          /* (work RAM, little-endian) */
          w.Rlwinm(6, 4, 0, 16, 31 - clear);
          if(op.kind == BK_LD_B)
@@ -1093,6 +1149,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          Put(arg2, 5);
          w.Cmpwi(5, 0);
          FlagsSZ();
+
          /* OV: the high word isn't just the low word's sign (unsigned: isn't 0) */
          if(op.kind == BK_MUL)
          {
@@ -1237,6 +1294,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          w.Stw(4, offLastop, JR_REGS);
          w.AddicDot(JR_LEFT, JR_LEFT, -3);
          uint32 *const due = w.Bc(BO_FALSE, CR_GT);
+
          /* (straight on when the target's code is in JitLookup, else back to the C side, which finds it) */
          w.Rlwinm(6, 5, 2, 17, 28);
          w.Imm32(7, (uint32)(uintptr_t)JitLookup);
@@ -1257,6 +1315,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          continue;
       }
       }
+
       /* (the ALU ops and NOP: one cycle, lastop the opcode) */
       lastopNow = op.opcode;
       offset += BlockOpLength(op.kind);

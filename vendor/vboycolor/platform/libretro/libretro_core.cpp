@@ -282,6 +282,7 @@ namespace
         o.tint = IndexOf(Variable(kTintKey), ColorSchemes::kTintNames, ColorSchemes::kTintCount);
         if (const char *v = Variable(kTintKey))
             o.customTint = !std::strcmp(v, "Custom");
+
         // (the frontend's own color: "r,g,b" in hundredths)
         int rgb[3];
         if (const char *v = Variable(kTintColorKey))
@@ -714,6 +715,7 @@ namespace
             g_renderer.ForgetBands();
             whole = true;
         }
+
         // (the picture Beetle drew, each eye kept compact: the side-by-side surface isn't written)
         const uint8_t *const bits[2] = {vbgo_vip_eye_bits(0), vbgo_vip_eye_bits(1)};
         const uint32_t *const clut[2] = {vbgo_vip_eye_clut(0), vbgo_vip_eye_clut(1)};
@@ -749,8 +751,8 @@ namespace
                 g_renderer.SetPackShown(true);
                 auto shadeColumn = [&](unsigned x, unsigned first, unsigned count) {
                     if (first < h)
-                        g_colorizer.ColorizeColumn(bits[0], x, first, std::min(first + count, h) - first, &colored[first * rowBytes + x * 4],
-                                                   rowBytes);
+                        g_colorizer.ColorizeColumn(bits[0], x, first, std::min(first + count, h) - first,
+                                                   &colored[first * rowBytes + x * 4], rowBytes);
                 };
                 const Picture &other = g_colored[shown ^ 1];
                 g_renderer.Paint(colored.data(), other.size() == colored.size() ? other.data() : nullptr,
