@@ -213,6 +213,22 @@ inline PlainKind FullFadeKind(const TileColorPack::Tile *tile, const AutoColors:
                                      : PlainKind::kMixed;
 }
 
+// (bit y * 8 + x: a character's pixel x of row y isn't transparent - as VBGO_TAG_INDEX numbers them)
+inline uint64_t DrawnPixels(const uint16_t *rows)
+{
+    uint64_t drawn = 0;
+    for (unsigned y = 0; y < 8; y += 2)
+    {
+        uint32_t bits = rows[y] | static_cast<uint32_t>(rows[y + 1]) << 16; // (two rows a word, a 2-bit field a pixel)
+        bits = (bits | bits >> 1) & 0x55555555u;
+        bits = (bits | bits >> 1) & 0x33333333u;
+        bits = (bits | bits >> 2) & 0x0F0F0F0Fu;
+        bits = (bits | bits >> 4) & 0x00FF00FFu;
+        drawn |= static_cast<uint64_t>((bits | bits >> 8) & 0xFFFFu) << (y * 8);
+    }
+    return drawn;
+}
+
 // (a color as the frame's B, G, R bytes in one word, its alpha byte 0 - see StoreFrameRgb)
 constexpr uint32_t FrameRgb(const AutoColors::Rgb &rgb)
 {
@@ -629,6 +645,7 @@ void ColorPackRenderer::ResolveSlots(const uint32_t *hashes)
         Slot &slot = m_slots[c];
         slot.hash = hashes[c];
         slot.resolved = true;
+        slot.drawnKnown = false;
         slot.base = m_pack->Find(slot.hash);
         for (unsigned p = 0; p < 4; ++p)
         {
@@ -1092,7 +1109,21 @@ ColorPackRenderer::Run ColorPackRenderer::SetUpRun(uint64_t t, unsigned eye, con
         m_pairs[pairOf].wantedAt = m_frame;
     run.plain = !run.slow && !run.flash && !run.cell;
     if (!eye) // (only the left eye paints)
-        run.kind = static_cast<uint8_t>(FullFadeKind(run.tile, run.ramp));
+    {
+        PlainKind kind = FullFadeKind(run.tile, run.ramp);
+        // A tile uncolored only where its character is transparent is all its own where it shows: unless the game
+        // wrote the character during the pass, whose tags may then name pixels the copy has transparent.
+        if (kind == PlainKind::kMixed && run.plain && c.pack &&
+            !(vbgo_vip_chrs_changed_in_pass(c.view->fb)[chr >> 5] >> (chr & 31) & 1))
+        {
+            Slot &slot = m_slots[chr];
+            if (!slot.drawnKnown)
+                slot.drawn = DrawnPixels(c.view->chr + chr * 8), slot.drawnKnown = true;
+            if (!(slot.drawn & ~run.tile->mask))
+                kind = PlainKind::kAllOwn;
+        }
+        run.kind = static_cast<uint8_t>(kind);
+    }
     return run;
 }
 
@@ -2579,6 +2610,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         const uint8_t *const eyeBits = vbgo_vip_eye_bits(static_cast<int>(eye));
         const uint32_t *const eyeClut = vbgo_vip_eye_clut(static_cast<int>(eye));
         setUp.flatObjPalettes = v.flat_obj_palettes;
+        setUp.view = &v;
         if (eye)
             for (uint32_t x = 0; x < VBGO_TT_WIDTH; ++x)
                 m_rightLit[x] = static_cast<uint8_t>(LitValues(eyeClut, x));

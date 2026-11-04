@@ -500,6 +500,7 @@ const uint8 *vbgo_vip_eye_bits(int eye) { return &EyeBits[ShownFB][eye][0][0]; }
 const uint32 *vbgo_vip_eye_clut(int eye) { return &EyeClut[ShownFB][eye][0][0]; }
 
 int vbgo_vip_shown_fb(void) { return ShownFB; }
+const uint32 *vbgo_vip_chrs_changed_in_pass(int fb) { return ChrChangedInPass[fb & 1]; }
 
 static uint32 NewContent(void)
 {

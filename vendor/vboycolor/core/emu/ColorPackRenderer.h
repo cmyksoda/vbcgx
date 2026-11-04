@@ -225,6 +225,8 @@ private:
         uint32_t contextFirst = 0, contextCount = 0; // its context variants in the pack's ContextTiles()
         bool ambiguous = false;                      // painted two ways in a frame: takes its surroundings' colors
         uint8_t flatPalettes = 0;                    // (bit per palette: its colors are one, on every pixel)
+        bool drawnKnown = false;                     // (drawn is worked out for this hash - see SetUpRun)
+        uint64_t drawn = 0;                          // (the character's pixels that aren't transparent - see DrawnPixels)
     };
     struct SlotLayer // (a layered slot's last layer looked up, and its colors - see LayerTile)
     {
@@ -383,6 +385,7 @@ private:
         const TileColorPack *pack;
         bool haveCells, markers, haveContexts, pairs;
         unsigned flatObjPalettes; // (this eye's - see vbgo_tt_eye_view)
+        const vbgo_tt_eye_view *view = nullptr; // (this eye's pass: its characters, and those written since)
     };
     Run SetUpRun(uint64_t tag, unsigned eye, const RunSetUp &setUp);
     static constexpr int kRunCacheBits = 10, kRunCacheSize = 1 << kRunCacheBits;
