@@ -586,14 +586,21 @@ typedef struct
 } VbgoWorldAttr;
 
 
+/* (the 8-row path's leftover rows call it out of line, as before VbgoBackHRows: inlined there it grows DrawBGBlock 3 KB) */
+static VBGO_NOINLINE int VbgoTagRow8Out(uint32_t *d, uint16_t *c, unsigned pixels, int flipped, uint32_t bits, unsigned cell,
+                                        int fills_from)
+{
+ return vbgo_tt_tag_row8_fills(d, c, pixels, flipped, bits, cell, fills_from);
+}
+
 /* A back to front tile row (8 pixels, from the character row pixels) that isn't every pixel drawn: the shades merged into
  * the row under the drawn pixels, and the tags (vbgo_tt_tag_row8: 1 something, 2 a fill too, a blank row only fills). */
 static inline __attribute__((always_inline)) int VbgoBackRow(uint8 *px, uint32_t *tag, uint16_t *cl, uint32 pixels, int flipped,
-                                      const uint8 (*quad)[4], uint32_t bits, unsigned cell, int fills)
+                                      const uint8 (*quad)[4], uint32_t bits, unsigned cell, int fills, int out)
 {
  uint32 p = pixels, shades[2], drawn[2], row[2];
  if(!pixels)
-  return fills ? vbgo_tt_tag_row8_fills(tag, cl, 0, flipped, bits, cell, 1) : 0;
+  return fills ? (out ? VbgoTagRow8Out : vbgo_tt_tag_row8_fills)(tag, cl, 0, flipped, bits, cell, 1) : 0;
  if(flipped)
  {
   p = ((p >> 2) & 0x3333) | ((p & 0x3333) << 2);
@@ -611,7 +618,7 @@ static inline __attribute__((always_inline)) int VbgoBackRow(uint8 *px, uint32_t
  row[1] = (row[1] & ~drawn[1]) | (shades[1] & drawn[1]);
  memcpy(px, &row[0], 4);
  memcpy(px + 4, &row[1], 4);
- return vbgo_tt_tag_row8_fills(tag, cl, pixels, flipped, bits, cell, fills);
+ return (out ? VbgoTagRow8Out : vbgo_tt_tag_row8_fills)(tag, cl, pixels, flipped, bits, cell, fills);
 }
 
 /* DrawBGBlock's whole-tile path for the n rows that share a map row (consecutive: pixels a row apart in the drawing
@@ -676,7 +683,7 @@ static inline __attribute__((always_inline)) int VbgoBackTile(uint8 *px, uint32_
    if(fills < 0)
     fills = vbgo_tt_fills_from(bgsc & 0x7FF, cell);
    t = VbgoBackRow(px + v * 512, tag + v, cl + v * VBGO_TT_CELL_ROW, chr0[v * chr_step], flipped, quad,
-                   bits + v * bits_step, cell, fills);
+                   bits + v * bits_step, cell, fills, 1);
    if(t > tagged)
     tagged = t;
   }
@@ -692,7 +699,7 @@ static inline __attribute__((always_inline)) int VbgoBackTile(uint8 *px, uint32_
    int t;
    if(fills < 0)
     fills = vbgo_tt_fills_from(bgsc & 0x7FF, cell);
-   t = VbgoBackRow(px, tag, cl, 0, flipped, quad, bits, cell, fills);
+   t = VbgoBackRow(px, tag, cl, 0, flipped, quad, bits, cell, fills, 0);
    if(t > tagged)
     tagged = t;
    continue;
@@ -725,12 +732,198 @@ static inline __attribute__((always_inline)) int VbgoBackTile(uint8 *px, uint32_
    int t;
    if(fills < 0)
     fills = vbgo_tt_fills_from(bgsc & 0x7FF, cell);
-   t = VbgoBackRow(px, tag, cl, pixels, flipped, quad, bits, cell, fills);
+   t = VbgoBackRow(px, tag, cl, pixels, flipped, quad, bits, cell, fills, 0);
    if(t > tagged)
     tagged = t;
   }
  }
  return tagged;
+}
+
+/* One row of a whole tile as VbgoBackTile's loop draws it (pixels: the character row as stored), the most it tagged.
+ * fills: vbgo_tt_fills_from, worked out when a row first wants it (-1 until then). */
+static inline __attribute__((always_inline)) int VbgoBackOne(uint8 *px, uint32_t *tag, uint16_t *cl, uint32 pixels, int flipped,
+                                      const uint8 (*quad)[4], uint32_t bits, uint32_t opaque_bits, uint32 cells,
+                                      uint32 bgsc, unsigned cell, int *fills)
+{
+ uint32 p = pixels;
+ if(pixels && ((pixels | (pixels >> 1)) & 0x5555) == 0x5555)
+ {
+  if(flipped)
+  {
+   p = ((p >> 2) & 0x3333) | ((p & 0x3333) << 2);
+   p = ((p >> 4) & 0x0F0F) | ((p & 0x0F0F) << 4);
+   p = ((p >> 8) & 0x00FF) | ((p & 0x00FF) << 8);
+  }
+  memcpy(px, quad[p & 0xFF], 4);
+  memcpy(px + 4, quad[p >> 8], 4);
+#define VBGO_BACK_TAG(k) \
+ tag[(k) * VBGO_TT_COLUMN] = ((opaque_bits ^ (uint32_t)(k) << 11) & ~(3u << 20)) | ((p << (20 - 2 * (k))) & (3u << 20));
+  VBGO_BACK_TAG(0) VBGO_BACK_TAG(1) VBGO_BACK_TAG(2) VBGO_BACK_TAG(3)
+  VBGO_BACK_TAG(4) VBGO_BACK_TAG(5) VBGO_BACK_TAG(6) VBGO_BACK_TAG(7)
+#undef VBGO_BACK_TAG
+  memcpy(cl, &cells, 4);
+  memcpy(cl + 2, &cells, 4);
+  memcpy(cl + 4, &cells, 4);
+  memcpy(cl + 6, &cells, 4);
+  return 1;
+ }
+ if(*fills < 0)
+  *fills = vbgo_tt_fills_from(bgsc & 0x7FF, cell);
+ return VbgoBackRow(px, tag, cl, pixels, flipped, quad, bits, cell, *fills, 0);
+}
+
+/* H-bias rows of one map row with different shifts, which DrawBGBlock would set up a tile for chunk by chunk: each map
+ * cell is read and marked once for all of them, then each row draws its own row of it. Returns the row after them, or y
+ * to leave them to DrawBGBlock (one shift, or cells that don't overlap). */
+static VBGO_NOINLINE int VbgoBackHRows(uint8 *fb_eye, unsigned block_no, bool lr, const VbgoWorldAttr *a, int y, uint16 srcX,
+                                       uint32 SourceX, int32 start_x, int32 final_x, uint32_t vbgo_bits, uint32_t vbgo_wbit)
+{
+ struct
+ {
+  uint8 *tgt;
+  uint32_t *trow;
+  uint16_t *crow;
+  int32 rel, xoff, w0, wn, i0, i1;
+  unsigned sy7;
+ } r[8];
+ const uint16 *CHR16 = CHR_RAM;
+ const uint16 *BGMap = DRAM;
+ const uint32 SourceX_Mask = 512 * (1u << a->scx) - 1, SourceY_Mask = 512 * (1u << a->scy) - 1;
+ const int32 width = final_x - start_x + 1;
+ int32 d[8], dmin = 0, i, i_lo, i_hi, len_min = 0x7FFFFFFF;
+ uint32 SourceY = 0, BGMap_Base, origin, used_chr = 0xFFFF;
+ uint16 shift0 = 0, prev = 0;
+ uint8 wmark[48]; /* (the columns a tagged tile touched, ORed into vbgo_tt_wcells once at the end) */
+ int m = 0, runs = 0, k, yy;
+ for(yy = y; yy < 8 && (uint16)((block_no * 8 + yy) - a->gy) <= a->window_height; yy++)
+ {
+  const uint16 row_y = (uint16)((block_no * 8 + yy) - a->gy);
+  const uint16 srcY = a->my + row_y;
+  const uint32 sy = ((uint32)(int32)(int16)srcY) & SourceY_Mask;
+  const uint16 shifted = srcX + (int16)DRAM[(a->param_base + ((row_y * 2) | lr)) & 0xFFFF];
+  if(m && (sy >> 3) != (SourceY >> 3))
+   break;
+  USE_ROW(a->param_base + ((row_y * 2) | lr));
+  if(!m)
+   shift0 = shifted;
+  if(!m || shifted != prev)
+   runs++;
+  prev = shifted;
+  SourceY = sy;
+  d[m] = (int32)(int16)shifted - (int32)(int16)shift0;
+  if(d[m] < dmin)
+   dmin = d[m];
+  r[m].tgt = fb_eye + yy * 512;
+  r[m].sy7 = sy & 7;
+  m++;
+ }
+ if(runs < 2)
+  return y;
+ /* (cell i is source x origin + 8 i; a row starting rel past the origin has its whole tiles at w0.., its line-end tiles
+  * at i0 and i1) */
+ origin = ((uint32)(int32)(int16)shift0 + SourceX + (uint32)dmin) & ~7u;
+ i_lo = 0x7FFFFFFF;
+ i_hi = 0;
+ for(k = 0; k < m; k++)
+ {
+  const int32 rel = (int32)(((uint32)(int32)(int16)shift0 + SourceX + (uint32)d[k]) - origin);
+  r[k].rel = rel;
+  r[k].xoff = start_x - rel;
+  r[k].i0 = rel >> 3;
+  r[k].i1 = (rel + width - 1) >> 3;
+  r[k].w0 = (rel + 7) >> 3;
+  r[k].wn = ((rel + width) >> 3) - r[k].w0;
+  if(r[k].wn < 0)
+   r[k].wn = 0;
+  if(r[k].i1 - r[k].i0 + 1 < len_min)
+   len_min = r[k].i1 - r[k].i0 + 1;
+  if(r[k].i0 < i_lo)
+   i_lo = r[k].i0;
+  if(r[k].i1 > i_hi)
+   i_hi = r[k].i1;
+ }
+ for(k = 0; k < m; k++)
+  if(r[k].i0 - i_lo > len_min)
+   return y; /* (some row's cells don't touch the first row's: the union has a gap) */
+ for(k = 0; k < m; k++)
+ {
+  r[k].trow = vbgo_tt_row(r[k].tgt);
+  r[k].crow = vbgo_tt_cell_row(r[k].tgt);
+ }
+
+ BGMap_Base = (a->bgmap_base << 12) | (((SourceY >> 3) & 0x3F) * 0x40) | (((SourceY << 3) & ~0xFFF) << a->scx);
+ {
+  int xs;
+  for(xs = 0; xs < (1 << a->scx); xs++)
+   USE_ROW(BGMap_Base | (xs << 12));
+ }
+ memset(wmark, 0, sizeof(wmark));
+
+ for(i = i_lo; i <= i_hi; i++)
+ {
+  const uint32 sx = (origin + (uint32)i * 8) & SourceX_Mask;
+  const unsigned cell = (BGMap_Base | ((sx << 3) & ~0xFFF) | ((sx >> 3) & 0x3F)) & 0xFFFF;
+  const uint32 bgsc = BGMap[cell], char_no = bgsc & 0x7FF;
+  const unsigned vflip = (bgsc & 0x1000) ? 7 : 0;
+  const int flipped = (bgsc & 0x2000) != 0;
+  const uint8 (*const quad)[4] = GPLT_Quad[bgsc >> 14];
+  const uint16 *const chr = &CHR16[char_no * 8];
+  const uint32_t bits = vbgo_bits | VBGO_TT_BG_BITS(char_no, 0, 0, bgsc >> 14, 0);
+  const uint32 cells = (uint32)cell * 0x10001u;
+  int fills = -1;
+  if(char_no != used_chr)
+  {
+   USE_BG_CHR(char_no);
+   used_chr = char_no;
+  }
+  if(vbgo_tt_blank[char_no])
+  {
+   /* (a character that has no pixel can't fill either: no row draws it) */
+   uint32 blank_w[4];
+   memcpy(blank_w, chr, 16);
+   if(!(blank_w[0] | blank_w[1] | blank_w[2] | blank_w[3]))
+    continue;
+  }
+  for(k = 0; k < m; k++)
+  {
+   const int32 x = i * 8 + r[k].xoff;
+   const unsigned sub_y = vflip ^ r[k].sy7;
+   if((uint32)(i - r[k].w0) < (uint32)r[k].wn)
+   {
+    const uint32_t row_bits = bits | sub_y << 14;
+    const int t = VbgoBackOne(r[k].tgt + x, r[k].trow + x * VBGO_TT_COLUMN, r[k].crow + x * VBGO_TT_CELL_COLUMN, chr[sub_y],
+                              flipped, quad, row_bits, row_bits | (flipped ? 7u << 11 : 0u), cells, bgsc, cell, &fills);
+    if(t)
+     wmark[x >> 3] = wmark[(x + 7) >> 3] = 1;
+    if(t == 2)
+     vbgo_tt_fillc[x >> 3] = vbgo_tt_fillc[(x + 7) >> 3] = 1;
+   }
+   else if(i >= r[k].i0 && i <= r[k].i1)
+   {
+    /* (the part of the row's tile inside the line: one run, as DrawBGBlock's) */
+    const int32 at = x < start_x ? start_x : x;
+    const unsigned offset = at - x;
+    unsigned run = 8 - offset;
+    uint32 p = chr[sub_y];
+    if(run > (unsigned)(final_x - at + 1))
+     run = final_x - at + 1;
+    if(flipped)
+    {
+     p = ((p >> 2) & 0x3333) | ((p & 0x3333) << 2);
+     p = ((p >> 4) & 0x0F0F) | ((p & 0x0F0F) << 4);
+     p = ((p >> 8) & 0x00FF) | ((p & 0x00FF) << 8);
+    }
+    p = (p >> (offset * 2)) & ((1u << (run * 2)) - 1);
+    VbgoAffineRun(r[k].tgt, at, offset, run, p, bgsc, bits | sub_y << 14, cell, vbgo_tt_fills_from(char_no, cell),
+                  r[k].trow, r[k].crow, vbgo_wbit);
+   }
+  }
+ }
+ for(k = 0; k < 48; k++)
+  if(wmark[k])
+   vbgo_tt_wcells[k] |= vbgo_wbit;
+ return yy;
 }
 
 /* One ordinary or H-bias background world's rows of the block, for one eye, a character at a time: what DrawBG draws row by row,
@@ -791,6 +984,15 @@ static VBGO_NOINLINE void DrawBGBlock(uint8 *fb_eye, unsigned block_no, bool lr,
    ;
   if(y == 8)
    break;
+  if(a->bgm == 1)
+  {
+   const int next = VbgoBackHRows(fb_eye, block_no, lr, a, y, srcX, SourceX, start_x, final_x, vbgo_bits, vbgo_wbit);
+   if(next != y)
+   {
+    y = next;
+    continue;
+   }
+  }
   for(; y < 8 && (uint16)((block_no * 8 + y) - a->gy) <= a->window_height; y++)
   {
    const uint16 row_y = (uint16)((block_no * 8 + y) - a->gy);
