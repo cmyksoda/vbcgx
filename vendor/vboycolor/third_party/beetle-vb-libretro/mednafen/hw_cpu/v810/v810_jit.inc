@@ -7,8 +7,8 @@
 namespace
 {
 /* Kept for the whole block: the V810 registers (P_REG, then S_REG), the cycle count and where it
- * lives, the PSW, and work RAM. */
-enum { JR_RAM = 27, JR_PSW = 28, JR_TSP = 29, JR_TS = 30, JR_REGS = 31 };
+ * lives, the PSW, work RAM, and the cycles left before the next event. */
+enum { JR_LEFT = 26, JR_RAM = 27, JR_PSW = 28, JR_TSP = 29, JR_TS = 30, JR_REGS = 31 };
 enum { BO_TRUE = 12, BO_FALSE = 4, CR_LT = 0, CR_GT = 1, CR_EQ = 2 };
 /* The PSW flags an op sets, by group (S and Z always go together). */
 enum { FLAG_SZ = 1, FLAG_OV = 2, FLAG_CY = 4 };
@@ -55,7 +55,7 @@ public:
    void Ori(unsigned ra, unsigned rs, uint32 v) { D(24, rs, ra, v); }
    void Xori(unsigned ra, unsigned rs, uint32 v) { D(26, rs, ra, v); }
    void AndiDot(unsigned ra, unsigned rs, uint32 v) { D(28, rs, ra, v); }
-   void Cmpwi(unsigned ra, int32 v) { D(11, 0, ra, v); }
+   void Cmpwi(unsigned ra, int32 v, unsigned cr = 0) { D(11, cr << 2, ra, v); }
    void Cmplwi(unsigned ra, uint32 v) { D(10, 0, ra, (int32)v); }
    void Mulli(unsigned rt, unsigned ra, int32 v) { D(7, rt, ra, v); }
    void Lwz(unsigned rt, int32 d, unsigned ra) { D(32, rt, ra, d); }
@@ -110,8 +110,6 @@ public:
    void Mfxer(unsigned rt) { Mfspr(rt, 1); }
    void Mflr(unsigned rt) { Mfspr(rt, 8); }
    void Mtlr(unsigned rs) { Mtspr(8, rs); }
-   void Mfctr(unsigned rt) { Mfspr(rt, 9); }
-   void Mtctr(unsigned rs) { Mtspr(9, rs); }
    void Blr() { Word(0x4E800020); }
    void Bclr(unsigned bo, unsigned bi) { Word(19u << 26 | bo << 21 | bi << 16 | 16u << 1); }
    void Blrl() { Word(0x4E800021); }
@@ -125,7 +123,6 @@ public:
       Word(16u << 26 | bo << 21 | bi << 16);
       return full ? NULL : w;
    }
-   uint32 *Bdz() { return Bc(18, 0); }
    void Patch(uint32 *w, const uint32 *to)
    {
       if(!w)
@@ -162,8 +159,8 @@ private:
 const int32 kLastopUnknown = -2147483647 - 1;
 } // namespace
 
-/* Code for the block, or NULL. CTR holds the cycles left before the next event (from ENTER on), so the interpreter's
- * per-op check is one bdz after a one-cycle op. It returns a JIT_EXIT_* (v810_blocks.inc), next PC in JitTarget. */
+/* Code for the block, or NULL. JR_LEFT holds the cycles left before the next event (from ENTER on), in a GPR because
+ * Broadway serializes every mfctr / mtctr. It returns a JIT_EXIT_* (v810_blocks.inc), next PC in JitTarget. */
 void *V810::CompileBlock(const Decoded *block, bool retried)
 {
    const uint8 *const base = (const uint8 *)P_REG;
@@ -201,18 +198,16 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
    bool inCold = false;
    auto Cold = [&]() { if(!inCold) std::swap(w, away); inCold = true; };
    auto Hot = [&]() { if(inCold) std::swap(w, away); inCold = false; };
-   /* ts = next_event_ts - CTR, and back */
-   auto CtrToTs = [&]() {
-      w.Mfctr(9);
+   /* ts = next_event_ts - JR_LEFT, and back */
+   auto LeftToTs = [&]() {
       w.Lwz(0, offNext, JR_REGS);
-      w.Subf(JR_TS, 9, 0);
+      w.Subf(JR_TS, JR_LEFT, 0);
       w.Stw(JR_TS, 0, JR_TSP);
    };
-   auto TsToCtr = [&]() {
+   auto TsToLeft = [&]() {
       w.Lwz(JR_TS, 0, JR_TSP);
       w.Lwz(0, offNext, JR_REGS);
-      w.Subf(9, JR_TS, 0);
-      w.Mtctr(9);
+      w.Subf(JR_LEFT, JR_TS, 0);
    };
    if(!JitStubEnd)
    {
@@ -221,20 +216,20 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Stwu(1, -32, 1);
       w.Mflr(0);
       w.Stw(0, 36, 1);
-      w.Stmw(JR_RAM, 12, 1);
+      w.Stmw(JR_LEFT, 8, 1);
       w.Mr(JR_REGS, 3);
       w.Mr(JR_TSP, 4);
-      TsToCtr();
+      TsToLeft();
       w.Lwz(JR_PSW, offPsw, JR_REGS);
       w.Imm32(JR_RAM, (uint32)(uintptr_t)JitWorkRam);
       w.Mtlr(5);
       w.Blr();
       /* LEAVE(exit code), and LEAVE_TS with the cycle count already in JR_TS and *timestamp */
       JitStub[JIT_STUB_LEAVE] = w.at;
-      CtrToTs();
+      LeftToTs();
       JitStub[JIT_STUB_LEAVE_TS] = w.at;
       w.Stw(JR_PSW, offPsw, JR_REGS);
-      w.Lmw(JR_RAM, 12, 1);
+      w.Lmw(JR_LEFT, 8, 1);
       w.Lwz(0, 36, 1);
       w.Mtlr(0);
       w.Addi(1, 1, 32);
@@ -268,7 +263,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Stw(4, offLastop, JR_REGS);
       w.Stwu(1, -16, 1);
       w.Stw(5, 8, 1);
-      CtrToTs();
+      LeftToTs();
       w.Stw(JR_PSW, offPsw, JR_REGS);
       uint32 *const loop = w.at;
       w.Lwz(0, offNext, JR_REGS);
@@ -369,8 +364,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Cmpwi(6, 0);
       uint32 *const nowhere = w.Bc(BO_TRUE, CR_EQ);
       w.Lwz(0, offNext, JR_REGS);
-      w.Subf(9, JR_TS, 0);
-      w.Mtctr(9);
+      w.Subf(JR_LEFT, JR_TS, 0);
       w.Addi(1, 1, 16);
       w.Mtlr(6);
       w.Blr();
@@ -393,7 +387,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Stwu(1, -16, 1);
       w.Mflr(0);
       w.Stw(0, 20, 1);
-      CtrToTs();
+      LeftToTs();
       w.Stw(JR_PSW, offPsw, JR_REGS);
       w.Imm32(3, (uint32)(uintptr_t)this);
       w.Mr(4, JR_TS);
@@ -403,7 +397,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Mtlr(12);
       w.Blrl();
       w.Stw(3, 0, JR_TSP);
-      TsToCtr();
+      TsToLeft();
       w.Lwz(12, 20, 1);
       w.Addi(12, 12, 4);
       w.Mtlr(12);
@@ -414,7 +408,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       w.Stwu(1, -16, 1);
       w.Mflr(0);
       w.Stw(0, 20, 1);
-      CtrToTs();
+      LeftToTs();
       w.Stw(JR_PSW, offPsw, JR_REGS);
       w.Imm32(3, (uint32)(uintptr_t)this);
       w.Mr(4, JR_TS);
@@ -456,8 +450,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          if(k >= 3)
          {
             /* A store's first cycle, its address's alignment and its value's width: here, not at every store. */
-            uint32 *const bdz = w.Bdz();
-            w.Patch(bdz, w.at);
+            w.Addi(JR_LEFT, JR_LEFT, -1);
             if(k == 3)
                w.Rlwinm(5, 5, 0, 24, 31);
             else if(k == 4)
@@ -502,21 +495,17 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          if(k == 5)
          {
             /* A frame buffer word write: VIP_WriteFBWord does it, and nothing it does looks at the cycle count or the
-             * PSW, so neither is synced. */
+             * PSW, so neither is synced (JR_LEFT is callee-saved). */
             uint32 *miss[4] = {};
             CheckFrameBuffer(miss, 6, true);
             w.Stwu(1, -16, 1);
             w.Mflr(0);
             w.Stw(0, 20, 1);
-            w.Mfctr(0); /* (CTR holds the cycles left, and C code may change it) */
-            w.Stw(0, 8, 1);
             w.Rlwinm(3, 4, 0, 5, 31);
             w.Mr(4, 5);
             w.Imm32(12, (uint32)(uintptr_t)&::VIP_WriteFBWord);
             w.Mtlr(12);
             w.Blrl();
-            w.Lwz(0, 8, 1);
-            w.Mtctr(0);
             w.Lwz(0, 20, 1);
             w.Mtlr(0);
             w.Addi(1, 1, 16);
@@ -527,13 +516,13 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          w.Stwu(1, -16, 1);
          w.Mflr(0);
          w.Stw(0, 20, 1);
-         CtrToTs();
+         LeftToTs();
          w.Stw(JR_PSW, offPsw, JR_REGS);
          w.Mr(3, JR_TSP);
          w.Imm32(12, (uint32)(uintptr_t)fns[k]);
          w.Mtlr(12);
          w.Blrl();
-         TsToCtr();
+         TsToLeft();
          w.Lwz(0, 20, 1);
          w.Mtlr(0);
          w.Addi(1, 1, 16);
@@ -678,38 +667,31 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          break;
       }
    };
-   /* An op's last cycles, then the check before the op at next: out there if the event is due. One cycle needs
-    * just a bdz, as CTR is at least 1 when an op starts; after the C side ran (signedOnly) it may not be. */
+   /* An op's last cycles, then the check before the op at next: out there if the event is due. */
    auto Spend = [&](int32 cycles, uint32 next, int32 lastopNext, bool signedOnly = false) {
-      if(cycles == 1 && !signedOnly)
+      if(cycles == 1 && !signedOnly && skip)
       {
-         ExitBefore(w.Bdz(), next, lastopNext, JIT_STUB_EVENTS);
+         /* (CR0 and XER hold flags left for the exit: addi and cr1 leave them be) */
+         w.Addi(JR_LEFT, JR_LEFT, -1);
+         w.Cmpwi(JR_LEFT, 0, 1);
+         ExitBefore(w.Bc(BO_FALSE, 4 + CR_GT), next, lastopNext, JIT_STUB_EVENTS);
          return;
       }
-      w.Mfctr(9);
       if(cycles)
-      {
-         w.AddicDot(9, 9, -cycles);
-         w.Mtctr(9);
-      }
+         w.AddicDot(JR_LEFT, JR_LEFT, -cycles);
       else
-         w.Cmpwi(9, 0);
+         w.Cmpwi(JR_LEFT, 0);
       ExitBefore(w.Bc(BO_FALSE, CR_GT), next, lastopNext, JIT_STUB_EVENTS);
    };
    /* The same with the cycle count in r9. */
    auto SpendR9 = [&](int32 plus, uint32 next, int32 lastopNext) {
-      w.Mfctr(10);
-      w.Subf(10, 9, 10, plus ? 0 : 1);
+      w.Subf(JR_LEFT, 9, JR_LEFT, plus ? 0 : 1);
       if(plus)
-         w.AddicDot(10, 10, -plus);
-      w.Mtctr(10);
+         w.AddicDot(JR_LEFT, JR_LEFT, -plus);
       ExitBefore(w.Bc(BO_FALSE, CR_GT), next, lastopNext, JIT_STUB_EVENTS);
    };
-   /* CTR minus one, no check (an op's first cycle) */
-   auto FirstCycle = [&]() {
-      uint32 *const bdz = w.Bdz();
-      w.Patch(bdz, w.at);
-   };
+   /* One cycle, no check (an op's first cycle) */
+   auto FirstCycle = [&]() { w.Addi(JR_LEFT, JR_LEFT, -1); };
    /* After an access that called the C side: an interrupt it raised is taken before the next op. */
    auto PendingExit = [&](uint32 next, int32 lastopNext) {
       w.Lwz(0, offPending, JR_REGS);
@@ -806,29 +788,20 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
    auto BranchTo = [&](uint32 target, unsigned opcode, bool back, int32 cycles) {
       w.Li(4, opcode);
       w.Stw(4, offLastop, JR_REGS);
-      uint32 *due = NULL, *idle = NULL;
-      if(cycles == 1 && !back)
-         due = w.Bdz();
-      else
+      uint32 *idle = NULL;
+      if(back)
       {
-         w.Mfctr(9);
-         if(back)
-            w.Addi(9, 9, -cycles);
-         else
-            w.AddicDot(9, 9, -cycles);
-         w.Mtctr(9);
-         if(back)
-         {
-            w.Lwz(10, offIdleQuiet, JR_REGS);
-            w.Cmpwi(10, 0);
-            idle = w.Bc(BO_TRUE, CR_EQ);
-            w.Addi(10, 10, -1);
-            w.Stw(10, offIdleQuiet, JR_REGS);
-         }
-         if(back)
-            w.Cmpwi(9, 0);
-         due = w.Bc(BO_FALSE, CR_GT);
+         w.Addi(JR_LEFT, JR_LEFT, -cycles);
+         w.Lwz(10, offIdleQuiet, JR_REGS);
+         w.Cmpwi(10, 0);
+         idle = w.Bc(BO_TRUE, CR_EQ);
+         w.Addi(10, 10, -1);
+         w.Stw(10, offIdleQuiet, JR_REGS);
+         w.Cmpwi(JR_LEFT, 0);
       }
+      else
+         w.AddicDot(JR_LEFT, JR_LEFT, -cycles);
+      uint32 *const due = w.Bc(BO_FALSE, CR_GT);
       uint32 *const link = w.at;
       w.BTo(JitStub[JIT_STUB_BRANCH], 1);
       w.Word(target);
@@ -838,8 +811,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          w.Patch(idle, w.at);
          w.BTo(JitStub[JIT_STUB_IDLE], 1);
          w.Word(target);
-         w.Mfctr(9);
-         w.Cmpwi(9, 0);
+         w.Cmpwi(JR_LEFT, 0);
          w.Patch(w.Bc(BO_TRUE, CR_GT), link);
       }
       w.Patch(due, w.at);
@@ -1230,8 +1202,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
             w.Li(10, 0); /* (as WaitTarget for a loop it can't skip) */
             w.Stw(10, offWaitAt, JR_REGS);
          }
-         w.Li(9, -3);
-         w.Mtctr(9);
+         w.Li(JR_LEFT, -3);
          uint32 *const skip = w.B();
          uint32 *const link = w.at;
          w.BTo(JitStub[JIT_STUB_BRANCH], 1);
@@ -1264,9 +1235,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
          w.Stw(5, offTarget, JR_REGS);
          w.Li(4, op.opcode);
          w.Stw(4, offLastop, JR_REGS);
-         w.Mfctr(9);
-         w.AddicDot(9, 9, -3);
-         w.Mtctr(9);
+         w.AddicDot(JR_LEFT, JR_LEFT, -3);
          uint32 *const due = w.Bc(BO_FALSE, CR_GT);
          /* (straight on when the target's code is in JitLookup, else back to the C side, which finds it) */
          w.Rlwinm(6, 5, 2, 17, 28);
