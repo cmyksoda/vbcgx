@@ -85,6 +85,10 @@ public:
 private:
     static constexpr int kDisparities = 2 * kMaxDisparity + 1;
     static constexpr int kStride = kDisparities + 1; // (per block in State::cost)
+    // (the disparities searched, kSearchFrom to kSearchTo, are kReach either side of 0: games draw next to nothing
+    // further out - Red Alarm about one pick in 10,000 - and the matching's work goes with their count)
+    static constexpr int kReach = 24, kSearchFrom = kMaxDisparity - kReach, kSearchTo = kMaxDisparity + kReach;
+    static_assert(kReach % 2 == 0, "(the smoothing's pairs: two at a time, from an even disparity)");
     static constexpr int kBlocksX = kWidth / 8, kBlocksY = kHeight / 8, kBlocks = kBlocksX * kBlocksY;
     // A row of one shade's pixels as bits, byte by byte, a byte's lowest bit first (pixel x at bit x + 64): a guard
     // word before and two after, so a shift by up to 64 either way stays inside. Three empty rows above and below the
