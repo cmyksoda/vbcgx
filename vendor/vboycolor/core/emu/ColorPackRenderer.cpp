@@ -1143,7 +1143,6 @@ __attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_
             bits[i] = static_cast<uint8_t>(__builtin_popcount(i));
         return bits;
     }();
-    constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
     const uint32_t *const spriteSlots = m_spriteMarkerSlots;
     const bool bound = m_anyBoundMarkerSlot;
     const ContextGroupBits spriteGroups = ~m_layerBound;
@@ -1286,7 +1285,6 @@ __attribute__((noinline)) uint64_t ColorPackRenderer::RightSpriteCells(const vbg
                                                                        const ContextGroupBits *markers,
                                                                        const bool bound) const
 {
-    constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
     const vbgo_vip_sprite *sprites = nullptr;
     const int count = vbgo_vip_block_sprites(static_cast<unsigned>(v.fb), b, &sprites);
     if (count < 0)
@@ -1528,7 +1526,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
 {
     const TileColorPack *pack = m_packShown ? m_pack : nullptr;
     m_settled = false;
-    m_painted.fill((1ull << kGridW) - 1);
+    m_painted.fill(kAllCells);
     if (!pack && !m_auto)
     {
         for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
@@ -1734,7 +1732,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         }
 
     for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-        m_painted[b] = ~(keep[b] & ~refade[b]) & ((1ull << kGridW) - 1);
+        m_painted[b] = ~(keep[b] & ~refade[b]) & kAllCells;
 
     uint64_t contextMoved[kBands] = {}; // (per cell: a marker within reach changed since this buffer's last Paint)
     bool contextCompared = false, windowMade = false, markersAdded = false;
@@ -1796,7 +1794,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     cell.markers = ContextGroupBits{}, cell.markerLayer = 0xFF;
                 }
                 cache.marksAny &= keep[band];
-                if (!any || keep[band] == (1ull << kGridW) - 1)
+                if (!any || keep[band] == kAllCells)
                     continue;
                 if (v.band_chr)
                 {
@@ -1997,7 +1995,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 uint64_t reach = 0;
                 for (int s = from; s < to; ++s)
                     reach |= spans[s].nearCells;
-                const uint64_t clear = clearAll ? (1ull << kGridW) - 1 : m_spreadRows[y] | reach;
+                const uint64_t clear = clearAll ? kAllCells : m_spreadRows[y] | reach;
                 if (!whole)
                     m_spreadRows[y] = reach;
                 if (!clear)
@@ -2296,7 +2294,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         band.contextCells &= kept;
         band.markCells &= kept;
         band.markMoves &= kept;
-        if (kept != (1ull << kGridW) - 1)
+        if (kept != kAllCells)
             band.summed = false;
         for (unsigned c = 0; c < static_cast<unsigned>(kGridW); ++c)
             if (!(kept >> c & 1))
@@ -2336,7 +2334,6 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         }
     };
 
-    constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
     constexpr int kScanPerCell = 64;
 
     // The right eye's run starts that can widen a layer's extents, counted as its walk would (the others start inside
@@ -3019,7 +3016,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 uint64_t s = m;
                 for (unsigned k = 1; k <= kContextReach; ++k)
                     s |= m << k | m >> k;
-                spread[b] = s & ((1ull << kGridW) - 1);
+                spread[b] = s & kAllCells;
             }
             for (int b = 0; b < kBands; ++b)
             {

@@ -444,6 +444,7 @@ private:
     // two (a marker shown every other frame still counts). A shared tile takes a group's colors if a marker is within
     // kContextReach cells; sprites' groups color only sprites, layer-bound ones (background figures) only their layer.
     static constexpr int kGridW = VBGO_TT_WIDTH / 8, kGridH = VBGO_TT_HEIGHT / 8, kContextReach = 4;
+    static constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
     std::unordered_map<uint32_t, ContextGroupBits> m_markerBits;
     std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> m_contextRange; // hash -> (first, count)
     HotVector<ContextGroupBits, kGridW * kGridH, 5> m_markerGrid[3]; // (blocks shared with the sprite grids)

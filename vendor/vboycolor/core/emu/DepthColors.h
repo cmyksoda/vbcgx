@@ -25,7 +25,6 @@ public:
     static uint32_t LitX(uint32_t lit) { return lit >> 3 & 511; }
     static uint32_t LitY(uint32_t lit) { return lit >> 12; }
     static unsigned LitShade(uint32_t lit) { return lit & 3; }
-    static bool LitWanted(uint32_t lit) { return (lit & 4) != 0; }
 
     // An eye's lit pixels as masks a column at a time: per column, for each 32 rows (row y at MaskBit(y) of word y /
     // 32), a word per shade 1-3 and one of the pixels that need a depth color, kColumnWords apart. Only the words of

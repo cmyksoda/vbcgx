@@ -14,16 +14,6 @@ inline void ZeroLine32(uint8_t *p)
 #endif
 }
 
-// A word whose bytes in memory are a, b, c, d.
-inline uint32_t BytesInOrder(uint32_t a, uint32_t b, uint32_t c, uint32_t d)
-{
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-    return a << 24 | b << 16 | c << 8 | d;
-#else
-    return d << 24 | c << 16 | b << 8 | a;
-#endif
-}
-
 #if defined(__PPC__) || defined(__powerpc__)
 // The word at p + off, its bytes reversed (lwbrx has only the indexed form: off sits in a register).
 inline uint32_t LoadReversed(const uint8_t *p, uint32_t off)

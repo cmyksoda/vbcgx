@@ -30,7 +30,6 @@ struct LineAligned
 // (depth's buffers: each starts a 64-byte L2 line, so malloc's 8/16-byte phases can't change what shares a line)
 template <typename T>
 using Vec64 = std::vector<T, LineAligned<T, 64>>;
-using PictureBuffer = std::vector<uint8_t, LineAligned<uint8_t>>;
 
 // A 32-byte line cleared (on the Wii claimed in the cache without reading memory first).
 inline void ClearLine32(uint8_t *line)
