@@ -460,6 +460,31 @@ void *V810::CompileBlock(const Decoded *block, void **entry, bool retried)
       w.Addi(1, 1, 16);
       w.Blr();
 
+      /* FPP (data: its PC, the op): JitFpp with the cycle count and PSW where it sees them; CR0 NE if it took an
+       * exception */
+      JitStub[JIT_STUB_FPP] = w.at;
+      w.Stwu(1, -16, 1);
+      w.Mflr(0);
+      w.Stw(0, 20, 1);
+      LeftToTs();
+      w.Stw(JR_PSW, offPsw, JR_REGS);
+      w.Imm32(3, (uint32)(uintptr_t)this);
+      w.Mr(4, JR_TSP);
+      w.Lwz(7, 20, 1);
+      w.Lwz(5, 0, 7);
+      w.Lwz(6, 4, 7);
+      w.Imm32(12, (uint32)(uintptr_t)&JitFpp);
+      w.Mtlr(12);
+      w.Blrl();
+      TsToLeft();
+      w.Lwz(JR_PSW, offPsw, JR_REGS);
+      w.Lwz(12, 20, 1);
+      w.Addi(12, 12, 8);
+      w.Mtlr(12);
+      w.Addi(1, 1, 16);
+      w.Cmpwi(3, 0);
+      w.Blr();
+
       /* Memory accesses through the C side, fn(timestamp, r4, r5), with the cycle count and PSW where it sees
        * them. */
       const void *const fns[6] = {(const void *)&::MemRead8,   (const void *)&::MemRead16,
@@ -1225,6 +1250,22 @@ void *V810::CompileBlock(const Decoded *block, void **entry, bool retried)
       }
       case BK_NOP:
          break;
+      case BK_FPP:
+      {
+         w.BTo(JitStub[JIT_STUB_FPP], 1);
+         w.Word(pc);
+         w.Word(op.imm << 16 | arg2 << 5 | arg1);
+         uint32 *const exception = w.Bc(BO_FALSE, CR_EQ);
+         lastopNow = -1;
+         offset += 4;
+         Spend(0, offset, lastopNow, true);
+         Cold();
+         w.Patch(exception, w.at);
+         w.Li(3, JIT_EXIT_STOPPED);
+         w.BTo(JitStub[JIT_STUB_LEAVE]);
+         Hot();
+         continue;
+      }
       case BK_BCOND:
       {
          const unsigned cond = op.opcode & 0x0F;

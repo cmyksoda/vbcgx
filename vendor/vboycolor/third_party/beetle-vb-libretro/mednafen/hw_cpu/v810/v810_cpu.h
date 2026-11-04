@@ -448,6 +448,7 @@ class V810
  size_t JitStubEnd = 0; /* (where the shared code ends in the first page; 0 until it is written) */
  int RunBlock(v810_timestamp_t &timestamp);
  static v810_timestamp_t JitIdleLoop(V810 *cpu, v810_timestamp_t timestamp, uint32 target);
+ static uint32 JitFpp(V810 *cpu, v810_timestamp_t *timestamp, uint32 pc, uint32 op);
  static void JitWaitTarget(V810 *cpu, v810_timestamp_t timestamp, uint32 pc, uint32 arg1);
  Block *FindBlock(uint32 pc);
  const Decoded *DecodeBlock(uint32 pc);
