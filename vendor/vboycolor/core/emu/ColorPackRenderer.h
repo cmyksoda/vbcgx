@@ -37,6 +37,8 @@ public:
     // Automatic colors (see AutoColors.h) for every tracked pixel the pack doesn't color (all of them, without a pack),
     // and by depth for what no tile drew (see DepthColors.h).
     void SetAutoColors(bool on) { m_auto = on; }
+    // With a pack, the hidden right eye's picture goes uncolored: only the layers it draws are read, for Auto colors.
+    void SetRightEyeUncolored(bool on) { m_rightUncolored = on; }
     // Something to paint: a pack, or automatic colors.
     bool Active() const { return m_pack != nullptr || m_auto; }
 
@@ -240,7 +242,7 @@ private:
 
     // Automatic colors: every background layer's ramp (by world), from the
     // layers drawn since the pack was set (bit per world).
-    bool m_auto = false, m_packShown = true;
+    bool m_auto = false, m_packShown = true, m_rightUncolored = false;
     uint32_t m_autoWorlds = 0, m_autoWorldsUsed = ~0u;
     unsigned m_autoMaxLevel = 0;
     // (a ramp beside its colors as frame words, by shade 1-3: runs point at rgb, so the words are a cast away)

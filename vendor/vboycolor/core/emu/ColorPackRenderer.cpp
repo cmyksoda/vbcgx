@@ -2105,81 +2105,11 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         }
     };
 
-    // The right eye's run starts, if they're all it adds (true): with a pack, its markers added as the walk adds them,
-    // every layer pair estimated and what it keeps walked with its band reached as now, a start only sizes its layer
-    // (by the extent - see the figures below) and wants its sprite pair (a layer pair where its markers are added).
-    // Only bands where that can change are read.
     constexpr uint64_t kAllCells = (1ull << kGridW) - 1;
     constexpr int kScanPerCell = 64;
-    auto rightFromEnds = [&](const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut) -> bool {
-        if (!m_pack || !v.cell_worlds || (markers && !v.band_chr))
-            return false;
-        if (m_endsRest)
-        {
-            --m_endsRest;
-            return false;
-        }
-        // (only worth it where the walk would walk many cells - changed ones, and those skipped before, walked once
-        // more when kept - and where its tries lately read less than the walk would each frame, as this costs about
-        // the same however little changed; tried again after 16 Paints, as what it reads changes with the scene)
-        int changed = 0, owed = 0;
-        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-        {
-            const uint64_t fresh = (v.tagged ? v.tagged[b] : kAllCells) & ~keepRight[b];
-            changed += __builtin_popcountll(fresh);
-            owed += __builtin_popcountll(rightBands[b].skipped & ~fresh);
-        }
-        m_endsChanged += static_cast<uint32_t>(changed) - m_endsChanged / 8;
-        if (changed + owed < kBands * kGridW / 8 || (m_endsRead > m_endsChanged && ++m_endsWait < 16))
-            return false;
-        m_endsWait = 0;
-        for (int p = 0; pairs && p < m_pairCount; ++p)
-            if (!m_pairs[p].sprites && !m_pairs[p].estimated)
-                return false;
-        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
-            if (keepRight[b] & (v.band_key[b] ? rightBands[b].unreached : ~rightBands[b].unreached))
-                return false;
-        // (marker pixels add markers, each at its left-eye cell: added here as the walk would, kept cells too - the
-        // walk reads those again; without the tracker's cells that may hold sprites, any marker tile is walked instead)
-        const bool spriteMarks = v.tagged && v.obj_cells;
-        for (unsigned b = 0; markers && !spriteMarks && b < static_cast<unsigned>(kBands); ++b)
-        {
-            uint32_t used = 0;
-            for (unsigned i = 0; i < 2048 / 32; ++i)
-                used |= v.band_chr[b * (2048 / 32) + i] & m_markerSlots[i];
-            for (unsigned x = 0; used && x < VBGO_TT_WIDTH; ++x)
-                if (const uint32_t *column = v.columns[x])
-                    for (unsigned y = b * 8; y < b * 8 + 8; ++y)
-                    {
-                        const uint32_t lo = column[y];
-                        const unsigned chr = VBGO_TAG_CHAR(lo);
-                        if (!vbgo_tag_drawn(lo, v.band_key[b]) || !m_slotHasMarkers[chr])
-                            continue;
-                        if ((m_slotMarkers[chr] & (VBGO_TAG_IS_OBJ(lo) ? ~m_layerBound : m_layerBound)).Any())
-                        {
-                            m_endsRest = 16; // (markers usually stay a while: not looked for again soon)
-                            return false;
-                        }
-                    }
-        }
-
-        uint32_t wanted = 0; // (bit per pair a start wants)
-        // (a background tile's layer-bound markers also set their cell's layer, the walk's last one kept; not Paint's
-        // markerLayers, since naming it here makes GCC keep it in memory all through Paint)
-        const int boundRead = markers && spriteMarks && m_anyBoundMarkerSlot
-                                  ? RightBoundMarks(v, eyeBits, eyeClut, markers, m_markerLayer[m_gridCurrent].data(), wanted)
-                                  : 0;
-        // Sprite pairs: wanted by any counted pixel of a right-only sprite (its run's start is one), as SetUpRun would
-        // - its own estimate if the left picture doesn't share its tile, else the left's once there is one.
-        bool rightOnly = false;
-        for (unsigned i = 0; pairs && m_oam && !rightOnly && i < 1024; ++i)
-            rightOnly = (m_oam[i * 4 + 1] & 0xC000) == 0x4000;
-        uint32_t spriteWorlds = 0; // (the worlds of the sprite pairs no start wants yet)
-        for (unsigned w = 0; rightOnly && w < 32; ++w)
-            spriteWorlds |= static_cast<uint32_t>(m_spritePairOf[w] >= 0) << w;
-        // The sprites' tags (only where one may be) for both: markers, and the pairs they want.
-        const int scanned = RightSpriteMarks(v, eyeBits, eyeClut, markers, spriteMarks, wanted, spriteWorlds);
-
+    // The right eye's run starts that can widen a layer's extents, counted as its walk would (the others start inside
+    // what the left eye's reach); returns how many cells it walked.
+    auto rightExtents = [&](const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut) -> int {
         // (no world that may draw in band b at columns x0 - x1 - both eyes', a superset without sprites - could start
         // a run there that resizes its layer; a layer this wide is sized by its width alone)
         constexpr int kSizedByWidth = VBGO_TT_HEIGHT - 1 + 7;
@@ -2384,6 +2314,83 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 }
             }
         }
+        return openCells;
+    };
+
+    // The right eye's run starts, if they're all it adds (true): with a pack, its markers added as the walk adds them,
+    // every layer pair estimated and what it keeps walked with its band reached as now, a start only sizes its layer
+    // (by the extent - see the figures below) and wants its sprite pair (a layer pair where its markers are added).
+    // Only bands where that can change are read.
+    auto rightFromEnds = [&](const vbgo_tt_eye_view &v, const uint8_t *eyeBits, const uint32_t *eyeClut) -> bool {
+        if (!m_pack || !v.cell_worlds || (markers && !v.band_chr))
+            return false;
+        if (m_endsRest)
+        {
+            --m_endsRest;
+            return false;
+        }
+        // (only worth it where the walk would walk many cells - changed ones, and those skipped before, walked once
+        // more when kept - and where its tries lately read less than the walk would each frame, as this costs about
+        // the same however little changed; tried again after 16 Paints, as what it reads changes with the scene)
+        int changed = 0, owed = 0;
+        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+        {
+            const uint64_t fresh = (v.tagged ? v.tagged[b] : kAllCells) & ~keepRight[b];
+            changed += __builtin_popcountll(fresh);
+            owed += __builtin_popcountll(rightBands[b].skipped & ~fresh);
+        }
+        m_endsChanged += static_cast<uint32_t>(changed) - m_endsChanged / 8;
+        if (changed + owed < kBands * kGridW / 8 || (m_endsRead > m_endsChanged && ++m_endsWait < 16))
+            return false;
+        m_endsWait = 0;
+        for (int p = 0; pairs && p < m_pairCount; ++p)
+            if (!m_pairs[p].sprites && !m_pairs[p].estimated)
+                return false;
+        for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+            if (keepRight[b] & (v.band_key[b] ? rightBands[b].unreached : ~rightBands[b].unreached))
+                return false;
+        // (marker pixels add markers, each at its left-eye cell: added here as the walk would, kept cells too - the
+        // walk reads those again; without the tracker's cells that may hold sprites, any marker tile is walked instead)
+        const bool spriteMarks = v.tagged && v.obj_cells;
+        for (unsigned b = 0; markers && !spriteMarks && b < static_cast<unsigned>(kBands); ++b)
+        {
+            uint32_t used = 0;
+            for (unsigned i = 0; i < 2048 / 32; ++i)
+                used |= v.band_chr[b * (2048 / 32) + i] & m_markerSlots[i];
+            for (unsigned x = 0; used && x < VBGO_TT_WIDTH; ++x)
+                if (const uint32_t *column = v.columns[x])
+                    for (unsigned y = b * 8; y < b * 8 + 8; ++y)
+                    {
+                        const uint32_t lo = column[y];
+                        const unsigned chr = VBGO_TAG_CHAR(lo);
+                        if (!vbgo_tag_drawn(lo, v.band_key[b]) || !m_slotHasMarkers[chr])
+                            continue;
+                        if ((m_slotMarkers[chr] & (VBGO_TAG_IS_OBJ(lo) ? ~m_layerBound : m_layerBound)).Any())
+                        {
+                            m_endsRest = 16; // (markers usually stay a while: not looked for again soon)
+                            return false;
+                        }
+                    }
+        }
+
+        uint32_t wanted = 0; // (bit per pair a start wants)
+        // (a background tile's layer-bound markers also set their cell's layer, the walk's last one kept; not Paint's
+        // markerLayers, since naming it here makes GCC keep it in memory all through Paint)
+        const int boundRead = markers && spriteMarks && m_anyBoundMarkerSlot
+                                  ? RightBoundMarks(v, eyeBits, eyeClut, markers, m_markerLayer[m_gridCurrent].data(), wanted)
+                                  : 0;
+        // Sprite pairs: wanted by any counted pixel of a right-only sprite (its run's start is one), as SetUpRun would
+        // - its own estimate if the left picture doesn't share its tile, else the left's once there is one.
+        bool rightOnly = false;
+        for (unsigned i = 0; pairs && m_oam && !rightOnly && i < 1024; ++i)
+            rightOnly = (m_oam[i * 4 + 1] & 0xC000) == 0x4000;
+        uint32_t spriteWorlds = 0; // (the worlds of the sprite pairs no start wants yet)
+        for (unsigned w = 0; rightOnly && w < 32; ++w)
+            spriteWorlds |= static_cast<uint32_t>(m_spritePairOf[w] >= 0) << w;
+        // The sprites' tags (only where one may be) for both: markers, and the pairs they want.
+        const int scanned = RightSpriteMarks(v, eyeBits, eyeClut, markers, spriteMarks, wanted, spriteWorlds);
+
+        const int openCells = rightExtents(v, eyeBits, eyeClut);
 
         for (int p = 0; p < m_pairCount; ++p)
             if (wanted >> p & 1)
@@ -2428,10 +2435,21 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         if (!eye)
             bandsByCell(v.tagged, taggedBands);
 
-        if (pack)
+        // (Coast waits on the pairs' estimates, so they stay alive with the right eye uncolored)
+        const bool uncolored = eye && m_rightUncolored && m_pack && v.cell_worlds;
+        if (pack && !uncolored)
             resolveSlots(v.hashes);
         if (eye == 1 && pairs)
             reestimated = EstimatePairs(view) > 0;
+        if (uncolored)
+        {
+            // (a later colored pass walks every band again)
+            for (auto &buffered : m_bands[1])
+                for (Band &band : buffered)
+                    band.state = 0;
+            rightExtents(v, eyeBits, eyeClut);
+            continue;
+        }
 
         if (eye == 1 && pairs)
         {
