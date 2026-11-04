@@ -63,7 +63,7 @@ public:
    void Ori(unsigned ra, unsigned rs, uint32 v) { D(24, rs, ra, v); }
    void Xori(unsigned ra, unsigned rs, uint32 v) { D(26, rs, ra, v); }
    void AndiDot(unsigned ra, unsigned rs, uint32 v) { D(28, rs, ra, v); }
-   void Cmpwi(unsigned ra, int32 v, unsigned cr = 0) { D(11, cr << 2, ra, v); }
+   void Cmpwi(unsigned ra, int32 v) { D(11, 0, ra, v); }
    void Cmplwi(unsigned ra, uint32 v) { D(10, 0, ra, (int32)v); }
    void Mulli(unsigned rt, unsigned ra, int32 v) { D(7, rt, ra, v); }
    void Lwz(unsigned rt, int32 d, unsigned ra) { D(32, rt, ra, d); }
@@ -601,7 +601,8 @@ void *V810::CompileBlock(const Decoded *block, void **entry, bool retried)
 
    uint32 *const start = w.at;
 
-   /* flagsOf: the op before, whose flags in flagsLeft are still to work out (from CR0 and XER as it left them) */
+   /* flagsOf: the op before, whose flags in flagsLeft are still to work out (from its operands and result, still in
+    * r3, r4 and r5) */
    struct Exit
    {
       uint32 offset;
@@ -718,14 +719,6 @@ void *V810::CompileBlock(const Decoded *block, void **entry, bool retried)
 
    /* An op's last cycles, then the check before the op at next: out there if the event is due. */
    auto Spend = [&](int32 cycles, uint32 next, int32 lastopNext, bool signedOnly = false) {
-      if(cycles == 1 && !signedOnly && skip)
-      {
-         /* (CR0 and XER hold flags left for the exit: addi and cr1 leave them be) */
-         w.Addi(JR_LEFT, JR_LEFT, -1);
-         w.Cmpwi(JR_LEFT, 0, 1);
-         ExitBefore(w.Bc(BO_FALSE, 4 + CR_GT), next, lastopNext, JIT_STUB_EVENTS);
-         return;
-      }
       if(cycles)
          w.AddicDot(JR_LEFT, JR_LEFT, -cycles);
       else
@@ -1357,6 +1350,13 @@ void *V810::CompileBlock(const Decoded *block, void **entry, bool retried)
          w.Patch(from, w.at);
       if(e.flagsLeft)
       {
+         /* (CR0 and XER as the op left them, before the cycle count's addic.) */
+         if(e.flagsOf->kind == BK_ADD || e.flagsOf->kind == BK_ADD_I || e.flagsOf->kind == BK_ADDI)
+            w.AddcoDot(5, 4, 3);
+         else if(e.flagsOf->kind == BK_SUB || e.flagsOf->kind == BK_CMP || e.flagsOf->kind == BK_CMP_I)
+            w.SubfcoDot(5, 3, 4);
+         else
+            w.Cmpwi(5, 0);
          skip = ~e.flagsLeft & (FLAG_SZ | FLAG_OV | FLAG_CY);
          FlagsOf(*e.flagsOf);
          skip = 0;
