@@ -12,6 +12,7 @@
 #include "../../videosupport.h"
 #include "../../vbrender.h"
 #include "../Platform.h"
+#include "wii/WiiPlatform.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -107,8 +108,8 @@ bool OgcEmulatorVideo::convertsOnGpu(const uint8_t *buffer, size_t pitch, unsign
         && reinterpret_cast<uintptr_t>(buffer) % 32 == 0;
 }
 
-// Dolphin's enhancements (internal resolution above 1x, forced linear filtering) and its EFB copies kept out of memory
-// don't reproduce pass 1, so a test picture converted both ways decides each time the game's video starts.
+// Dolphin keeps the CPU path, since its texture cache may hash only samples of a picture and miss a change; elsewhere
+// a test picture converted both ways decides each time the game's video starts.
 bool OgcEmulatorVideo::checkGpu()
 {
     const GXRModeObj *mode = videoDriver->getVideoMode();
@@ -126,7 +127,7 @@ bool OgcEmulatorVideo::checkGpu()
     gpuPitch = pitch;
     auto *picture = static_cast<uint8_t *>(memalign(32, pitch * h));
     auto *expected = static_cast<uint8_t *>(memalign(32, w * h * 4));
-    bool exact = gpuTexture && picture && expected;
+    bool exact = gpuTexture && picture && expected && !IsDolphinEmulator();
     if (exact) {
         // (hashed, so a texel read one place off or blended with a neighbor shows)
         for (size_t i = 0; i < pitch * h / 4; ++i) {
