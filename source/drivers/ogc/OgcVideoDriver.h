@@ -36,6 +36,7 @@ class OgcVideoDriver : public VideoDriver
 		GXRModeObj* findVideoMode(bool menu = false);
 		void setupVideoMode(GXRModeObj* mode);
 		void waitForBufferReady();
+		void waitForCopy();
 		void presentBuffer();
 
 	private:

@@ -64,6 +64,9 @@ extern "C"
     uint32_t vbgo_vip_last_frame_picture(void);
     extern bool vbgo_vip_fog_game;
     bool vbgo_vip_held(void);
+
+    // A frontend still reading a shown picture (the Wii's GPU) waits here before one is painted again.
+    void vboycolor_before_paint(void) __attribute__((weak));
 }
 
 namespace
@@ -690,6 +693,8 @@ namespace
             g_video(nullptr, VBGO_TT_WIDTH, VBGO_TT_HEIGHT, 0);
             return;
         }
+        if (vboycolor_before_paint)
+            vboycolor_before_paint();
         if (g_repaint)
             g_renderer.ForgetBands();
         g_repaint = false;

@@ -326,6 +326,19 @@ void OgcVideoDriver::waitForBufferReady()
 	whichfb ^= 1;
 }
 
+// Commands sent while a frame's copy to the TV buffer is pending could land inside it (it's sent at the retrace).
+void OgcVideoDriver::waitForCopy()
+{
+	u32 level;
+
+	_CPU_ISR_Disable(level);
+	while (copynow == GX_TRUE)
+	{
+		LWP_ThreadSleep(render_queue);
+	}
+	_CPU_ISR_Restore(level);
+}
+
 void OgcVideoDriver::presentBuffer()
 {
 	VIDEO_SetNextFramebuffer (xfb[whichfb]);

@@ -43,7 +43,7 @@ SystemEvent WiiPlatform::getSystemEvent()
 /****************************************************************************
  * IOS Check
  ***************************************************************************/
-static bool IsDolphinEmulator() {
+bool IsDolphinEmulator() {
 	static int isDolphin = -1;
 
 	if(isDolphin >= 0)

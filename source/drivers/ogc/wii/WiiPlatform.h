@@ -35,6 +35,7 @@ typedef enum {
 
 bool SupportedIOS(uint32_t ios);
 bool SaneIOS(uint32_t ios);
+bool IsDolphinEmulator();
 
 void NotifyWiiShutdownRequested();
 
