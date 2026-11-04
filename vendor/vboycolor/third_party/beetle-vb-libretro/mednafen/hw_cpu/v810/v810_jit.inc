@@ -172,11 +172,15 @@ private:
 };
 
 const int32 kLastopUnknown = -2147483647 - 1;
+/* (what every compiled branch, jump and WAIT leaves in lastop before going on into another block: its own opcode,
+ * never a load's or a store's) */
+const int32 kLastopBranch = 0x40;
 } // namespace
 
-/* Code for the block, or NULL. JR_LEFT holds the cycles left before the next event (from ENTER on), in a GPR because
- * Broadway serializes every mfctr / mtctr. It returns a JIT_EXIT_* (v810_blocks.inc), next PC in JitTarget. */
-void *V810::CompileBlock(const Decoded *block, bool retried)
+/* Code for the block as a branch goes into it, or NULL; *entry where RunBlock starts it. JR_LEFT holds the cycles left
+ * before the next event (from ENTER on), in a GPR because Broadway serializes every mfctr / mtctr. It returns a
+ * JIT_EXIT_* (v810_blocks.inc), next PC in JitTarget. */
+void *V810::CompileBlock(const Decoded *block, void **entry, bool retried)
 {
    const uint8 *const base = (const uint8 *)P_REG;
    const int32 offPsw = (const uint8 *)&S_REG[PSW] - base, offNext = (const uint8 *)&next_event_ts - base;
@@ -876,8 +880,25 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
    uint32 offset = 0;
    int32 lastopNow = kLastopUnknown;
    bool ended = false;
-   for(unsigned i = 0; i < n && !ended; ++i)
+   /* A first load or store spends cycles by the op before it: RunBlock's way in works that out at run time, a branch's
+    * knows it, and both go on into the same code. */
+   const bool twice = n && block->ops[0].kind >= BK_LD_B && block->ops[0].kind <= BK_ST_W;
+   uint32 *linked = start, *fromC = NULL;
+   for(unsigned j = 0; j < n + twice && !ended; ++j)
    {
+      const unsigned i = j - (twice && j);
+      if(twice && j == 1)
+      {
+         fromC = w.B();
+         offset = 0;
+         lastopNow = kLastopBranch;
+         linked = w.at;
+      }
+      else if(fromC)
+      {
+         w.Patch(fromC, w.at);
+         fromC = NULL;
+      }
       opAt.push_back(std::make_pair(offset, w.at));
       const BlockOp &op = block->ops[i];
       const unsigned arg1 = op.r1, arg2 = op.r2;
@@ -1325,6 +1346,7 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
             if(e.offset == offset && e.stub == JIT_STUB_EVENTS)
                e.flagsOf = &op, e.flagsLeft = skip;
    }
+   w.Patch(fromC, w.at);
    skip = 0;
    if(!ended)
       ExitBefore(w.B(), offset, lastopNow, JIT_STUB_INTERPRET);
@@ -1364,11 +1386,12 @@ void *V810::CompileBlock(const Decoded *block, bool retried)
       if(retried)
          return NULL;
       JitNextPage();
-      return CompileBlock(block, true);
+      return CompileBlock(block, entry, true);
    }
    JitCodeUsed = w.at - JitCode;
    JitColdUsed = away.at - JitCode;
    JIT_SYNC(flushFrom, (w.at - flushFrom) * 4);
    JIT_SYNC(coldFrom, (away.at - coldFrom) * 4);
-   return start;
+   *entry = start;
+   return linked;
 }

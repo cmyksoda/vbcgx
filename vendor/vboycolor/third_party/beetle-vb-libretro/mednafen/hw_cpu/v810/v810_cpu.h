@@ -416,7 +416,8 @@ class V810
  {
     uint32 pc;
     uint8 *code;
-    void *jit;   /* (its Broadway code, or NULL - see v810_jit.inc) */
+    void *jit;   /* (its Broadway code as branches go into it, or NULL - see v810_jit.inc) */
+    void *entry; /* (where RunBlock starts that code) */
     Block *next; /* (another in the same slot) */
     Block *pageNext; /* (another with its code in the same page) */
  };
@@ -450,7 +451,7 @@ class V810
  static void JitWaitTarget(V810 *cpu, v810_timestamp_t timestamp, uint32 pc, uint32 arg1);
  Block *FindBlock(uint32 pc);
  const Decoded *DecodeBlock(uint32 pc);
- Block *AddBlock(const Decoded *decoded, void *jit);
+ Block *AddBlock(const Decoded *decoded, void *jit, void *entry);
  bool JitPools(void);
  void JitTouch(Block *block);
  void JitLink(uint32 *site, void *code);
@@ -468,7 +469,7 @@ class V810
  bool BlockEntryOk = true;
  uint8 *BlockExpect = nullptr; /* (where the op the interpreter ran last would continue) */
  void FlushBlocks(void);
- void *CompileBlock(const Decoded *block, bool retried = false);
+ void *CompileBlock(const Decoded *block, void **entry, bool retried = false);
  size_t JitCodeUsed = 0, JitColdUsed = 0; /* (the hot and cold ends, in words) */
  uint32 *JitStub[18]; /* (shared code at the code buffer's start: JIT_STUB_*) */
  uint8 *JitWorkRam = nullptr;

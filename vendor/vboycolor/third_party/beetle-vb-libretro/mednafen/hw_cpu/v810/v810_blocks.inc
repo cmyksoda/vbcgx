@@ -236,8 +236,9 @@ int V810::RunBlock(v810_timestamp_t &timestamp)
          const Decoded *const decoded = BlockEntryOk && JitPools() ? DecodeBlock(block_pc) : NULL;
          if(decoded)
          {
-            void *const jit = CompileBlock(decoded);
-            block = AddBlock(decoded, jit);
+            void *entry = NULL;
+            void *const jit = CompileBlock(decoded, &entry);
+            block = AddBlock(decoded, jit, entry);
          }
          if(!block)
          {
@@ -252,11 +253,11 @@ int V810::RunBlock(v810_timestamp_t &timestamp)
          BlockEntryOk = true; /* (whatever the interpreter's op does, it goes the same way every time) */
          return 0;
       }
-      code = block->jit;
+      code = block->entry;
       if(block->code == &FastMap[block_pc >> V810_FAST_MAP_SHIFT][block_pc]) /* (as a jump there finds it) */
-         JitLookup[(block_pc >> 1) & (JIT_LOOKUP_SIZE - 1)] = JitLookupEntry{block_pc, code};
+         JitLookup[(block_pc >> 1) & (JIT_LOOKUP_SIZE - 1)] = JitLookupEntry{block_pc, block->jit};
       if(JitLinkSite && JitLinkTarget == block_pc)
-         JitLink(JitLinkSite, code); /* (the branch that came here now jumps straight into this block's code) */
+         JitLink(JitLinkSite, block->jit); /* (the branch that came here now jumps straight into this block's code) */
    }
    JitLinkSite = NULL;
    const uint32 exit =
