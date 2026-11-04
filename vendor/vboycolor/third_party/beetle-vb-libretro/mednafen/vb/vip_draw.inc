@@ -586,14 +586,21 @@ typedef struct
 } VbgoWorldAttr;
 
 
+/* (the 8-row path's leftover rows call it out of line, as before VbgoBackHRows: inlined there it grows DrawBGBlock 3 KB) */
+static VBGO_NOINLINE int VbgoTagRow8Out(uint32_t *d, uint16_t *c, unsigned pixels, int flipped, uint32_t bits, unsigned cell,
+                                        int fills_from)
+{
+ return vbgo_tt_tag_row8_fills(d, c, pixels, flipped, bits, cell, fills_from);
+}
+
 /* A back to front tile row (8 pixels, from the character row pixels) that isn't every pixel drawn: the shades merged into
  * the row under the drawn pixels, and the tags (vbgo_tt_tag_row8: 1 something, 2 a fill too, a blank row only fills). */
 static inline __attribute__((always_inline)) int VbgoBackRow(uint8 *px, uint32_t *tag, uint16_t *cl, uint32 pixels, int flipped,
-                                      const uint8 (*quad)[4], uint32_t bits, unsigned cell, int fills)
+                                      const uint8 (*quad)[4], uint32_t bits, unsigned cell, int fills, int out)
 {
  uint32 p = pixels, shades[2], drawn[2], row[2];
  if(!pixels)
-  return fills ? vbgo_tt_tag_row8_fills(tag, cl, 0, flipped, bits, cell, 1) : 0;
+  return fills ? (out ? VbgoTagRow8Out : vbgo_tt_tag_row8_fills)(tag, cl, 0, flipped, bits, cell, 1) : 0;
  if(flipped)
  {
   p = ((p >> 2) & 0x3333) | ((p & 0x3333) << 2);
@@ -611,7 +618,7 @@ static inline __attribute__((always_inline)) int VbgoBackRow(uint8 *px, uint32_t
  row[1] = (row[1] & ~drawn[1]) | (shades[1] & drawn[1]);
  memcpy(px, &row[0], 4);
  memcpy(px + 4, &row[1], 4);
- return vbgo_tt_tag_row8_fills(tag, cl, pixels, flipped, bits, cell, fills);
+ return (out ? VbgoTagRow8Out : vbgo_tt_tag_row8_fills)(tag, cl, pixels, flipped, bits, cell, fills);
 }
 
 /* DrawBGBlock's whole-tile path for the n rows that share a map row (consecutive: pixels a row apart in the drawing
@@ -676,7 +683,7 @@ static inline __attribute__((always_inline)) int VbgoBackTile(uint8 *px, uint32_
    if(fills < 0)
     fills = vbgo_tt_fills_from(bgsc & 0x7FF, cell);
    t = VbgoBackRow(px + v * 512, tag + v, cl + v * VBGO_TT_CELL_ROW, chr0[v * chr_step], flipped, quad,
-                   bits + v * bits_step, cell, fills);
+                   bits + v * bits_step, cell, fills, 1);
    if(t > tagged)
     tagged = t;
   }
@@ -692,7 +699,7 @@ static inline __attribute__((always_inline)) int VbgoBackTile(uint8 *px, uint32_
    int t;
    if(fills < 0)
     fills = vbgo_tt_fills_from(bgsc & 0x7FF, cell);
-   t = VbgoBackRow(px, tag, cl, 0, flipped, quad, bits, cell, fills);
+   t = VbgoBackRow(px, tag, cl, 0, flipped, quad, bits, cell, fills, 0);
    if(t > tagged)
     tagged = t;
    continue;
@@ -725,7 +732,7 @@ static inline __attribute__((always_inline)) int VbgoBackTile(uint8 *px, uint32_
    int t;
    if(fills < 0)
     fills = vbgo_tt_fills_from(bgsc & 0x7FF, cell);
-   t = VbgoBackRow(px, tag, cl, pixels, flipped, quad, bits, cell, fills);
+   t = VbgoBackRow(px, tag, cl, pixels, flipped, quad, bits, cell, fills, 0);
    if(t > tagged)
     tagged = t;
   }
@@ -763,7 +770,7 @@ static inline __attribute__((always_inline)) int VbgoBackOne(uint8 *px, uint32_t
  }
  if(*fills < 0)
   *fills = vbgo_tt_fills_from(bgsc & 0x7FF, cell);
- return VbgoBackRow(px, tag, cl, pixels, flipped, quad, bits, cell, *fills);
+ return VbgoBackRow(px, tag, cl, pixels, flipped, quad, bits, cell, *fills, 0);
 }
 
 /* DrawBGBlock's H-bias rows y.. that share a map row but not one shift (several chunks): each cell's entry is read, marked
