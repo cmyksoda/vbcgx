@@ -773,10 +773,9 @@ static inline __attribute__((always_inline)) int VbgoBackOne(uint8 *px, uint32_t
  return VbgoBackRow(px, tag, cl, pixels, flipped, quad, bits, cell, *fills, 0);
 }
 
-/* DrawBGBlock's H-bias rows y.. that share a map row but not one shift (several chunks): each cell's entry is read, marked
- * and blank-tested once for all of them, then each row draws its own row of the tile (whole: VbgoBackOne; at a line end:
- * the same run), the same stores as DrawBGBlock's chunks make. Returns the row after them, or y when the rows are one
- * chunk or their cells don't overlap (DrawBGBlock draws those itself). */
+/* H-bias rows of one map row with different shifts, which DrawBGBlock would set up a tile for chunk by chunk: each map
+ * cell is read and marked once for all of them, then each row draws its own row of it. Returns the row after them, or y
+ * to leave them to DrawBGBlock (one shift, or cells that don't overlap). */
 static VBGO_NOINLINE int VbgoBackHRows(uint8 *fb_eye, unsigned block_no, bool lr, const VbgoWorldAttr *a, int y, uint16 srcX,
                                        uint32 SourceX, int32 start_x, int32 final_x, uint32_t vbgo_bits, uint32_t vbgo_wbit)
 {
