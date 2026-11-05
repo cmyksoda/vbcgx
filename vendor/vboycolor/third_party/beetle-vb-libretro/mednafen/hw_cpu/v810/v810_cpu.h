@@ -474,6 +474,7 @@ class V810
  size_t JitCodeUsed = 0, JitColdUsed = 0; /* (the hot and cold ends, in words) */
  uint32 *JitStub[18]; /* (shared code at the code buffer's start: JIT_STUB_*) */
  uint8 *JitWorkRam = nullptr;
+ unsigned JitFbReadMaskEnd = 14; /* (the read stubs' frame buffer test: 15 also sends the right eye's to the C side) */
 
  public:
  /* Work RAM (VB 0x05000000, 64 KiB) for compiled loads and stores. */
@@ -482,6 +483,8 @@ class V810
   JitWorkRam = ram;
   FlushBlocks();
  }
+ /* Right-eye frame buffer reads through MemRead8/16 and VBReadWord (the VIP watches them), or inline as the left's. */
+ void SetRightFbReadsSlow(bool slow);
 #endif
 };
 

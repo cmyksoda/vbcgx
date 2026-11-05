@@ -493,10 +493,10 @@ void *V810::CompileBlock(const Decoded *block, void **entry, bool retried)
 
       /* Branches to miss[] unless r4 is a frame buffer address (region 0, below 0x20000, under 0x6000 of its 0x8000;
        * word: 4-aligned), as VIP_ReadFBWord and VIP_WriteFBWord check one; A & 0x7FFF left in rOffset. */
-      auto CheckFrameBuffer = [&](uint32 *miss[4], unsigned rOffset, bool word) {
+      auto CheckFrameBuffer = [&](uint32 *miss[4], unsigned rOffset, bool word, unsigned maskEnd) {
          w.Rlwinm(0, 4, 8, 29, 31, 1);
          miss[0] = w.Bc(BO_FALSE, CR_EQ);
-         w.Rlwinm(rOffset, 4, 0, 5, 14, 1);
+         w.Rlwinm(rOffset, 4, 0, 5, maskEnd, 1);
          miss[1] = w.Bc(BO_FALSE, CR_EQ);
          w.Rlwinm(rOffset, 4, 0, 17, 31);
          w.Cmplwi(rOffset, 0x6000);
@@ -528,7 +528,7 @@ void *V810::CompileBlock(const Decoded *block, void **entry, bool retried)
          {
             /* A frame buffer read has no side effects: its bytes straight from FB, no call. */
             uint32 *miss[4] = {};
-            CheckFrameBuffer(miss, 5, k == 2);
+            CheckFrameBuffer(miss, 5, k == 2, JitFbReadMaskEnd);
 
             /* (FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)], as VIP_Read8 indexes it) */
             w.Rlwinm(0, 4, 21, 26, 26);
@@ -561,7 +561,7 @@ void *V810::CompileBlock(const Decoded *block, void **entry, bool retried)
             /* A frame buffer word write: VIP_WriteFBWord does it, and nothing it does looks at the cycle count or the
              * PSW, so neither is synced (JR_LEFT is callee-saved). */
             uint32 *miss[4] = {};
-            CheckFrameBuffer(miss, 6, true);
+            CheckFrameBuffer(miss, 6, true, 14);
             w.Stwu(1, -16, 1);
             w.Mflr(0);
             w.Stw(0, 20, 1);

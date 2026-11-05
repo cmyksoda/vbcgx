@@ -113,6 +113,14 @@ static uint32 GPROM_Mask;
 
 V810 *VB_V810 = NULL;
 
+void VBGO_RightFbReadsSlow(bool slow)
+{
+#ifdef GEKKO
+   if(VB_V810)
+      VB_V810->SetRightFbReadsSlow(slow);
+#endif
+}
+
 static uint32 VSU_CycleFix;
 
 static uint8 WCR;

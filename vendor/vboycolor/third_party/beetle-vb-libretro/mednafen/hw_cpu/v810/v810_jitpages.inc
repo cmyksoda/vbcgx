@@ -70,6 +70,21 @@ void V810::JitLink(uint32 *site, void *code)
    JIT_SYNC(site, 4);
 }
 
+void V810::SetRightFbReadsSlow(bool slow)
+{
+   JitFbReadMaskEnd = slow ? 15 : 14;
+   if(!JitStubEnd)
+      return;
+   JitWriting writing;
+   for(unsigned k = 0; k < 3; ++k)
+   {
+      /* (a read stub's third word is CheckFrameBuffer's test of A's bits 17-26; ME 15 adds bit 16, the right eye) */
+      uint32 *const test = JitStub[JIT_STUB_READ8 + k] + 2;
+      *test = (*test & ~(31u << 1)) | JitFbReadMaskEnd << 1;
+      JIT_SYNC(test, 4);
+   }
+}
+
 bool V810::JitNoteLink(uint32 *site, unsigned target)
 {
    if(!JitNotesFreed && JitNotesUsed == JIT_LINK_NOTES && JitNotesStale)

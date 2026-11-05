@@ -116,6 +116,15 @@ bool vbgo_vip_fog_game;
 static bool Fb1Stale, Fb1PassSkipped, Held, LeftOnly;
 bool vbgo_vip_held(void) { return Held; }
 
+/* VirtualBoyGo: the right eye left undrawn where nothing reads it (vbgo_vip_set_right_skip). RightStale: per buffer, the
+ * blocks whose right eye is an older drawing; VbgoEyeFirst/VbgoEyeEnd: the eyes VIP_DrawBlock draws. */
+static bool VbgoRightTripped;
+static uint32 RightStale[2];
+static int VbgoEyeFirst = 0, VbgoEyeEnd = 2;
+static bool VbgoRightUndrawn; /* (the block being drawn left its right eye undrawn, in all or part) */
+static void VbgoRightTouched(void);
+static void VbgoDrawStaleRight(unsigned fbs);
+
 /* Its intro mansion, under two screen-wide H-bias fog worlds: each frame a full repaint, too slow to keep up. */
 static bool FogHeld(void)
 {
@@ -416,7 +425,16 @@ static uint32 SerialEpoch = 1; /* moves whenever the serials below are reset or 
 static uint32 PassSerial[2]; /* DrawSerial as each buffer's last pass started */
 static bool PassClean[2];    /* that pass drew with unchanged inputs, and the CPU hasn't written into the buffer since */
 static bool PassTouched[2];  /* the CPU wrote into the buffer during its pass */
-static bool PassRepeats;     /* the pass in progress copies the other buffer's */
+/* (with rtskip's guard, in one halfword: a CPU frame buffer write tests both with one load - WatchFbWrite) */
+static union
+{
+   struct
+   {
+      bool repeats; /* the pass in progress copies the other buffer's */
+      bool right;   /* the right eye is left undrawn in places (vbgo_vip_set_right_skip): the CPU core watches it */
+   } is;
+   uint16 any;
+} Watch;
 static bool PassAlreadyCopied; /* ... whose blocks this buffer already holds */
 static bool PassShared;      /* ... and has copied a block: the tracker shares the other's tags from then on */
 static uint32 PassStartedAt; /* DrawSerial as the pass in progress started */
@@ -627,7 +645,7 @@ static void ForgetPasses(void)
    NewContents(1);
    DisplayChanged();
    PassClean[0] = PassClean[1] = false;
-   PassRepeats = false;
+   Watch.is.repeats = false;
 }
 
 static void ForgetBlocks(void)
@@ -1211,17 +1229,24 @@ static void BeginPass(void)
    if(DrawSerial >= 0xF0000000u)
       RestartSerials();
    PassStartedAt = DrawSerial;
-   PassRepeats = PassClean[src] && PassSerial[src] == DrawSerial && vbgo_tiletrack_pass_reusable(src);
-   PassAlreadyCopied = PassRepeats && PassClean[DrawingFB] && PassSerial[DrawingFB] == PassSerial[src];
+   Watch.is.repeats = PassClean[src] && PassSerial[src] == DrawSerial && vbgo_tiletrack_pass_reusable(src);
+   PassAlreadyCopied = Watch.is.repeats && PassClean[DrawingFB] && PassSerial[DrawingFB] == PassSerial[src];
    PassSerial[DrawingFB] = DrawSerial;
    memset(ChrChangedInPass[DrawingFB], 0, sizeof(ChrChangedInPass[DrawingFB]));
    PassClean[DrawingFB] = false;
    PassTouched[DrawingFB] = false;
    PassShared = false;
-   if(PassRepeats)
+   if(Watch.is.repeats)
       FBVersion[DrawingFB] = FBVersion[src];
    else
       NewContents(DrawingFB);
+}
+
+/* (out of line, so the drawing loop these are inlined into keeps its registers) */
+static NO_INLINE void VbgoCopyRightStale(void)
+{
+   const uint32 bit = 1u << DrawingBlock;
+   RightStale[DrawingFB] = (RightStale[DrawingFB] & ~bit) | (RightStale[!DrawingFB] & bit);
 }
 
 static void CopyOtherBlockPixels(void)
@@ -1229,6 +1254,7 @@ static void CopyOtherBlockPixels(void)
    int lr;
    for(lr = 0; lr < 2; lr++)
       memcpy(FB[DrawingFB][lr] + DrawingBlock * FB_BAND, FB[!DrawingFB][lr] + DrawingBlock * FB_BAND, FB_BAND);
+   VbgoCopyRightStale();
 }
 
 static void CopyRepeatedBlock(void)
@@ -1243,11 +1269,22 @@ static void CopyRepeatedBlock(void)
  * to come cover the write.) */
 static void StopRepeating(int fb)
 {
-   if(!PassRepeats || fb != DrawingFB || !PassShared)
+   if(!Watch.is.repeats || fb != DrawingFB || !PassShared)
       return;
    vbgo_tiletrack_resume_pass(DrawingFB, DrawingBlock);
-   PassRepeats = false;
+   Watch.is.repeats = false;
    PassAlreadyCopied = false;
+}
+
+/* The CPU writes into a frame buffer, before the bytes land: as StopRepeating, and with rtskip's guard armed, the
+ * buffer's right eyes left undrawn are drawn first (other games test one halfword, as before). */
+static INLINE void WatchFbWrite(int fb)
+{
+   if(!Watch.any)
+      return;
+   if(Watch.is.right && RightStale[fb])
+      VbgoDrawStaleRight(1u << fb);
+   StopRepeating(fb);
 }
 
 /* Whether the other buffer's drawing of this block still stands: nothing it read changed since (as for a
@@ -1314,6 +1351,7 @@ bool VIP_Init(void)
    VBSBS_Separation = 0;
 
    VidSettingsDirty = true;
+   Watch.is.right = VbgoRightTripped = false; /* (a new game: its CPU core reads every frame buffer inline) */
 
    return(true);
 }
@@ -1351,6 +1389,7 @@ void VIP_Power(void)
 
 
    memset(FB, 0, 0x6000 * 2 * 2);
+   RightStale[0] = RightStale[1] = 0;
    memset(CHR_RAM, 0, 0x8000);
    memset(DRAM, 0, 0x20000);
 
@@ -1554,9 +1593,9 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
          if(V & 1)
          {
             /* (cut before its first copy, the buffer still holds its own last pass, tags and all) */
-            if(PassRepeats && PassShared)
+            if(Watch.is.repeats && PassShared)
                vbgo_tiletrack_resume_pass(DrawingFB, DrawingBlock);
-            PassRepeats = false;
+            Watch.is.repeats = false;
             NewContents(DrawingFB);
             FrameChanged = true;
             DrawingFB         = DisplayFB;
@@ -1608,6 +1647,37 @@ static INLINE void WriteRegister(int32 timestamp, uint32 A, uint16 V)
    }
 }
 
+/* Whether the right eye at A (blocks: 1 for a byte or halfword, 3 for a word's two) was left undrawn */
+static INLINE bool VbgoRightStaleAt(uint32 A, uint32 blocks)
+{
+   return RightStale[(A >> 15) & 1] >> ((A >> 1) & 31) & blocks;
+}
+
+/* A right eye's frame buffer read while rtskip's guard is armed: where it was left undrawn, it trips first (out of line
+ * and called last, so the reads stay leaf functions). */
+static NO_INLINE uint8 VbgoRightRead8(uint32 A)
+{
+   if(VbgoRightStaleAt(A, 1))
+      VbgoRightTouched();
+   return FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)];
+}
+
+static NO_INLINE uint16 VbgoRightRead16(uint32 A)
+{
+   if(VbgoRightStaleAt(A, 1))
+      VbgoRightTouched();
+   return LoadU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)]);
+}
+
+static NO_INLINE bool VbgoRightReadWord(uint32 A, uint32 *V)
+{
+   const uint8 *fb = &FB[(A >> 15) & 1][1][FBOffset(A)];
+   if(VbgoRightStaleAt(A, 3))
+      VbgoRightTouched();
+   *V = LoadU16_LE((const uint16 *)fb) | ((uint32)LoadU16_LE((const uint16 *)(fb + FB_BAND)) << 16);
+   return true;
+}
+
 /* Don't update the VIP state on reads/writes, 
  * the event system will update it with enough precision 
  * as far as VB software cares.
@@ -1621,6 +1691,8 @@ uint8 VIP_Read8(int32 timestamp, uint32 A)
       case 0x1:
          if((A & 0x7FFF) >= 0x6000)
             return VIP_MA16R8(CHR_RAM, (A & 0x1FFF) | ((A >> 2) & 0x6000));
+         if((A & 0x10000) && Watch.is.right)
+            return VbgoRightRead8(A);
          return FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)];
       case 0x2:
       case 0x3:
@@ -1659,6 +1731,8 @@ bool VIP_ReadFBWord(uint32 A, uint32 *V)
 {
    if((A >> 16) > 1 || (A & 0x7FFF) >= 0x6000 || (A & 3))
       return false;
+   if((A & 0x10000) && Watch.is.right)
+      return VbgoRightReadWord(A, V);
    const uint8 *fb = &FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)];
    *V = LoadU16_LE((const uint16 *)fb) | ((uint32)LoadU16_LE((const uint16 *)(fb + FB_BAND)) << 16);
    return true;
@@ -1672,6 +1746,8 @@ uint16 VIP_Read16(int32 timestamp, uint32 A)
       case 0x1:
          if((A & 0x7FFF) >= 0x6000)
             return VIP_MA16R16(CHR_RAM, (A & 0x1FFF) | ((A >> 2) & 0x6000));
+         if((A & 0x10000) && Watch.is.right)
+            return VbgoRightRead16(A);
          return LoadU16_LE((uint16 *)&FB[(A >> 15) & 1][(A >> 16) & 1][FBOffset(A)]);
       case 0x2:
       case 0x3:
@@ -1712,7 +1788,7 @@ void VIP_Write8(int32 timestamp, uint32 A, uint8 V)
             PassClean[(A >> 15) & 1] = false;
             PassTouched[(A >> 15) & 1] = true;
             NewContents((A >> 15) & 1);
-            StopRepeating((A >> 15) & 1);
+            WatchFbWrite((A >> 15) & 1);
             if((A & 63) < 56)
                Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false,
                   CellContent[(A >> 15) & 1][(A & 63) >> 1][((A & 0x7FFF) >> 9) % 48] = 0,
@@ -1762,7 +1838,7 @@ bool VIP_WriteFBWord(uint32 A, uint32 V)
    PassClean[fb] = false;
    PassTouched[fb] = true;
    NewContents(fb);
-   StopRepeating(fb);
+   WatchFbWrite(fb);
    if((A & 63) < 56) /* (a word's two halfwords are in the blocks (A & 63) >> 1 and the next, and in the same cell) */
    {
       const uint32 b = (A & 63) >> 1, cell = ((A & 0x7FFF) >> 9) % 48;
@@ -1797,7 +1873,7 @@ void VIP_Write16(int32 timestamp, uint32 A, uint16 V)
             PassClean[(A >> 15) & 1] = false;
             PassTouched[(A >> 15) & 1] = true;
             NewContents((A >> 15) & 1);
-            StopRepeating((A >> 15) & 1);
+            WatchFbWrite((A >> 15) & 1);
             if((A & 63) < 56)
                Blocks[(A >> 15) & 1][(A & 63) >> 1].valid = false,
                   CellContent[(A >> 15) & 1][(A & 63) >> 1][((A & 0x7FFF) >> 9) % 48] = 0,
@@ -2670,41 +2746,113 @@ static INLINE void PackColumns(uint32 lo, uint32 hi, uint32 *a, uint32 *b)
 #endif
 }
 
-/* Columns x0-x1 (whole cells) of the block just drawn into the drawing buffer's frame buffer; with compare, differs[cell]
- * becomes nonzero where either eye's bytes changed. Only columns that did are written (so unchanged cache lines stay clean). */
+/* Columns x0-x1 (whole cells) of one eye of a drawn block into its frame buffer band; with compare, differs[cell] becomes
+ * nonzero where their bytes changed. Only columns that did are written (so unchanged cache lines stay clean). */
+static INLINE __attribute__((always_inline)) void PackEye(const uint8 *rows, uint32 *band, int x0, int x1, uint8 *differs,
+                                                           bool compare)
+{
+   int x, k;
+
+   /* 4 columns at a time, a byte each in a word: each row masked to the bits that stay in its byte, as the byte
+      arithmetic of one column keeps them */
+   for(x = x0; x + 3 <= x1; x += 4)
+   {
+      static const uint32 keep[4] = {0xFFFFFFFFu, 0x3F3F3F3Fu, 0x0F0F0F0Fu, 0x03030303u};
+      uint32 lo = 0, hi = 0, word, a, b;
+      for(k = 0; k < 4; k++)
+      {
+         memcpy(&word, rows + x + 512 * k, 4);
+         lo |= (word & keep[k]) << (2 * k);
+         memcpy(&word, rows + x + 512 * (k + 4), 4);
+         hi |= (word & keep[k]) << (2 * k);
+      }
+      PackColumns(lo, hi, &a, &b);
+      if(compare)
+      {
+         const uint32 d = (a ^ band[x >> 1]) | (b ^ band[(x >> 1) + 1]);
+         if(!d)
+            continue;
+         differs[x >> 3] = 1;
+      }
+      band[x >> 1] = a;
+      band[(x >> 1) + 1] = b;
+   }
+}
+
+/* The block just drawn, into the drawing buffer, in the eyes drawn */
 static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1, uint8 *differs, bool compare)
 {
-   int lr, x, k;
-   for(lr = 0; lr < 2; lr++)
-   {
-      const uint8 *rows = buffers[lr] + 8;
-      uint32 *const band = (uint32 *)(FB[DrawingFB][lr] + DrawingBlock * FB_BAND);
+   const int eyes = VbgoEyeEnd;
+   int lr;
+   for(lr = 0; lr < eyes; lr++)
+      PackEye(buffers[lr] + 8, (uint32 *)(FB[DrawingFB][lr] + DrawingBlock * FB_BAND), x0, x1, differs, compare);
+}
 
-      /* 4 columns at a time, a byte each in a word: each row masked to the bits that stay in its byte, as the byte
-         arithmetic of one column keeps them */
-      for(x = x0; x + 3 <= x1; x += 4)
-      {
-         static const uint32 keep[4] = {0xFFFFFFFFu, 0x3F3F3F3Fu, 0x0F0F0F0Fu, 0x03030303u};
-         uint32 lo = 0, hi = 0, word, a, b;
-         for(k = 0; k < 4; k++)
+/* The block just drawn, to the tile tracker (out of line, so the drawing loop keeps its registers): drawn in part, the rest
+ * keeps what it was; drawn whole, only an undrawn right eye is stale. */
+static NO_INLINE void VbgoBlockDrawn(const uint32 *chr, bool settled, uint64 same, uint64 unchanged, bool partial)
+{
+   if(VbgoRightUndrawn)
+      RightStale[DrawingFB] |= 1u << DrawingBlock;
+   else if(!partial)
+      RightStale[DrawingFB] &= ~(1u << DrawingBlock);
+   vbgo_tt_right_undrawn = VbgoRightUndrawn;
+   VbgoRightUndrawn = false;
+   VbgoEyeEnd = 2;
+   vbgo_tiletrack_block_drawn(chr, settled, same, unchanged);
+}
+
+/* Every right eye left undrawn in the frame buffers fbs (a bit each), drawn now from the VIP's memory as it is (tracking off:
+ * nothing it draws is recorded), and every block forgotten: those drawn without their right eye recorded what the left
+ * eye read alone. */
+static void VbgoDrawStaleRight(unsigned fbs)
+{
+   static MDFN_ALIGN(8) uint8 buffers[2][512 * 8];
+   const int tracking = vbgo_tt_on;
+   int fb, b;
+
+   vbgo_tt_on = 0;
+   VbgoEyeFirst = 1;
+   VbgoEyeEnd = 2;
+   for(fb = 0; fb < 2; fb++)
+   {
+      const uint32 stale = fbs >> fb & 1 ? RightStale[fb] : 0;
+      for(b = 0; b < 28; b++)
+         if(stale >> b & 1)
          {
-            memcpy(&word, rows + x + 512 * k, 4);
-            lo |= (word & keep[k]) << (2 * k);
-            memcpy(&word, rows + x + 512 * (k + 4), 4);
-            hi |= (word & keep[k]) << (2 * k);
+            VIP_DrawBlock(b, buffers[0] + 8, buffers[1] + 8);
+            PackEye(buffers[1] + 8, (uint32 *)(FB[fb][1] + b * FB_BAND), 0, 383, NULL, false);
          }
-         PackColumns(lo, hi, &a, &b);
-         if(compare)
-         {
-            const uint32 d = (a ^ band[x >> 1]) | (b ^ band[(x >> 1) + 1]);
-            if(!d)
-               continue;
-            differs[x >> 3] = 1;
-         }
-         band[x >> 1] = a;
-         band[(x >> 1) + 1] = b;
-      }
+      RightStale[fb] &= ~stale;
    }
+   VbgoEyeFirst = 0;
+   vbgo_tt_on = tracking;
+   ForgetBlocks();
+   memset(ShownVersion, 0, sizeof(ShownVersion));
+}
+
+/* Leaving the right eye undrawn where no world drawn in it alone can draw is on while nothing reads it there: Vertical
+ * Force and Jack Bros. under a pack (Paint reads only those worlds' runs - vbgo_tiletrack_set_right_tags), with no
+ * gradient (it samples both eyes), until the game's CPU reads a right eye's frame buffer where it was left undrawn. */
+void vbgo_vip_set_right_skip(bool on)
+{
+   on = on && !VbgoRightTripped;
+   if(on == Watch.is.right)
+      return;
+   Watch.is.right = on;
+   VBGO_RightFbReadsSlow(on);
+   if(!on)
+      VbgoDrawStaleRight(3);
+}
+
+uint32 vbgo_vip_right_stale(unsigned fb) { return RightStale[fb & 1]; }
+
+/* The CPU reads a right eye's frame buffer where it was left undrawn: from here on, until another game is loaded, it
+ * is drawn. */
+static void VbgoRightTouched(void)
+{
+   VbgoRightTripped = true;
+   vbgo_vip_set_right_skip(false);
 }
 
 /* Where the recompiler's event stub finds the state it advances itself at a column that only counts. */
@@ -2743,7 +2891,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                Fb1Stale |= DrawingFB, Fb1PassSkipped |= DrawingFB, PassTouched[DrawingFB] = true, NewContents(DrawingFB),
                   block->valid = false, memset(CellContent[DrawingFB][DrawingBlock], 0, sizeof(CellContent[0][0])),
                   EditBlock(DrawingFB);
-            else if(PassRepeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB] &&
+            else if(Watch.is.repeats && DrawSerial == PassSerial[DrawingFB] && PassClean[!DrawingFB] &&
                     (PassShared || vbgo_tiletrack_pass_reusable(!DrawingFB))) /* (options can change after BeginPass) */
             {
                if(!PassShared)
@@ -2760,12 +2908,12 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
             }
             else
             {
-               if(PassRepeats)
+               if(Watch.is.repeats)
                {
                   /* (its inputs changed: the rest is drawn) */
                   NewContents(DrawingFB);
                   vbgo_tiletrack_resume_pass(DrawingFB, DrawingBlock);
-                  PassRepeats = false;
+                  Watch.is.repeats = false;
                   PassAlreadyCopied = false;
                }
                const vbgo_tt_serials serials = { ChrChangedAt, ObjEntryChangedAt, DrawSerial, SerialEpoch };
@@ -2926,7 +3074,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                   UsedChr = UsedRows = UsedBgChr = UnusedInputs;
                   UsedObjs = &UnusedObjs;
                   Drawing = NULL;
-                  vbgo_tiletrack_block_drawn(block->chr, BlockSettled(block), same, unchanged);
+                  VbgoBlockDrawn(block->chr, BlockSettled(block), same, unchanged, partial);
                   if(!partial)
                      NoteBlockMotion();
                }
@@ -2941,7 +3089,7 @@ v810_timestamp_t MDFN_FASTCALL VIP_Update(const v810_timestamp_t timestamp)
                if(DrawingFB && !Fb1PassSkipped)
                   Fb1Stale = false;
                DrawingActive = false;
-               PassRepeats = false;
+               Watch.is.repeats = false;
                PassClean[DrawingFB] = DrawSerial == PassSerial[DrawingFB] && !PassTouched[DrawingFB];
 
                InterruptPending |= INT_XP_END;
@@ -3154,6 +3302,7 @@ int VIP_StateAction(StateMem *sm, int load, int data_only)
    {
       int i;
       CopyFBState(true);
+      RightStale[0] = RightStale[1] = 0;
       RecalcBrightnessCache();
       for(i = 0; i < 4; i++)
       {

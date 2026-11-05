@@ -141,6 +141,10 @@ const uint32_t *vbgo_vip_block_pixels(unsigned fb, unsigned lr, unsigned block);
  * 32-bit word the surface would have held (0: the display was off). */
 const uint8_t *vbgo_vip_eye_bits(int eye);
 void vbgo_vip_fresh(void);
+/* While on, a block where no world drawn in the right eye alone can draw leaves its right eye undrawn (see vip.c); off,
+ * every right eye left so is drawn at once. vbgo_vip_right_stale: a buffer's blocks whose right eye is an older drawing. */
+void vbgo_vip_set_right_skip(bool on);
+uint32_t vbgo_vip_right_stale(unsigned fb);
 const uint32_t *vbgo_vip_eye_clut(int eye);
 
 /* A sprite a block's lists held as the buffer's block was drawn: its OBJ, character, world (bit 5: the right eye
@@ -281,6 +285,10 @@ extern int vbgo_tt_on;
 /* 0 while the right eye's tags and cells are stored only where a world drawn in it alone may show
  * (vbgo_tiletrack_set_right_tags); vbgo_tt_right_now: whether the drawing stores them now. */
 extern int vbgo_tt_right_tags, vbgo_tt_right_now;
+/* Whether the block just drawn left its right eye undrawn (vbgo_vip_set_right_skip): its pixels there aren't this pass's. */
+extern int vbgo_tt_right_undrawn;
+/* Whether the game's CPU wrote into frame buffer fb since its pass began (Paint then colors those pixels by depth). */
+int vbgo_tiletrack_cpu_drawn(unsigned fb);
 extern int vbgo_tt_fill;
 extern uint32_t vbgo_tt_world;
 extern const uint8_t *vbgo_tt_block_base;

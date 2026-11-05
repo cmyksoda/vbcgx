@@ -4,7 +4,7 @@
 #include <string.h>
 
 int vbgo_tt_on = 0;
-int vbgo_tt_right_tags = 1, vbgo_tt_right_now = 1;
+int vbgo_tt_right_tags = 1, vbgo_tt_right_now = 1, vbgo_tt_right_undrawn;
 int vbgo_tt_fill = VBGO_TT_FILLS_NONE;
 uint32_t vbgo_tt_world = 0;
 const uint8_t *vbgo_tt_block_base = NULL;
@@ -920,14 +920,14 @@ static void PutAside(uint64_t same)
    s_aside = 0;
 }
 
-/* Whether cell c, both eyes, shows nothing the colorizer colors: every pixel in shade 0 (black at
- * any brightness) and no fill tagged there - what's left was drawn black or not drawn by this pass. */
+/* Whether cell c, in both eyes (the left alone if the right was left undrawn), shows nothing the colorizer colors: every
+ * pixel in shade 0 (black at any brightness) and no fill tagged there - what's left was drawn black or not drawn. */
 static int BlackCell(unsigned c)
 {
    unsigned e;
    if (vbgo_tt_fillc[c])
       return 0;
-   for (e = 0; e < 2; e++)
+   for (e = 0; e < (vbgo_tt_right_undrawn ? 1u : 2u); e++)
    {
       /* (the pixels as the drawing packed them into the frame buffer's band: a few cache lines) */
       const uint32_t *w = vbgo_vip_block_pixels((unsigned)s_last_fb, e, s_block_no) + c * 4;
@@ -1381,6 +1381,8 @@ void vbgo_tiletrack_display_column(unsigned fb, unsigned lr, unsigned dest_lr, u
 {
    vbgo_tiletrack_display_columns(fb, lr, dest_lr, column, column + 1, display_active);
 }
+
+int vbgo_tiletrack_cpu_drawn(unsigned fb) { return s_cpu[fb & 1]; }
 
 void vbgo_tiletrack_cpu_fb_write(unsigned fb, unsigned lr, unsigned offset, unsigned bytes)
 {

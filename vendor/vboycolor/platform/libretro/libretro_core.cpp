@@ -688,6 +688,7 @@ namespace
         // runs while the renderer uses it - it costs the core time.
         const bool tracking = g_shadeColors && g_renderer.Active();
         vbgo_tiletrack_set_enabled(tracking);
+        vbgo_vip_set_right_skip(rightUncolored && packed && tracking && !g_colorizer.IsGradient());
         const std::vector<uint8_t> &cells = g_renderer.FillCells();
         vbgo_tiletrack_set_fill_cells(cells.empty() ? nullptr : cells.data());
         vbgo_tiletrack_set_fill_mode(cells.empty() ? VBGO_TT_FILLS_NONE : VBGO_TT_FILLS_PACK);
@@ -888,12 +889,21 @@ extern "C"
         constexpr size_t kBufferBytes = 0x6000; // (FB[fb][lr]: 32 bands of 384 columns, 2 bytes each)
         static std::vector<uint8_t> before(kBufferBytes * 4);
         std::memcpy(before.data(), vbgo_vip_framebuffers(), before.size());
+        const bool undrawn[2] = {vbgo_vip_right_stale(0) != 0, vbgo_vip_right_stale(1) != 0};
         const bool ok = beetle_retro_unserialize(data, size);
         g_repaint = true;
         vbgo_tiletrack_forget_motion();
         const uint8_t *after = vbgo_vip_framebuffers();
+        bool forgot = false;
         for (unsigned b = 0; ok && b < 4; ++b)
         {
+            // (a right eye left undrawn in places says nothing of what changed: it goes by its left eye's)
+            if ((b & 1) && undrawn[b >> 1])
+            {
+                if (forgot)
+                    vbgo_tiletrack_forget_buffer(b >> 1, 1);
+                continue;
+            }
             const uint8_t *was = &before[b * kBufferBytes], *is = after + b * kBufferBytes;
             size_t changed = 0, drawnWas = 0, drawnIs = 0;
             for (size_t i = 0; i < kBufferBytes; ++i)
@@ -902,7 +912,8 @@ extern "C"
                 drawnWas += was[i] != 0;
                 drawnIs += is[i] != 0;
             }
-            if (changed > 64 && changed * 4 > std::max(drawnWas, drawnIs))
+            forgot = changed > 64 && changed * 4 > std::max(drawnWas, drawnIs);
+            if (forgot)
                 vbgo_tiletrack_forget_buffer(b >> 1, b & 1);
         }
         return ok;

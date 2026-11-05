@@ -66,6 +66,8 @@ bool VIP_ReadFBWord(uint32 A, uint32 *V);
 const uint8 *VIP_FBBase(void);
 const uint16 *VIP_DramBase(void);
 bool VIP_WriteFBWord(uint32 A, uint32 V);
+/* (the CPU core's side: right-eye frame buffer reads through VIP_Read8/16 and VIP_ReadFBWord while slow) */
+void VBGO_RightFbReadsSlow(bool slow);
 
 int VIP_StateAction(StateMem *sm, int load, int data_only);
 

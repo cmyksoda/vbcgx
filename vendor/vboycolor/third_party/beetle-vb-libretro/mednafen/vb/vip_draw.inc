@@ -1297,6 +1297,14 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
  /* (front to back, a block where a world draws in the right eye alone keeps all its right-eye tags: Paint reads that
   * world's, and the others' cover it) */
  vbgo_tt_right_now = vbgo_tt_right_tags || right_alone;
+ if(!VbgoEyeFirst && Watch.is.right)
+ {
+  /* (Paint matches CPU-drawn pixels against the right eye, so a buffer the CPU drew into is drawn whole until its next
+   * pass) */
+  const bool right = vbgo_tt_right_now || vbgo_tiletrack_cpu_drawn(DrawingFB);
+  VbgoEyeEnd = right ? 2 : 1;
+  VbgoRightUndrawn |= !right;
+ }
  if(front_ok && active > 1 && VbgoFrontTry(block_no, overplane, bg_active))
  {
   VbgoDrawFront(block_no, fb_l, fb_r, attrs, drawn_count, obj_lists, obj_lists_used, counts);
@@ -1308,6 +1316,14 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
  {
   uint8 *const fb_eye = lr ? fb_r : fb_l;
   int obj_index = 0;
+
+  if(lr < VbgoEyeFirst)
+   continue;
+  if(lr >= VbgoEyeEnd)
+  {
+   vbgo_tiletrack_clear_eye(1); /* (as its drawing would: a block whose right eye has no tags stays known clear) */
+   break;
+  }
 
   /* (back to front, a world drawn in the right eye alone stores its tags and so does every world in front of it,
    * covering them where it would; DrawBG, for overplane worlds, and DrawAffine always store them) */
