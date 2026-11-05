@@ -29,9 +29,10 @@ int main()
         pad.hw_stickY[h] = -1;
         pad.hw_substickX[h] = -1;
         pad.hw_substickY[h] = 1;
-        uint32_t expected = (1u << 7) | (1u << 5) | (1u << 13) | (1u << 12);
-        check(TranslateVBPad(pad, mappings) == (h == INPUT_HW_WIIMOTE ? 0 : expected),
-            "independent sticks and excluded bare Remote");
+        // the default mapping puts the left stick on the left pad and, where there is one, the right stick on the right pad
+        uint32_t left = (1u << 7) | (1u << 5), right = (1u << 13) | (1u << 12);
+        uint32_t expected = h == INPUT_HW_WIIMOTE ? 0 : h == INPUT_HW_NUNCHUK ? left : left | right;
+        check(TranslateVBPad(pad, mappings) == expected, "independent sticks and excluded bare Remote");
     }
 
     InputPadData remote;
@@ -46,10 +47,18 @@ int main()
     check(TranslateVBPad(remote, mappings) == ((1u << 8) | 1u | (1u << 10) | (1u << 15) | (1u << 4)),
         "Remote + Nunchuk buttons and two d-pads");
 
+    // a stick direction mapped to a button drives that button and leaves its default pad direction
+    mappings[INPUT_HW_DRC][1] = INPUT_RSTICK_UP;
+    mappings[INPUT_HW_DRC][10] &= ~INPUT_RSTICK_UP;
+    InputPadData drc;
+    drc.hw_connected[INPUT_HW_DRC] = true;
+    drc.hw_substickY[INPUT_HW_DRC] = 1;
+    check(TranslateVBPad(drc, mappings) == (1u << VBButtonBits[1]), "a stick direction remapped to a button");
+
     mappings[INPUT_HW_NUNCHUK][0] = INPUT_BTN_1;
     remote.hw_buttons_h[INPUT_HW_WIIMOTE] = INPUT_BTN_1;
     remote.hw_buttons_h[INPUT_HW_NUNCHUK] = 0;
     remote.hw_stickY[INPUT_HW_NUNCHUK] = 0;
     check(TranslateVBPad(remote, mappings) == 1, "custom mapping uses Remote buttons with Nunchuk attached");
-    std::puts("PASS: all hardware profiles, two sticks, Remote + Nunchuk, remapping, bare Remote excluded");
+    std::puts("PASS: all hardware profiles, two sticks, stick remapping, Remote + Nunchuk, remapping, bare Remote excluded");
 }

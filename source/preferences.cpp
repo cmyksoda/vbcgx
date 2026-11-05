@@ -33,6 +33,7 @@
 #include "videosupport.h"
 #include "emu/ColorSchemes.h"
 #include "pad.h"
+#include "vbinput.h"
 
 #if defined(HW_RVL) || defined(HW_DOL)
 #include "drivers/ogc/wii/WiiPlatform.h"
@@ -360,6 +361,11 @@ decodePrefsData ()
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_WUPC], "btnmapping_pad_wupc");
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_DRC], "btnmapping_pad_wiidrc");
 	loadXMLController(btnmap[CTRL_PAD][INPUT_HW_NUNCHUK], "btnmapping_pad_nunchuk");
+	for (int h = 0; h < INPUT_HW_MAX; ++h) {
+		bool hasStick = false;
+		for (int b = 0; b < MAXJP; ++b) hasStick |= (btnmap[CTRL_PAD][h][b] & VB_STICK_INPUTS) != 0;
+		if (!hasStick) AddVBStickDefaults(btnmap[CTRL_PAD][h], h);
+	}
 
 	mxmlDelete(xml);
 	return true;

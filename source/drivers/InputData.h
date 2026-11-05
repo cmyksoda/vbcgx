@@ -34,6 +34,8 @@ enum InputDataButtons : uint32_t {
 	INPUT_TRIGGER_ZR  = (1 << 16),  // ZR Trigger, GC Z Button
 	INPUT_THUMB_L     = (1 << 17),  // Left Stick Click (L3)
 	INPUT_THUMB_R     = (1 << 18)   // Right Stick Click (R3)
+	, INPUT_LSTICK_UP = (1 << 19), INPUT_LSTICK_DOWN = (1 << 20), INPUT_LSTICK_LEFT = (1 << 21), INPUT_LSTICK_RIGHT = (1 << 22)
+	, INPUT_RSTICK_UP = (1 << 23), INPUT_RSTICK_DOWN = (1 << 24), INPUT_RSTICK_LEFT = (1 << 25), INPUT_RSTICK_RIGHT = (1 << 26)
 };
 
 enum GuiHardwareProfile : uint32_t {

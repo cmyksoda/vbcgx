@@ -21,6 +21,7 @@
 #include "fceugx.h"
 #include "fceusupport.h"
 #include "pad.h"
+#include "vbinput.h"
 #include "videosupport.h"
 #include "emu/ColorSchemes.h"
 #include "filebrowser.h"
@@ -2594,16 +2595,16 @@ static uint32_t ButtonMappingWindow()
 			sprintf(msg, "Press any button on the Wiimote now. Press Home to clear the existing mapping.");
 			break;
 		case INPUT_HW_CLASSIC:
-			sprintf(msg, "Press any button on the Classic Controller now. Press Home to clear the existing mapping.");
+			sprintf(msg, "Press any button or move a stick on the Classic Controller now. Press Home to clear the existing mapping.");
 			break;
 		case INPUT_HW_WUPC:
-			sprintf(msg, "Press any button on the Wii U Pro Controller now. Press Home to clear the existing mapping.");
+			sprintf(msg, "Press any button or move a stick on the Wii U Pro Controller now. Press Home to clear the existing mapping.");
 			break;
 		case INPUT_HW_DRC:
-			sprintf(msg, "Press any button on the Wii U GamePad now. Press Home to clear the existing mapping.");
+			sprintf(msg, "Press any button or move a stick on the Wii U GamePad now. Press Home to clear the existing mapping.");
 			break;
 		case INPUT_HW_NUNCHUK:
-			sprintf(msg, "Press any button on the Wiimote or Nunchuk now. Press Home to clear the existing mapping.");
+			sprintf(msg, "Press any button or move the stick on the Wiimote or Nunchuk now. Press Home to clear the existing mapping.");
 			break;
 		default:
 			sprintf(msg, "Press any button to map. Press Home to clear.");
@@ -2625,6 +2626,7 @@ static uint32_t ButtonMappingWindow()
 
 	uint32_t pressed = 0;
 	buttonMappingCancelled = false;
+	bool sticksCentered = false; // a stick already pushed when the window opens doesn't count
 
 	while(pressed == 0 && !buttonMappingCancelled)
 	{
@@ -2637,6 +2639,13 @@ static uint32_t ButtonMappingWindow()
 		// Listen strictly to the specific hardware profile being mapped
 		pressed = pad.hw_buttons_d[mapMenuCtrl];
         if (mapMenuCtrl == INPUT_HW_NUNCHUK) pressed |= pad.hw_buttons_d[INPUT_HW_WIIMOTE];
+		uint32_t sticks = VBStickBits(pad, mapMenuCtrl);
+		if (mapMenuCtrl == INPUT_HW_GAMECUBE)
+			sticks &= ~(INPUT_RSTICK_UP | INPUT_RSTICK_DOWN | INPUT_RSTICK_LEFT | INPUT_RSTICK_RIGHT); // the C-stick clears
+		if (!sticksCentered)
+			sticksCentered = (sticks == 0);
+		else if (!pressed && sticks)
+			pressed = sticks & (~sticks + 1);
 
 		// C-Stick clear for GameCube specifically
 		if(mapMenuCtrl == INPUT_HW_GAMECUBE)
@@ -2793,13 +2802,15 @@ static int MenuSettingsMappingsMap()
 			for(i=0; i < options.length; i++)
 			{
 				options.value[i][0] = 0; // (unmapped, or a button this controller doesn't list)
-				for(j=0; j < ctrlr_def[mapMenuCtrl].num_btns && btnmap[CTRL_PAD][mapMenuCtrl][i]; j++)
+				// a VB button can have a button and a stick direction (the defaults do): show both
+				uint32_t shown = 0;
+				for(j=0; j < ctrlr_def[mapMenuCtrl].num_btns; j++)
 				{
-					if(btnmap[CTRL_PAD][mapMenuCtrl][i] == ctrlr_def[mapMenuCtrl].map[j].btn)
-					{
-						sprintf(options.value[i], "%s", ctrlr_def[mapMenuCtrl].map[j].name);
-						break;
-					}
+					uint32_t bit = ctrlr_def[mapMenuCtrl].map[j].btn;
+					if(!bit || !(btnmap[CTRL_PAD][mapMenuCtrl][i] & bit) || (shown & bit)) continue;
+					if(shown) strcat(options.value[i], " / ");
+					strcat(options.value[i], ctrlr_def[mapMenuCtrl].map[j].name);
+					shown |= bit;
 				}
 			}
 			optionBrowser.triggerUpdate();

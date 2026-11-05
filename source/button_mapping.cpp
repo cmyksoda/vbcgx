@@ -22,7 +22,7 @@ CtrlrMap ctrlr_def[6] = {
 // Gamecube controller btn def
 {
 	INPUT_HW_GAMECUBE,
-	13,
+	21,
 	{
 		{INPUT_BTN_DOWN, "DOWN"},
 		{INPUT_BTN_UP, "UP"},
@@ -37,8 +37,14 @@ CtrlrMap ctrlr_def[6] = {
 		{INPUT_TRIGGER_L, "L"},
 		{INPUT_TRIGGER_R, "R"},
 		{INPUT_TRIGGER_ZR, "Z"}, // (the GameCube driver reports Z as ZR)
-		{INPUT_BTN_NONE, ""},
-		{INPUT_BTN_NONE, ""}
+		{INPUT_LSTICK_UP, "LS UP"},
+		{INPUT_LSTICK_DOWN, "LS DOWN"},
+		{INPUT_LSTICK_LEFT, "LS LEFT"},
+		{INPUT_LSTICK_RIGHT, "LS RIGHT"},
+		{INPUT_RSTICK_UP, "C UP"},
+		{INPUT_RSTICK_DOWN, "C DOWN"},
+		{INPUT_RSTICK_LEFT, "C LEFT"},
+		{INPUT_RSTICK_RIGHT, "C RIGHT"}
 	}
 },
 // Wiimote btn def
@@ -66,7 +72,7 @@ CtrlrMap ctrlr_def[6] = {
 // Nunchuk btn def
 {
 	INPUT_HW_NUNCHUK,
-	13,
+	17,
 	{
 		{INPUT_BTN_DOWN, "DOWN"},
 		{INPUT_BTN_UP, "UP"},
@@ -81,14 +87,16 @@ CtrlrMap ctrlr_def[6] = {
 		{INPUT_BTN_HOME, "HOME"},
 		{INPUT_TRIGGER_ZL, "Z"},
 		{INPUT_TRIGGER_L, "C"},
-		{INPUT_BTN_NONE, ""},
-		{INPUT_BTN_NONE, ""}
+		{INPUT_LSTICK_UP, "LS UP"},
+		{INPUT_LSTICK_DOWN, "LS DOWN"},
+		{INPUT_LSTICK_LEFT, "LS LEFT"},
+		{INPUT_LSTICK_RIGHT, "LS RIGHT"}
 	}
 },
 // Classic btn def
 {
 	INPUT_HW_CLASSIC,
-	15,
+	23,
 	{
 		{INPUT_BTN_DOWN, "DOWN"},
 		{INPUT_BTN_UP, "UP"},
@@ -105,12 +113,21 @@ CtrlrMap ctrlr_def[6] = {
 		{INPUT_TRIGGER_R, "R TRIG"},
 		{INPUT_TRIGGER_ZL, "ZL"},
 		{INPUT_TRIGGER_ZR, "ZR"}
+		,
+		{INPUT_LSTICK_UP, "LS UP"},
+		{INPUT_LSTICK_DOWN, "LS DOWN"},
+		{INPUT_LSTICK_LEFT, "LS LEFT"},
+		{INPUT_LSTICK_RIGHT, "LS RIGHT"},
+		{INPUT_RSTICK_UP, "RS UP"},
+		{INPUT_RSTICK_DOWN, "RS DOWN"},
+		{INPUT_RSTICK_LEFT, "RS LEFT"},
+		{INPUT_RSTICK_RIGHT, "RS RIGHT"}
 	}
 },
 // Wii U Pro controller
 {
 	INPUT_HW_WUPC,
-	15,
+	23,
 	{
 		{INPUT_BTN_DOWN, "DOWN"},
 		{INPUT_BTN_UP, "UP"},
@@ -127,12 +144,21 @@ CtrlrMap ctrlr_def[6] = {
 		{INPUT_TRIGGER_R, "R"},
 		{INPUT_TRIGGER_ZL, "ZL"},
 		{INPUT_TRIGGER_ZR, "ZR"}
+		,
+		{INPUT_LSTICK_UP, "LS UP"},
+		{INPUT_LSTICK_DOWN, "LS DOWN"},
+		{INPUT_LSTICK_LEFT, "LS LEFT"},
+		{INPUT_LSTICK_RIGHT, "LS RIGHT"},
+		{INPUT_RSTICK_UP, "RS UP"},
+		{INPUT_RSTICK_DOWN, "RS DOWN"},
+		{INPUT_RSTICK_LEFT, "RS LEFT"},
+		{INPUT_RSTICK_RIGHT, "RS RIGHT"}
 	}
 },
 // Wii U Gamepad btn def
 {
 	INPUT_HW_DRC,
-	15,
+	23,
 	{
 		{INPUT_BTN_DOWN, "DOWN"},
 		{INPUT_BTN_UP, "UP"},
@@ -149,6 +175,15 @@ CtrlrMap ctrlr_def[6] = {
 		{INPUT_TRIGGER_R, "R"},
 		{INPUT_TRIGGER_ZL, "ZL"},
 		{INPUT_TRIGGER_ZR, "ZR"}
+		,
+		{INPUT_LSTICK_UP, "LS UP"},
+		{INPUT_LSTICK_DOWN, "LS DOWN"},
+		{INPUT_LSTICK_LEFT, "LS LEFT"},
+		{INPUT_LSTICK_RIGHT, "LS RIGHT"},
+		{INPUT_RSTICK_UP, "RS UP"},
+		{INPUT_RSTICK_DOWN, "RS DOWN"},
+		{INPUT_RSTICK_LEFT, "RS LEFT"},
+		{INPUT_RSTICK_RIGHT, "RS RIGHT"}
 	}
 }
 };

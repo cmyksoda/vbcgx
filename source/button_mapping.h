@@ -17,13 +17,13 @@ const char ctrlrName[6][32] =
 
 typedef struct _btn_map {
 	uint32_t btn;					// button 'id'
-	char name[7];				// button name
+	char name[12];				// button name
 } BtnMap;
 
 typedef struct _ctrlr_map {
 	uint16_t type;					// controller type
 	int num_btns;				// number of buttons on the controller
-	BtnMap map[15];				// controller button map
+	BtnMap map[24];				// controller button map (stick directions included)
 } CtrlrMap;
 
 extern CtrlrMap ctrlr_def[6];
