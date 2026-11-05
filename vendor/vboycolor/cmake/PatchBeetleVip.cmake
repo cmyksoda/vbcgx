@@ -761,7 +761,7 @@ else
         [=[      if(pixels & 3)
       {
        *target = JPLT_Cache[palette_selector][pixels & 3];
-       if(vbgo_orow && (unsigned)(target - row - ClipX0) <= (unsigned)(ClipX1 - ClipX0)) /* VirtualBoyGo */
+       if(vbgo_otags && (unsigned)(target - row - ClipX0) <= (unsigned)(ClipX1 - ClipX0)) /* VirtualBoyGo */
         vbgo_orow[(target - row) * VBGO_TT_COLUMN] = vbgo_obits | ((8 - meow) << 11) | ((pixels & 3) << 20),
         vbgo_ocrow[(target - row) * VBGO_TT_CELL_COLUMN] = vbgo_ocell;
       }
@@ -774,7 +774,7 @@ else
         [=[      if(pixels & 3)
       {
        *target = JPLT_Cache[palette_selector][pixels & 3];
-       if(vbgo_orow && (unsigned)(target - row - ClipX0) <= (unsigned)(ClipX1 - ClipX0)) /* VirtualBoyGo */
+       if(vbgo_otags && (unsigned)(target - row - ClipX0) <= (unsigned)(ClipX1 - ClipX0)) /* VirtualBoyGo */
         vbgo_orow[(target - row) * VBGO_TT_COLUMN] = vbgo_obits | ((8 - meow) << 11) | ((pixels & 3) << 20),
         vbgo_ocrow[(target - row) * VBGO_TT_CELL_COLUMN] = vbgo_ocell;
       }
@@ -806,6 +806,15 @@ static VBGO_NOINLINE void VbgoObjRow(uint8 *target, uint32_t *tag, uint16_t *cel
  }
 }
 
+/* VirtualBoyGo: the same for an eye whose tags aren't stored (vbgo_tt_tags) */
+static VBGO_NOINLINE void VbgoObjPixels(uint8 *target, const uint8 *plt, uint32 pixels, int flipped)
+{
+ int k;
+ for(k = 0; k < 8; k++)
+  if((pixels >> (k * 2)) & 3)
+   target[flipped ? 7 - k : k] = plt[(pixels >> (k * 2)) & 3];
+}
+
 static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, int count)]=]
         "vip_draw.inc (DrawOBJ row helper)")
     _vbgo_replace_once(DRAW
@@ -820,7 +829,9 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, in
      uint32_t *tag = vbgo_orow + x * VBGO_TT_COLUMN;
      uint16_t *const cell = vbgo_ocrow + x * VBGO_TT_CELL_COLUMN;
      const int flipped = (oam_ptr[3] & 0x2000) != 0;
-     if(((pixels | (pixels >> 1)) & 0x5555) == 0x5555)
+     if(!vbgo_otags)
+      VbgoObjPixels(target, plt, pixels, flipped);
+     else if(((pixels | (pixels >> 1)) & 0x5555) == 0x5555)
      {
       /* (every pixel drawn: straight-line, from the left, or from the right flipped) */
       uint8 *dst = flipped ? target + 7 : target;
@@ -854,6 +865,7 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, in
     /* VirtualBoyGo: this sprite row's tags - all but the pixel's place in the tile and its value */
     uint32_t *const vbgo_orow = vbgo_tt_row(row);
     uint16_t *const vbgo_ocrow = vbgo_tt_cell_row(row);
+    const int vbgo_otags = vbgo_orow && vbgo_stags;
     const uint32_t vbgo_obits = vbgo_tt_call_bits() | char_no | (char_sub_y << 14) | (palette_selector << 17) | (1u << 19);
     const uint16_t vbgo_ocell = VBGO_TT_OBJ_CELL(oam);
 ]=]
@@ -862,7 +874,8 @@ static void DrawOBJ(uint8 *fb[2], uint16 Y, bool lron[2], const uint16 *list, in
     _vbgo_replace_once(DRAW
         [=[   for(left = rows; left; left &= left - 1)
 ]=]
-        [=[   if(vbgo_tt_on) /* VirtualBoyGo */
+        [=[   const int vbgo_stags = !lr || vbgo_tt_right_now; /* VirtualBoyGo: its rows store tags (vbgo_tt_tags) */
+   if(vbgo_tt_on) /* VirtualBoyGo */
     vbgo_tt_ocells[x > 0 ? x >> 3 : 0] = vbgo_tt_ocells[x + 7 < 384 ? (x + 7) >> 3 : 47] = 1;
    for(left = rows; left; left &= left - 1)
 ]=]

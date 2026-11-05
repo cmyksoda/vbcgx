@@ -32,6 +32,7 @@ typedef struct
  uint16_t *crow;
  unsigned sy7; /* (the chunk's first row's y in its tiles) */
  int n, skip;
+ int tags; /* (vbgo_tt_tags) */
 } VbgoFrontChunk;
 
 /* A pointer some bytes back (maybe before its array: the imagined rows ahead of a chunk's first are never touched). */
@@ -112,7 +113,7 @@ static INLINE unsigned VbgoGained(uint32 old, uint32 now)
 
 /* vbgo_tt_tag_row8 for the pixels nothing in front has drawn (the cover cov); whether it tagged any. */
 static VBGO_NOINLINE int VbgoTagRow8Front(uint32_t *d, uint16_t *c, const uint8 *cov, unsigned pixels, int flipped,
-                                          uint32_t bits, int fills, unsigned cell)
+                                          uint32_t bits, int fills, unsigned cell, int tags)
 {
  int any = 0;
  unsigned k;
@@ -123,8 +124,8 @@ static VBGO_NOINLINE int VbgoTagRow8Front(uint32_t *d, uint16_t *c, const uint8 
    continue;
   if(pv || fills)
   {
-   d[k * VBGO_TT_COLUMN] = bits | (n << 11) | (pv << 20);
-   c[k * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
+   if(tags)
+    d[k * VBGO_TT_COLUMN] = bits | (n << 11) | (pv << 20), c[k * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
    any = 1;
   }
  }
@@ -147,16 +148,16 @@ static VBGO_NOINLINE void VbgoRunFront(uint8 *target, uint8 *cov, uint16 *covere
   if(pixel)
   {
    target[at] = GPLT_Cache[bgsc >> 14][pixel];
-   row[at * VBGO_TT_COLUMN] = cbits | in_tile << 11 | pixel << 20;
-   crow[at * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
+   if(row)
+    row[at * VBGO_TT_COLUMN] = cbits | in_tile << 11 | pixel << 20, crow[at * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
    vbgo_tt_wcells[at >> 3] |= wbit;
    cov[at] = 0xFF;
    ++*covered;
   }
   else if(fills)
   {
-   row[at * VBGO_TT_COLUMN] = cbits | in_tile << 11;
-   crow[at * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
+   if(row)
+    row[at * VBGO_TT_COLUMN] = cbits | in_tile << 11, crow[at * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
    vbgo_tt_wcells[at >> 3] |= wbit, vbgo_tt_fillc[at >> 3] = 1;
    cov[at] = 1;
   }
@@ -192,11 +193,12 @@ static VBGO_NOINLINE unsigned VbgoFrontRow8(const VbgoFrontChunk *c, int v, int 
  memcpy(&shades[0], GPLT_Quad[palette_selector][p & 0xFF], 4);
  memcpy(&shades[1], GPLT_Quad[palette_selector][p >> 8], 4);
  if(!(c0 | c1))
-  flags = vbgo_tt_tag_row8_fills(trow + x * VBGO_TT_COLUMN, crow + x * VBGO_TT_CELL_COLUMN, pixels, flipped, tbits,
-                                 cell, 1) != 0;
+  flags = (c->tags ? vbgo_tt_tag_row8_fills(trow + x * VBGO_TT_COLUMN, crow + x * VBGO_TT_CELL_COLUMN, pixels, flipped,
+                                            tbits, cell, 1)
+                   : vbgo_tt_row8_flags(pixels, 1)) != 0;
  else
   flags = VbgoTagRow8Front(trow + x * VBGO_TT_COLUMN, crow + x * VBGO_TT_CELL_COLUMN, cv + x, pixels, flipped, tbits,
-                           fills, cell);
+                           fills, cell, c->tags);
  if(fills)
   flags |= 2;
  memcpy(&drawn[0], OpaqueQuad[p & 0xFF], 4);
@@ -254,7 +256,7 @@ static INLINE bool VbgoNoFills(int *fills_here, uint32 bgsc, unsigned cell)
 
 /* Tag pixel k of imagined row v and store its cell, if own (its group's word: byte j) says the row draws it. */
 #define VBGO_SLOW_TAG(v, own, j, k) \
- if((own) & VBGO_BYTE(j)) \
+ if(tags && ((own) & VBGO_BYTE(j))) \
  { \
   tag[(v) + (k) * VBGO_TT_COLUMN] = ((b ^ (uint32_t)(k) << 11) & ~(3u << 20)) | ((p << (20 - 2 * (k))) & (3u << 20)); \
   crow[(v) * VBGO_TT_CELL_ROW + (k)] = (uint16_t)cell; \
@@ -333,12 +335,15 @@ static INLINE bool VbgoNoFills(int *fills_here, uint32 bgsc, unsigned cell)
     p = ((p >> 8) & 0x00FF) | ((p & 0x00FF) << 8); \
    } \
    VBGO_HIDE(b); \
-   VBGO_FRONT_TAG(v, 0) VBGO_FRONT_TAG(v, 1) VBGO_FRONT_TAG(v, 2) VBGO_FRONT_TAG(v, 3) \
-   VBGO_FRONT_TAG(v, 4) VBGO_FRONT_TAG(v, 5) VBGO_FRONT_TAG(v, 6) VBGO_FRONT_TAG(v, 7) \
-   memcpy(crow + (v) * VBGO_TT_CELL_ROW, &cells, 4); \
-   memcpy(crow + (v) * VBGO_TT_CELL_ROW + 2, &cells, 4); \
-   memcpy(crow + (v) * VBGO_TT_CELL_ROW + 4, &cells, 4); \
-   memcpy(crow + (v) * VBGO_TT_CELL_ROW + 6, &cells, 4); \
+   if(tags) \
+   { \
+    VBGO_FRONT_TAG(v, 0) VBGO_FRONT_TAG(v, 1) VBGO_FRONT_TAG(v, 2) VBGO_FRONT_TAG(v, 3) \
+    VBGO_FRONT_TAG(v, 4) VBGO_FRONT_TAG(v, 5) VBGO_FRONT_TAG(v, 6) VBGO_FRONT_TAG(v, 7) \
+    memcpy(crow + (v) * VBGO_TT_CELL_ROW, &cells, 4); \
+    memcpy(crow + (v) * VBGO_TT_CELL_ROW + 2, &cells, 4); \
+    memcpy(crow + (v) * VBGO_TT_CELL_ROW + 4, &cells, 4); \
+    memcpy(crow + (v) * VBGO_TT_CELL_ROW + 6, &cells, 4); \
+   } \
    VBGO_ORDER; \
    memcpy(&shades0, quad[p & 0xFF], 4); \
    memcpy(&shades1, quad[p >> 8], 4); \
@@ -358,7 +363,8 @@ static INLINE bool VbgoNoFills(int *fills_here, uint32 bgsc, unsigned cell)
  }
 
 /* A chunk's whole tiles: the rows' groups nothing in front has covered. */
-static VBGO_NOINLINE void VbgoFrontTiles(const VbgoFrontChunk *c, const VbgoFrontTile *tile, int count)
+static inline __attribute__((always_inline)) void VbgoFrontTilesAs(const VbgoFrontChunk *c, const VbgoFrontTile *tile,
+                                                                   int count, const int tags)
 {
  const VbgoFrontTile *const end = tile + count;
  unsigned covered_total = 0;
@@ -419,6 +425,17 @@ static VBGO_NOINLINE void VbgoFrontTiles(const VbgoFrontChunk *c, const VbgoFron
  }
  VbgoFrontSkipped += covered_total;
  VbgoFrontRead += c->n * count - covered_total;
+}
+
+/* (a copy each way, so neither tests per row whether it stores tags) */
+static VBGO_NOINLINE void VbgoFrontTilesTagged(const VbgoFrontChunk *c, const VbgoFrontTile *tile, int count)
+{
+ VbgoFrontTilesAs(c, tile, count, 1);
+}
+
+static VBGO_NOINLINE void VbgoFrontTilesUntagged(const VbgoFrontChunk *c, const VbgoFrontTile *tile, int count)
+{
+ VbgoFrontTilesAs(c, tile, count, 0);
 }
 #undef VBGO_FRONT_ROW
 #undef VBGO_SLOW_ROW
@@ -520,6 +537,7 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
    chunk.cv = VbgoBack(uint8 *, cover->row[first_y], skip * VBGO_COVER_WIDTH);
    chunk.cnt = VbgoBack(uint16 *, &cover->covered[first_y], skip * sizeof(uint16));
    chunk.trow = VbgoBack(uint32_t *, vbgo_tt_row(tgt), skip * sizeof(uint32_t));
+   chunk.tags = vbgo_tt_tags(tgt);
    chunk.crow = VbgoBack(uint16_t *, vbgo_tt_cell_row(tgt), skip * VBGO_TT_CELL_ROW * sizeof(uint16_t));
   }
 
@@ -641,22 +659,28 @@ static VBGO_NOINLINE void DrawBGBlockFront(uint8 *fb_eye, VbgoCover *cover, unsi
      p = (p >> (offset * 2)) & ((1u << (run * 2)) - 1);
      VbgoRunFront(chunk.tgt + v * 512, chunk.cv + v * VBGO_COVER_WIDTH, chunk.cnt + v, x, offset, run, p, bgsc,
                   vbgo_bits | VBGO_TT_BG_BITS(char_no, 0, char_sub_y, palette_selector, 0), cell, fills_here,
-                  chunk.trow + v, chunk.crow + v * VBGO_TT_CELL_ROW, vbgo_wbit);
+                  chunk.tags ? chunk.trow + v : NULL, chunk.crow + v * VBGO_TT_CELL_ROW, vbgo_wbit);
     }
    }
    x += run;
    sx += run;
   }
   if(tile != tiles)
-   VbgoFrontTiles(&chunk, tiles, tile - tiles);
+  {
+   if(chunk.tags)
+    VbgoFrontTilesTagged(&chunk, tiles, tile - tiles);
+   else
+    VbgoFrontTilesUntagged(&chunk, tiles, tile - tiles);
+  }
  }
 }
 
 /* DrawOBJ for a block's open rows (bit y: row y) of one eye (lr; on: the world shows in it), the sprites last to first
  * (the last drawn is in front), each pixel only where nothing in front has drawn. Rows don't touch each other, so each
  * sprite draws all its rows. */
-static VBGO_NOINLINE void DrawOBJFront(uint8 *fb, VbgoCover *cover, int lr, unsigned open, uint16 Y0, bool on,
-                                       const uint16 *list, int count)
+static inline __attribute__((always_inline)) void DrawOBJFrontAs(uint8 *fb, VbgoCover *cover, int lr, unsigned open,
+                                                                 uint16 Y0, bool on, const uint16 *list, int count,
+                                                                 const int tags)
 {
  const uint16 *CHR16 = CHR_RAM;
 
@@ -746,15 +770,19 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb, VbgoCover *cover, int lr, unsi
  { \
   const uint32 pv = (p >> ((j) * 2)) & 3; \
   row[x + (j)] = plt[pv]; \
-  tag[(j) * VBGO_TT_COLUMN] = (b + (uint32_t)((j) * step)) | pv << 20; \
+  if(tags) \
+   tag[(j) * VBGO_TT_COLUMN] = (b + (uint32_t)((j) * step)) | pv << 20; \
  }
        VBGO_FRONT_OBJ(0) VBGO_FRONT_OBJ(1) VBGO_FRONT_OBJ(2) VBGO_FRONT_OBJ(3)
        VBGO_FRONT_OBJ(4) VBGO_FRONT_OBJ(5) VBGO_FRONT_OBJ(6) VBGO_FRONT_OBJ(7)
 #undef VBGO_FRONT_OBJ
-       memcpy(crow + x * VBGO_TT_CELL_COLUMN, &cells, 4);
-       memcpy(crow + x * VBGO_TT_CELL_COLUMN + 2, &cells, 4);
-       memcpy(crow + x * VBGO_TT_CELL_COLUMN + 4, &cells, 4);
-       memcpy(crow + x * VBGO_TT_CELL_COLUMN + 6, &cells, 4);
+       if(tags)
+       {
+        memcpy(crow + x * VBGO_TT_CELL_COLUMN, &cells, 4);
+        memcpy(crow + x * VBGO_TT_CELL_COLUMN + 2, &cells, 4);
+        memcpy(crow + x * VBGO_TT_CELL_COLUMN + 4, &cells, 4);
+        memcpy(crow + x * VBGO_TT_CELL_COLUMN + 6, &cells, 4);
+       }
        d0 = d1 = 0xFFFFFFFFu;
       }
       else
@@ -765,8 +793,9 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb, VbgoCover *cover, int lr, unsi
         if(pv)
         {
          row[x + n] = plt[pv];
-         tag[n * VBGO_TT_COLUMN] = obits | (uint32_t)(flipped ? 7 - n : n) << 11 | pv << 20;
-         crow[(x + n) * VBGO_TT_CELL_COLUMN] = ocell;
+         if(tags)
+          tag[n * VBGO_TT_COLUMN] = obits | (uint32_t)(flipped ? 7 - n : n) << 11 | pv << 20,
+          crow[(x + n) * VBGO_TT_CELL_COLUMN] = ocell;
         }
        }
        memcpy(&d0, OpaqueQuad[p & 0xFF], 4);
@@ -788,8 +817,8 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb, VbgoCover *cover, int lr, unsi
      if(pv && at >= clip0 && at <= clip1 && cv[at] != 0xFF)
      {
       row[at] = plt[pv];
-      trow[at * VBGO_TT_COLUMN] = obits | (uint32_t)n << 11 | pv << 20;
-      crow[at * VBGO_TT_CELL_COLUMN] = ocell;
+      if(tags)
+       trow[at * VBGO_TT_COLUMN] = obits | (uint32_t)n << 11 | pv << 20, crow[at * VBGO_TT_CELL_COLUMN] = ocell;
       cv[at] = 0xFF;
       ++*covered;
       any = 1;
@@ -800,6 +829,18 @@ static VBGO_NOINLINE void DrawOBJFront(uint8 *fb, VbgoCover *cover, int lr, unsi
    }
   }
  }
+}
+
+static VBGO_NOINLINE void DrawOBJFrontTagged(uint8 *fb, VbgoCover *cover, int lr, unsigned open, uint16 Y0, bool on,
+                                             const uint16 *list, int count)
+{
+ DrawOBJFrontAs(fb, cover, lr, open, Y0, on, list, count, 1);
+}
+
+static VBGO_NOINLINE void DrawOBJFrontUntagged(uint8 *fb, VbgoCover *cover, int lr, unsigned open, uint16 Y0, bool on,
+                                               const uint16 *list, int count)
+{
+ DrawOBJFrontAs(fb, cover, lr, open, Y0, on, list, count, 0);
 }
 
 /* Front to back costs a little more for each group it draws and saves each one covered, but DrawBG draws an overplane
@@ -886,7 +927,12 @@ static VBGO_NOINLINE void VbgoDrawFront(uint8 block_no, uint8 *fb_l, uint8 *fb_r
      if(cover.covered[y] < ClipX1 - ClipX0 + 1)
       open |= 1u << y;
     if(counts[k] && open)
-     DrawOBJFront(fb, &cover, lr, open, block_no * 8, a->lron[lr], list, counts[k]);
+    {
+     if(vbgo_tt_tags(fb))
+      DrawOBJFrontTagged(fb, &cover, lr, open, block_no * 8, a->lron[lr], list, counts[k]);
+     else
+      DrawOBJFrontUntagged(fb, &cover, lr, open, block_no * 8, a->lron[lr], list, counts[k]);
+    }
    }
    else if(a->bgm != BGM_AFFINE && a->lron[lr])
     DrawBGBlockFront(fb, &cover, block_no, lr, a);

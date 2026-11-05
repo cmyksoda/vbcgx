@@ -414,6 +414,22 @@ __attribute__((noinline)) bool GatherCellSlots(uint8_t *dst, size_t slotBytes, i
 }
 } // namespace
 
+// The worlds whose right-eye runs count: while the right eye's tags aren't all stored, only those drawn in it alone
+// (wherever they may show, every tag is kept - see vbgo_tiletrack_set_right_tags).
+static uint32_t RightWorldsRead(const uint16_t *worlds)
+{
+    if (vbgo_tt_right_tags || !worlds)
+        return ~0u;
+    uint32_t alone = 0;
+    for (unsigned w = 0; w < 32; ++w)
+    {
+        const uint16_t *const world = &worlds[w * 16];
+        alone |= static_cast<uint32_t>(VBGO_WORLD_RON(world) && !VBGO_WORLD_LON(world) && VBGO_WORLD_TYPE(world) != 3)
+                 << w;
+    }
+    return alone;
+}
+
 // The worlds with tags drawn in a grid cell, a bit each.
 __attribute__((noinline)) static uint32_t CellWorlds(const vbgo_tt_eye_view &v, unsigned band, unsigned cell)
 {
@@ -2344,6 +2360,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         // a run there that resizes its layer; a layer this wide is sized by its width alone)
         constexpr int kSizedByWidth = VBGO_TT_HEIGHT - 1 + 7;
         uint32_t *const cellWorlds = m_rightCellWorlds.data();
+        const uint32_t read = RightWorldsRead(v.worlds);
 
         // (a start of world w in band b, at columns x0 - x1, can't widen its layer)
         auto reached = [&](unsigned w, int b, int x0, int x1) {
@@ -2400,7 +2417,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     const unsigned y = b * 8 + (static_cast<unsigned>(__builtin_ctz(todo)) >> 1);
                     const uint32_t lo = column[y];
                     const unsigned w = VBGO_TAG_WORLD(lo);
-                    if ((seen >> w & 1) || VBGO_TAG_IS_OBJ(lo) || !vbgo_tag_drawn(lo, v.band_key[b]) ||
+                    if ((seen >> w & 1) || !(read >> w & 1) || VBGO_TAG_IS_OBJ(lo) ||
+                        !vbgo_tag_drawn(lo, v.band_key[b]) ||
                         (!noFills && VBGO_TAG_PIXEL(lo) && !(m_rightLit[x] >> (band >> ((y & 7) * 2) & 3) & 1)))
                         continue;
                     if (!reached(w, static_cast<int>(b), static_cast<int>(c * 8), static_cast<int>(c * 8 + 7)))
@@ -2453,6 +2471,7 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                                 worlds |= 1u << VBGO_TAG_WORLD(tags[y]);
                     }
                 }
+                worlds &= read;
                 cellWorlds[b * kGridW + c] = worlds;
                 if (!worlds)
                     continue;
@@ -2548,7 +2567,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                             continue;
                         runLo = lo, runHi = hi;
                         const uint64_t t = vbgo_tag_compose(column[y], cells[vbgo_tt_cell_at(y)]);
-                        countRun(keyColors(t), x, y, eyeColumn[static_cast<uint32_t>(y)] >> 26, nullptr, 0);
+                        if (VBGO_TAG_IS_OBJ(t) || (read >> VBGO_TAG_WORLD(t) & 1))
+                            countRun(keyColors(t), x, y, eyeColumn[static_cast<uint32_t>(y)] >> 26, nullptr, 0);
                     }
                     walked = b;
                 }
@@ -4423,6 +4443,14 @@ int ColorPackRenderer::EstimatePairs(const vbgo_tt_eye_view view[2])
 
     if (!count)
         return unsearched;
+
+    // (while the right eye's tags aren't all stored it goes uncolored, and nothing else reads a disparity)
+    if (!vbgo_tt_right_tags)
+    {
+        for (int k = 0; k < count; ++k)
+            m_pairs[todo[k]].estimated = true, m_pairs[todo[k]].estimatedAt = m_frame;
+        return count + unsearched;
+    }
 
     // Both pictures of every one of them, in one pass: per pair, per eye,
     // per row, per shade 1-3, a guarded bit row.

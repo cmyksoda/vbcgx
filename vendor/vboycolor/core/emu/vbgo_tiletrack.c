@@ -4,6 +4,7 @@
 #include <string.h>
 
 int vbgo_tt_on = 0;
+int vbgo_tt_right_tags = 1, vbgo_tt_right_now = 1;
 int vbgo_tt_fill = VBGO_TT_FILLS_NONE;
 uint32_t vbgo_tt_world = 0;
 const uint8_t *vbgo_tt_block_base = NULL;
@@ -24,6 +25,11 @@ static uint32_t s_tags[VBGO_TT_SLOTS][2][VBGO_TT_WIDTH * VBGO_TT_COLUMN] __attri
 /* ... and each tag's cell, [slot][eye][row * VBGO_TT_CELL_ROW + column] (8 more rows to draw a block aside in). Only
  * read where the tag is drawn, so they're cleared only as whole lines (16 columns), to claim what drawing writes. */
 static uint16_t s_cells[VBGO_TT_SLOTS][2][(VBGO_TT_HEIGHT + 8) * VBGO_TT_CELL_ROW] __attribute__((aligned(64)));
+
+/* Per slot, a bit per block whose right-eye lines may hold tags (else they're all 0: none to clear, compare or put back
+ * - see vbgo_tiletrack_set_right_tags); and the eyes the block being drawn compares and puts back. */
+static uint32_t s_right_dirty[VBGO_TT_SLOTS];
+static unsigned s_eyes = 2;
 
 /* One column of a band's tags (8), or a row of 16 columns' cells: one whole cache line. dcbz skips reading what's
  * about to be cleared. */
@@ -141,6 +147,7 @@ static uint16_t s_prev_stamp[2]; /* per frame buffer: its last pass's stamp, as 
 static uint16_t s_block_was;     /* the block begun last: its slot's stamp before */
 static int s_block_slot = -1;    /* ... its slot and number */
 static unsigned s_block_no;
+static int s_whole;              /* ... drawn whole (block_drawing), not in part */
 
 /* Per frame buffer: its slot, whether it has tags, and whether the CPU wrote
  * into it since its pass (or a reset since). */
@@ -273,6 +280,7 @@ static void CopyBlock(int k, unsigned b)
       }
    }
    s_lazy[k] &= ~(1u << b);
+   s_right_dirty[k] = (s_right_dirty[k] & ~(1u << b)) | (s_right_dirty[from] & 1u << b);
 }
 
 static void Settle(int k)
@@ -329,6 +337,7 @@ static void Unshare(unsigned fb, int lazily)
       memcpy(s_tags[to], s_tags[from], sizeof(s_tags[to]));
       memcpy(s_cells[to], s_cells[from], sizeof(s_cells[to]));
       s_lazy[to] = 0;
+      s_right_dirty[to] = s_right_dirty[from];
    }
 
    memcpy(s_tagged[to], s_tagged[from], sizeof(s_tagged[to]));
@@ -511,6 +520,7 @@ void vbgo_tiletrack_reset(void)
 {
    ForgetCpuResets();
    memset(s_tags, 0, sizeof(s_tags));
+   memset(s_right_dirty, 0, sizeof(s_right_dirty));
    memset(s_lazy, 0, sizeof(s_lazy));
    memset(s_block_stamp, 0, sizeof(s_block_stamp));
    memset(s_band_pass, 0, sizeof(s_band_pass));
@@ -537,6 +547,8 @@ void vbgo_tiletrack_forget_buffer(unsigned fb, unsigned lr)
    Settle(s_slot[fb & 1]);
    SettleFrom(s_slot[fb & 1]);
    memset(s_tags[s_slot[fb & 1]][lr & 1], 0, sizeof(s_tags[0][0]));
+   if (lr & 1)
+      s_right_dirty[s_slot[fb & 1]] = 0;
    memset(s_block_stamp[s_slot[fb & 1]], 0, sizeof(s_block_stamp[0]));
    memset(s_cell_version[s_slot[fb & 1]], 0, sizeof(s_cell_version[0]));
    memset(s_cell_black[s_slot[fb & 1]], 0, sizeof(s_cell_black[0]));
@@ -561,6 +573,13 @@ void vbgo_tiletrack_set_fill_mode(int mode)
    if (vbgo_tt_fill != mode)
       ForgetBlocks();
    vbgo_tt_fill = mode;
+}
+
+void vbgo_tiletrack_set_right_tags(bool on)
+{
+   if (vbgo_tt_right_tags != (on ? 1 : 0))
+      ForgetBlocks();
+   vbgo_tt_right_tags = vbgo_tt_right_now = on ? 1 : 0;
 }
 
 void vbgo_tiletrack_set_fill_cells(const uint8_t *bits)
@@ -602,6 +621,7 @@ void vbgo_tiletrack_begin_block(const uint8_t *drawing_buffers, const uint16_t *
    vbgo_tt_world = 0;
    s_block_slot = s_slot[fb];
    s_block_no = block_no;
+   s_whole = 0;
 
    if (block_no < VBGO_TT_BLOCKS)
    {
@@ -634,6 +654,8 @@ static inline void ClearLines8(void *line, unsigned stride)
 /* Before drawing into the block begun last: clear these cells' tags in one eye. */
 static void ClearEyeCells(unsigned e, uint64_t cells)
 {
+   if (e && !(s_right_dirty[s_block_slot] >> s_block_no & 1))
+      return;
    /* (cell lines span two 8x8 cells: claimed where both are cleared; the pointers are kept in locals so the clears
     * don't reload them) */
    uint64_t pairs = cells & (cells >> 1) & 0x5555555555555555ull;
@@ -729,6 +751,7 @@ bool vbgo_tiletrack_adopt_block(unsigned fb)
    s_tagged[to][b] = s_tagged[from][b];
    s_obj_cells[to][b] = s_obj_cells[from][b];
    s_filled_cells[to][b] = s_filled_cells[from][b];
+   s_right_dirty[to] = (s_right_dirty[to] & ~(1u << b)) | (s_right_dirty[from] & 1u << b);
    memset(s_motion[to][b], 0, sizeof(s_motion[0][0]));
    s_motion_cells[to][b] = 0;
    return true;
@@ -762,6 +785,7 @@ void vbgo_tiletrack_block_drawing(bool compare)
       return;
 
    s_old_valid = compare && s_block_was && s_prev_valid;
+   s_whole = 1;
    tagged = s_tagged[s_block_slot][s_block_no];
 
    /* (a lazy block's old tags are still in its source; its own stale ones are what's cleared) */
@@ -803,7 +827,7 @@ static __attribute__((noinline)) int SameCell(unsigned c)
     * one tile's pixels asks once whether the tile changed, and only a column with a sprite asks about sprites) */
    const uint32_t *const chr_changed = s_block_chr_changed ? s_chr_changed : NULL;
    unsigned e, x, y;
-   for (e = 0; e < 2; e++)
+   for (e = 0; e < s_eyes; e++)
    {
       const uint32_t *was = s_aside_tags[e] + c * 8 * VBGO_TT_COLUMN, *is = vbgo_tt_dst[e] + c * 8 * VBGO_TT_COLUMN;
       const uint16_t *was_cell = s_aside_cells[e] + c * 8, *is_cell = vbgo_tt_cdst[e] + c * 8;
@@ -865,7 +889,7 @@ static void PutAside(uint64_t same)
    {
       const unsigned c = (unsigned)__builtin_ctzll(m);
       const int mine = (int)(put >> c & 1), full = (int)(tagged >> c & 1);
-      for (e = 0; e < 2; e++)
+      for (e = 0; e < s_eyes; e++)
          for (x = c * 8; x < c * 8 + 8; x++)
          {
             uint32_t *const to = to_tags[e] + x * VBGO_TT_COLUMN, *const from = aside[e] + x * VBGO_TT_COLUMN;
@@ -883,7 +907,7 @@ static void PutAside(uint64_t same)
    {
       const unsigned c = (unsigned)__builtin_ctzll(m);
       const int claim = (int)(pairs >> (c & ~1u) & 1);
-      for (e = 0; e < 2; e++)
+      for (e = 0; e < s_eyes; e++)
          for (y = 0; y < 8; y++)
          {
             uint16_t *const to = to_cells[e] + y * VBGO_TT_CELL_ROW + c * 8;
@@ -924,6 +948,7 @@ void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same
       return;
 
    memcpy(s_block_chr[s_block_slot][s_block_no], chr, sizeof(s_block_chr[0][0]));
+   s_eyes = vbgo_tt_right_now || (s_right_dirty[s_block_slot] >> s_block_no & 1) ? 2 : 1;
    {
       /* (the cells' flags as bits, 32 and 16 at a time: 64-bit shifts cost much more on the Wii) */
       uint32_t tagged_lo = 0, tagged_hi = 0, obj_lo = 0, obj_hi = 0, fill_lo = 0, fill_hi = 0;
@@ -996,6 +1021,13 @@ void vbgo_tiletrack_block_drawn(const uint32_t *chr, bool settled, uint64_t same
    if (s_aside)
       PutAside(same);
    s_old_valid = 0;
+
+   /* (a block drawn whole had its right eye's lines cleared first; one drawn in part keeps the others') */
+   if (vbgo_tt_right_now)
+      s_right_dirty[s_block_slot] |= 1u << s_block_no;
+   else if (s_whole)
+      s_right_dirty[s_block_slot] &= ~(1u << s_block_no);
+   s_eyes = 2;
 }
 
 uint32_t vbgo_tt_wcells[48];
@@ -1317,6 +1349,11 @@ void vbgo_tiletrack_resume_pass(unsigned fb, unsigned block_no)
    for (e = 0; to != from && e < 2; e++)
       memcpy(s_cells[to][e], s_cells[from][e],
              (block_no < VBGO_TT_BLOCKS ? block_no : VBGO_TT_BLOCKS) * 8 * VBGO_TT_CELL_ROW * sizeof(uint16_t));
+   if (to != from)
+   {
+      const uint32_t repeated = block_no < VBGO_TT_BLOCKS ? (1u << block_no) - 1 : ~0u;
+      s_right_dirty[to] = (s_right_dirty[to] & ~repeated) | (s_right_dirty[from] & repeated);
+   }
 
    s_have[fb] = 1;
    s_cpu[fb] = 0;

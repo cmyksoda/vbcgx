@@ -630,9 +630,12 @@ namespace
         const bool autoColors = multicolor == ColorSchemes::kAutoColors;
         g_renderer.SetAutoColors(autoColors);
         // Vertical Force and Jack Bros. (USA, Japan) leave the right eye uncolored: Jaxi's choice, these games alone.
-        g_renderer.SetRightEyeUncolored(g_romCrc == 0x4C32BA5Eu || g_romCrc == 0x9E9B8B92u || g_romCrc == 0xA44DE03Cu ||
-                                        g_romCrc == 0xCAB61E8Bu);
-        g_renderer.SetPack(g_shadeColors && g_options.packs && !g_pack.Empty() ? &g_pack : nullptr);
+        const bool rightUncolored = g_romCrc == 0x4C32BA5Eu || g_romCrc == 0x9E9B8B92u || g_romCrc == 0xA44DE03Cu ||
+                                    g_romCrc == 0xCAB61E8Bu;
+        g_renderer.SetRightEyeUncolored(rightUncolored);
+        const bool packed = g_shadeColors && g_options.packs && !g_pack.Empty();
+        g_renderer.SetPack(packed ? &g_pack : nullptr);
+        vbgo_tiletrack_set_right_tags(!(rightUncolored && packed));
         if (g_shadeColors)
         {
             // As the app's Emulator::SetShadePalette (ConfigureColorizer).

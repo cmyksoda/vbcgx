@@ -174,6 +174,9 @@ static inline uint32_t vbgo_eye_word(const uint8_t *bits, const uint32_t *clut, 
 void vbgo_tiletrack_set_fill_mode(int mode);
 /* 65536-bit map (8 KB): bit n set = BG map cell n has fill colors. Copied. */
 void vbgo_tiletrack_set_fill_cells(const uint8_t *bits);
+/* Off while only the right eye's own worlds' tags are read (an uncolored right eye under a pack): its tags and cells
+ * are stored only where such a world may show, its pixels as ever. Switched either way, every block is drawn again. */
+void vbgo_tiletrack_set_right_tags(bool on);
 
 /* A left-eye 8x8 cell drawn as the other frame buffer's pass showed columns x + dx to x + dx + 7 of rows y + dy to
  * y + dy + 7, the camera having only moved: the same tags, cells, pixels and tiles' hashes, none a sprite's or a fill. */
@@ -275,6 +278,9 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view);
 /* ---- Core hooks (called from the patched vip.c / vip_draw.inc only) ---- */
 
 extern int vbgo_tt_on;
+/* 0 while the right eye's tags and cells are stored only where a world drawn in it alone may show
+ * (vbgo_tiletrack_set_right_tags); vbgo_tt_right_now: whether the drawing stores them now. */
+extern int vbgo_tt_right_tags, vbgo_tt_right_now;
 extern int vbgo_tt_fill;
 extern uint32_t vbgo_tt_world;
 extern const uint8_t *vbgo_tt_block_base;
@@ -310,6 +316,12 @@ static inline uint16_t *vbgo_tt_cell_row(const void *row_target)
       return (uint16_t *)0;
    i = (const uint8_t *)row_target - vbgo_tt_block_base;
    return &vbgo_tt_cdst[(i >> 12) & 1][((i >> 9) & 7) * VBGO_TT_CELL_ROW];
+}
+
+/* Whether the drawing stores this row's tags and cells (it returns the same flags either way). */
+static inline int vbgo_tt_tags(const void *row_target)
+{
+   return vbgo_tt_right_now || !((((const uint8_t *)row_target - vbgo_tt_block_base) >> 12) & 1);
 }
 
 /* What's the same for every tag of one drawing call: the world drawing. */
@@ -410,6 +422,13 @@ static inline int vbgo_tt_tag_row8(uint32_t *d, uint16_t *c, unsigned pixels, in
                                    unsigned cell)
 {
    return vbgo_tt_tag_row8_fills(d, c, pixels, flipped, bits, cell, vbgo_tt_fills_from(chr, cell));
+}
+
+/* What vbgo_tt_tag_row8_fills returns, for a row whose tags aren't stored. */
+static inline int vbgo_tt_row8_flags(unsigned pixels, int fills_from)
+{
+   const int opaque = ((pixels | (pixels >> 1)) & 0x5555) == 0x5555;
+   return !opaque && fills_from ? 2 : pixels != 0;
 }
 
 /* The core's change serials: its serial now, and the one each character and sprite (4 halfwords of OAM) was last
