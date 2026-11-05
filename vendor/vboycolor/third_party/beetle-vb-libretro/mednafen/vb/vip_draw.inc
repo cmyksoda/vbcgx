@@ -1401,7 +1401,6 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
   * same order (eyes and rows don't touch each other), one eye's tags stay in the cache through its worlds, and a
   * background world's rows share their map entries. */
  static uint16 obj_lists[32][1024];
- const uint16 *drawn[32];
  VbgoWorldAttr attrs[32];
  int counts[32], drawn_count = 0, obj_lists_used = 0, active = 0, bg_active = 0;
  bool front_ok = vbgo_tt_on != 0, overplane = false, right_alone = false;
@@ -1467,7 +1466,7 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
      a->alone = right_alone = true;
    }
   }
-  drawn[drawn_count++] = world_ptr;
+  drawn_count++;
  }
 
  /* (front to back, a block where a world draws in the right eye alone keeps all its right-eye tags: Paint reads that
