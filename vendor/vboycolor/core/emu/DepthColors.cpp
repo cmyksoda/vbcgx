@@ -353,7 +353,7 @@ void DepthColors::Update()
             return true;
         };
 
-        Vec64<int16_t> &left = m_disparity;
+        auto &left = m_disparity;
 
         // (the last fills left their areas' pixels 0, all else -1)
         if (m_flatLabel.size() != n)

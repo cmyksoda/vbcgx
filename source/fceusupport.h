@@ -29,4 +29,7 @@ extern "C" bool vboycolor_has_pack(void);
 extern "C" void vboycolor_fresh_colors(void);
 // Which 8x8 cells of a colored picture changed since it was last shown (see the core's libretro_core.cpp).
 extern "C" const uint64_t *vboycolor_changed_cells(const void *frame, uint32_t *since, uint32_t *at);
+// The built-in packs' zip to `to` (vboycolor_packs_size() bytes), its old storage lent to the core (libretro_core.cpp).
+extern "C" size_t vboycolor_packs_size(void);
+extern "C" void vboycolor_packs_move(void *to);
 void SetVBAudioRate();
