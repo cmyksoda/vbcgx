@@ -125,7 +125,8 @@ static VBGO_NOINLINE int VbgoTagRow8Front(uint32_t *d, uint16_t *c, const uint8 
   if(pv || fills)
   {
    if(tags)
-    d[k * VBGO_TT_COLUMN] = bits | (n << 11) | (pv << 20), c[k * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
+    d[k * VBGO_TT_COLUMN] = bits | (n << 11) | (pv << 20),
+     c[k * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
    any = 1;
   }
  }
@@ -149,7 +150,8 @@ static VBGO_NOINLINE void VbgoRunFront(uint8 *target, uint8 *cov, uint16 *covere
   {
    target[at] = GPLT_Cache[bgsc >> 14][pixel];
    if(row)
-    row[at * VBGO_TT_COLUMN] = cbits | in_tile << 11 | pixel << 20, crow[at * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
+    row[at * VBGO_TT_COLUMN] = cbits | in_tile << 11 | pixel << 20,
+     crow[at * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
    vbgo_tt_wcells[at >> 3] |= wbit;
    cov[at] = 0xFF;
    ++*covered;
@@ -157,7 +159,8 @@ static VBGO_NOINLINE void VbgoRunFront(uint8 *target, uint8 *cov, uint16 *covere
   else if(fills)
   {
    if(row)
-    row[at * VBGO_TT_COLUMN] = cbits | in_tile << 11, crow[at * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
+    row[at * VBGO_TT_COLUMN] = cbits | in_tile << 11,
+     crow[at * VBGO_TT_CELL_COLUMN] = (uint16_t)cell;
    vbgo_tt_wcells[at >> 3] |= wbit, vbgo_tt_fillc[at >> 3] = 1;
    cov[at] = 1;
   }
@@ -795,7 +798,7 @@ static inline __attribute__((always_inline)) void DrawOBJFrontAs(uint8 *fb, Vbgo
          row[x + n] = plt[pv];
          if(tags)
           tag[n * VBGO_TT_COLUMN] = obits | (uint32_t)(flipped ? 7 - n : n) << 11 | pv << 20,
-          crow[(x + n) * VBGO_TT_CELL_COLUMN] = ocell;
+           crow[(x + n) * VBGO_TT_CELL_COLUMN] = ocell;
         }
        }
        memcpy(&d0, OpaqueQuad[p & 0xFF], 4);
@@ -818,7 +821,8 @@ static inline __attribute__((always_inline)) void DrawOBJFrontAs(uint8 *fb, Vbgo
      {
       row[at] = plt[pv];
       if(tags)
-       trow[at * VBGO_TT_COLUMN] = obits | (uint32_t)n << 11 | pv << 20, crow[at * VBGO_TT_CELL_COLUMN] = ocell;
+       trow[at * VBGO_TT_COLUMN] = obits | (uint32_t)n << 11 | pv << 20,
+        crow[at * VBGO_TT_CELL_COLUMN] = ocell;
       cv[at] = 0xFF;
       ++*covered;
       any = 1;

@@ -2750,8 +2750,8 @@ static INLINE void PackColumns(uint32 lo, uint32 hi, uint32 *a, uint32 *b)
 
 /* Columns x0-x1 (whole cells) of one eye of a drawn block into its frame buffer band; with compare, differs[cell] becomes
  * nonzero where their bytes changed. Only columns that did are written (so unchanged cache lines stay clean). */
-static INLINE __attribute__((always_inline)) void PackEye(const uint8 *rows, uint32 *band, int x0, int x1, uint8 *differs,
-                                                           bool compare)
+static INLINE __attribute__((always_inline)) void PackEye(const uint8 *rows, uint32 *band, int x0, int x1,
+                                                           uint8 *differs, bool compare)
 {
    int x, k;
 
@@ -2790,8 +2790,8 @@ static void PackBlock(uint8 (*buffers)[512 * 8], int x0, int x1, uint8 *differs,
       PackEye(buffers[lr] + 8, (uint32 *)(FB[DrawingFB][lr] + DrawingBlock * FB_BAND), x0, x1, differs, compare);
 }
 
-/* The block just drawn, to the tile tracker (out of line, so the drawing loop keeps its registers): drawn in part, the rest
- * keeps what it was; drawn whole, only an undrawn right eye is stale. */
+/* The block just drawn, to the tile tracker (out of line, so the drawing loop keeps its registers): drawn in part, the
+ * rest keeps what it was; drawn whole, only an undrawn right eye is stale. */
 static NO_INLINE void VbgoBlockDrawn(const uint32 *chr, bool settled, uint64 same, uint64 unchanged, bool partial)
 {
    if(VbgoRightUndrawn)
@@ -2804,9 +2804,9 @@ static NO_INLINE void VbgoBlockDrawn(const uint32 *chr, bool settled, uint64 sam
    vbgo_tiletrack_block_drawn(chr, settled, same, unchanged);
 }
 
-/* Every right eye left undrawn in the frame buffers fbs (a bit each), drawn now from the VIP's memory as it is (tracking off:
- * nothing it draws is recorded), and every block forgotten: those drawn without their right eye recorded what the left
- * eye read alone. */
+/* Every right eye left undrawn in the frame buffers fbs (a bit each), drawn now from the VIP's memory as it is
+ * (tracking off: nothing it draws is recorded), and every block forgotten: those drawn without their right eye
+ * recorded what the left eye read alone. */
 static void VbgoDrawStaleRight(unsigned fbs)
 {
    static MDFN_ALIGN(8) uint8 buffers[2][512 * 8];

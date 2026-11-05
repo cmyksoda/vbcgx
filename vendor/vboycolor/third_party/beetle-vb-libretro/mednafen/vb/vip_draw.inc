@@ -1225,8 +1225,10 @@ static INLINE void VbgoStartEye(uint8 *fb_eye, unsigned lr)
 static INLINE unsigned VbgoRepeatEyes(const VbgoWorldAttr *attrs, unsigned block_no)
 {
  unsigned eyes = 3, k, lr, y, m;
+
  if(vbgo_tt_fill == VBGO_TT_FILLS_ALL)
   return 0;
+
  for(k = 0; k < 2; k++)
  {
   const VbgoWorldAttr *a = &attrs[k];
@@ -1241,6 +1243,7 @@ static INLINE unsigned VbgoRepeatEyes(const VbgoWorldAttr *attrs, unsigned block
   if(!eyes)
    return 0;
  }
+
  for(k = 0; k < 2; k++)
  {
   const VbgoWorldAttr *a = &attrs[k];
@@ -1267,6 +1270,7 @@ static INLINE unsigned VbgoRepeatEyes(const VbgoWorldAttr *attrs, unsigned block
    }
   }
  }
+
  return eyes;
 }
 
@@ -1280,7 +1284,8 @@ static VBGO_NOINLINE unsigned VbgoRepeatTest(const VbgoWorldAttr *attrs, unsigne
 {
  const unsigned eyes = VbgoRepeatEyes(attrs, block_no);
  if(VbgoRepeatPass != PassNo)
-  VbgoRepeatPass = PassNo, VbgoRepeatLast = VbgoRepeatNow, VbgoRepeatNow = 0;
+  VbgoRepeatPass = PassNo, VbgoRepeatLast = VbgoRepeatNow,
+   VbgoRepeatNow = 0;
  if(!eyes)
  {
   VbgoRepeatRetry[DrawingFB][block_no] = PassNo + 8;
@@ -1295,12 +1300,14 @@ static VBGO_NOINLINE unsigned VbgoRepeatTest(const VbgoWorldAttr *attrs, unsigne
 static INLINE void VbgoRepeatCopy(uint8 *fb_eye, bool tagged)
 {
  unsigned x, y;
+
  for(y = 0; y < 8; y++)
  {
   uint8 *const row = fb_eye + y * 512;
   vbgo_copy8(row + 128, row, 8), vbgo_copy8(row + 192, row + 64, 8);
   vbgo_copy8(row + 256, row, 8), vbgo_copy8(row + 320, row + 64, 8);
  }
+
  if(tagged)
  {
   uint32_t *const tags = vbgo_tt_row(fb_eye);
@@ -1327,10 +1334,12 @@ static INLINE uint32_t VbgoRepeatCut(unsigned block_no, unsigned lr, const VbgoW
  uint16 DestX = a->gx + (lr ? a->gp : -a->gp);
  uint32 SourceX = (uint32)(int32)(int16)srcX;
  unsigned y;
+
  DestX = sign_10_to_s16(DestX);
  if(DestX & 0x8000)
   SourceX -= DestX;
  SourceX -= (uint32)(int32)(int16)srcX; /* (as DrawBGBlockAs: what the window adds to a row's source x) */
+
  for(y = 0; y < 8; y++)
  {
   const uint16 row_y = (uint16)((block_no * 8 + y) - a->gy);
@@ -1352,7 +1361,8 @@ static INLINE uint32_t VbgoRepeatCut(unsigned block_no, unsigned lr, const VbgoW
  return 0;
 }
 
-/* The block's two back-most worlds in eye lr, where VbgoRepeatEyes found them repeating: drawn in columns 0-127, copied on. */
+/* The block's two back-most worlds in eye lr, where VbgoRepeatEyes found them repeating: drawn in columns 0-127,
+ * copied on. */
 static VBGO_NOINLINE void VbgoRepeatBack(uint8 *fb_eye, unsigned block_no, unsigned lr, const VbgoWorldAttr *attrs)
 {
  uint32_t before[48], cut = 0;
@@ -1482,7 +1492,8 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
  repeat = vbgo_vip_repeat_game && drawn_count >= 2 && ClipX0 == 0 && ClipX1 == 383 &&
           (attrs[0].bgm | attrs[1].bgm) <= 1 && vbgo_tt_on &&
           (int32)(PassNo - VbgoRepeatRetry[DrawingFB][block_no]) >= 0
-             ? VbgoRepeatTest(attrs, block_no) : 0;
+             ? VbgoRepeatTest(attrs, block_no)
+             : 0;
 
  for(lr = 0; lr < 2; lr++)
  {
@@ -1503,7 +1514,8 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
   VbgoStartEye(fb_eye, lr);
   k = 0;
   if(repeat >> lr & 1)
-   VbgoRepeatBack(fb_eye, block_no, lr, attrs), k = 2;
+   VbgoRepeatBack(fb_eye, block_no, lr, attrs),
+    k = 2;
   for(; k < drawn_count; k++)
   {
    VbgoWorldAttr *const a = &attrs[k];

@@ -579,7 +579,8 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
     for (size_t i = 1; i < m_cellStart.size(); ++i)
         m_cellStart[i] += m_cellStart[i - 1];
     for (const TileColorPack::CellTile &cell : cells)
-        m_cellHasTiles[cell.cell >> 5] |= 1u << (cell.cell & 31), m_cellMaps |= 1u << (cell.cell >> 12);
+        m_cellHasTiles[cell.cell >> 5] |= 1u << (cell.cell & 31),
+            m_cellMaps |= 1u << (cell.cell >> 12);
 
     // Fills: a cell has some if an entry colors a pixel its tile leaves transparent; marking every cell with an entry
     // is simplest (the tracker only uses this to decide where tagging fills is worth it).
@@ -3130,17 +3131,18 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             }
         }
 
-        // Cells repeating one a few cells to their left in this picture (a background tiled every 16-256 pixels): copied
-        // from it where painting would come out the same - its tags, shades and map cells' layout alike.
+        // Cells repeating one a few cells to their left in this picture (a background tiled every 16-256 pixels):
+        // copied from it where painting would come out the same - its tags, shades and map cells' layout alike.
         uint32_t repeatBands = 0;
-        uint32_t repeatWorlds = 0; // (worlds whose map cells keep their order along a row and give no colors of their own)
+        // (worlds whose map cells keep their order along a row and give no colors of their own)
+        uint32_t repeatWorlds = 0;
         bool repeatLooked = false;
         if (m_repeatRest)
             --m_repeatRest; // (a Paint that found little to copy: the next 15 don't look)
         // (only while the VIP finds the background repeating across the picture: elsewhere looking costs the consoles
         // more than the copies save)
-        else if (vbgo_vip_repeating() && v.worlds && v.clut && v.band_chr && v.cell_worlds && v.tagged && v.obj_cells && v.filled_cells &&
-                 !unfaded && !depth)
+        else if (vbgo_vip_repeating() && v.worlds && v.clut && v.band_chr && v.cell_worlds && v.tagged &&
+                 v.obj_cells && v.filled_cells && !unfaded && !depth)
         {
             repeatLooked = true;
             for (unsigned w = 0; w < 32; ++w)
@@ -3179,7 +3181,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         }
         uint8_t repeatTries[kBands] = {}, repeatCopies[kBands] = {};
 
-        // (per cell column, the bands whose cell may repeat one to its left: tagged, no sprite or fill, only such worlds)
+        // (per cell column, the bands whose cell may repeat one to its left: tagged, no sprite or fill, only such
+        // worlds)
         std::array<uint32_t, kGridW> repeatAt{};
         for (uint32_t r = repeatBands; r; r &= r - 1)
         {
@@ -3426,9 +3429,9 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
         };
 
         // (no local it doesn't write is taken by reference: the walk keeps those in registers)
-        auto repeatCell = [this, &v, repeatWorlds, &repeatTries, &repeatCopies, &bands, &keptBands, eyeBits, &bandsActive,
-                           &bandColumns, &summaryState, &copyColors, &copyLit, pairs, copyColumns, notePairSlot, frame,
-                           fbWidth, eyeOffset, rowBytes,
+        auto repeatCell = [this, &v, repeatWorlds, &repeatTries, &repeatCopies, &bands, &keptBands, eyeBits,
+                           &bandsActive, &bandColumns, &summaryState, &copyColors, &copyLit, pairs, copyColumns,
+                           notePairSlot, frame, fbWidth, eyeOffset, rowBytes,
                            claimRows](unsigned b, unsigned c, uint32_t done) __attribute__((always_inline)) {
             const uint64_t clear = v.tagged[b] & ~((v.obj_cells[b] | v.filled_cells[b]) & v.tagged[b]);
             if (!(clear >> c & 1) || (v.cell_worlds[b * kGridW + c] & ~repeatWorlds))
