@@ -1482,6 +1482,117 @@ __attribute__((noinline)) int ColorPackRenderer::RightBoundMarks(const vbgo_tt_e
     return read;
 }
 
+template <unsigned kWords>
+inline void ColorPackRenderer::LeftSpriteMarksAs(const vbgo_tt_eye_view &v, const unsigned band, uint64_t cells,
+                                                 const uint8_t *leftBits, const uint32_t *leftClut,
+                                                 ContextGroupBits *markers, uint8_t *markerLayers, Band &cache)
+{
+    const uint32_t bandKey = v.band_key[band];
+    const ContextGroupBits *const slotMarkers = m_slotMarkers.data();
+    const bool *const hasMarkers = m_slotHasMarkers.data();
+    // (a band the pass reached: a tag is drawn if it isn't 0, and tile 0 without markers keeps 0 out on its own)
+    const bool quick = bandKey == VBGO_TT_BAND_REACHED && !hasMarkers[0];
+    if (!bandKey)
+        return; // (no tag of the band is this pass's)
+    uint64_t spriteGroups[kWords];
+    for (unsigned i = 0; i < kWords; ++i)
+        spriteGroups[i] = ~m_layerBound.w[i];
+    for (; cells; cells &= cells - 1)
+    {
+        const uint32_t gx = static_cast<uint32_t>(__builtin_ctzll(cells));
+        const unsigned cell = band * kGridW + gx;
+        unsigned spriteChrs[4] = {~0u, ~0u, ~0u, ~0u}, nextChr = 0;
+        uint64_t spriteBits[kWords] = {};
+        bool spriteHit = false;
+        for (uint32_t x = gx * 8; x < gx * 8 + 8; ++x)
+        {
+            const uint32_t *column = v.columns[x];
+            if (!column)
+                continue;
+            const uint32_t *tags = column + band * 8;
+            unsigned candidates = 0;
+            if (quick)
+            {
+#pragma GCC unroll 8
+                for (uint32_t j = 0; j < 8; ++j)
+                    candidates |= static_cast<unsigned>(hasMarkers[VBGO_TAG_CHAR(tags[j])]) << j;
+            }
+            else
+            {
+#pragma GCC unroll 8
+                for (uint32_t j = 0; j < 8; ++j)
+                {
+                    const uint32_t t = tags[j];
+                    candidates |= static_cast<unsigned>(vbgo_tag_drawn(t, bandKey) & hasMarkers[VBGO_TAG_CHAR(t)])
+                                  << j;
+                }
+            }
+            if (!candidates)
+                continue;
+            // (a pixel in a shade the game switched off changes nothing below: such rows are dropped at once)
+            {
+                const EyeColumn eye(leftBits, leftClut, x);
+                uint32_t lit = LitRows(eye)(eye.band(band));
+                lit = (lit | lit >> 1) & 0x3333u;
+                lit = (lit | lit >> 2) & 0x0F0Fu;
+                candidates &= (lit | lit >> 4) & 0xFFu;
+            }
+            unsigned lastChr = ~0u;
+            for (; candidates; candidates &= candidates - 1)
+            {
+                const uint32_t t = tags[__builtin_ctz(candidates)];
+                const unsigned chr = VBGO_TAG_CHAR(t);
+                if (!VBGO_TAG_PIXEL(t) || chr == lastChr)
+                    continue;
+                lastChr = chr;
+                if (VBGO_TAG_IS_OBJ(t))
+                {
+                    if (chr == spriteChrs[0] || chr == spriteChrs[1] || chr == spriteChrs[2] || chr == spriteChrs[3])
+                        continue;
+                    uint64_t bits[kWords], any = 0;
+                    for (unsigned i = 0; i < kWords; ++i)
+                        bits[i] = slotMarkers[chr].w[i] & spriteGroups[i], any |= bits[i];
+                    if (!any)
+                        continue;
+                    spriteChrs[nextChr++ & 3] = chr;
+                    for (unsigned i = 0; i < kWords; ++i)
+                        spriteBits[i] |= bits[i];
+                    spriteHit = true;
+                    continue;
+                }
+                const ContextGroupBits bits = slotMarkers[chr] & m_layerBound;
+                if (!bits.Any())
+                    continue;
+                markers[cell] |= bits;
+                NoteMarkerCell(cell);
+                cache.marks[gx].markers |= bits, cache.marksAny |= 1ull << gx;
+                if (markerLayers)
+                    markerLayers[cell] = cache.marks[gx].markerLayer =
+                        static_cast<uint8_t>(m_worlds[VBGO_TAG_WORLD(t)].colors);
+            }
+        }
+        if (spriteHit)
+        {
+            for (unsigned i = 0; i < kWords; ++i)
+                markers[cell].w[i] |= spriteBits[i], cache.marks[gx].markers.w[i] |= spriteBits[i];
+            NoteMarkerCell(cell);
+            cache.marksAny |= 1ull << gx;
+        }
+    }
+}
+
+__attribute__((noinline)) void ColorPackRenderer::LeftSpriteMarks(const vbgo_tt_eye_view &v, const unsigned band,
+                                                                  uint64_t cells, const uint8_t *leftBits,
+                                                                  const uint32_t *leftClut, ContextGroupBits *markers,
+                                                                  uint8_t *markerLayers, Band &cache)
+{
+    // (Vertical Force's 71 groups fit in two words: the rest of every marker set is clear)
+    if (m_pack->ContextGroups().size() <= 128)
+        LeftSpriteMarksAs<2>(v, band, cells, leftBits, leftClut, markers, markerLayers, cache);
+    else
+        LeftSpriteMarksAs<ContextGroupBits::kWords>(v, band, cells, leftBits, leftClut, markers, markerLayers, cache);
+}
+
 __attribute__((noinline)) void ColorPackRenderer::LeftBandMarks(const vbgo_tt_eye_view &v, const unsigned band,
                                                                 uint64_t cells, const uint8_t *leftBits,
                                                                 const uint32_t *leftClut, ContextGroupBits *markers,
@@ -1841,7 +1952,10 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     cells |= static_cast<uint64_t>(!keptCell[band][gx] && (!v.tagged || (v.tagged[band] >> gx & 1)) &&
                                                    (spriteCells >> gx & 1))
                              << gx;
-                LeftBandMarks(v, band, cells, leftBits, leftClut, markers, markerLayers, cache);
+                if (vbgo_vip_repeat_game)
+                    LeftSpriteMarks(v, band, cells, leftBits, leftClut, markers, markerLayers, cache);
+                else
+                    LeftBandMarks(v, band, cells, leftBits, leftClut, markers, markerLayers, cache);
             }
         }
 

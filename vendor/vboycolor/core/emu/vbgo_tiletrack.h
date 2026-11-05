@@ -143,6 +143,8 @@ const uint8_t *vbgo_vip_eye_bits(int eye);
 /* Whether most blocks the VIP drew lately had a background repeating every 128 pixels (it copies them: see
  * vip_draw.inc). */
 bool vbgo_vip_repeating(void);
+/* Vertical Force (USA or Japan), by ROM checksum: set as the game loads. */
+extern bool vbgo_vip_repeat_game;
 void vbgo_vip_fresh(void);
 /* While on, a block where no world drawn in the right eye alone can draw leaves its right eye undrawn (see vip.c); off,
  * every right eye left so is drawn at once. vbgo_vip_right_stale: a buffer's blocks whose right eye is an older drawing. */

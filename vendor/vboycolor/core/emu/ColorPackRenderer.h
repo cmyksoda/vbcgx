@@ -320,6 +320,13 @@ private:
     // tile, their markers into the grid and the band's cache.
     void LeftBandMarks(const vbgo_tt_eye_view &v, unsigned band, uint64_t cells, const uint8_t *leftBits,
                        const uint32_t *leftClut, ContextGroupBits *markers, uint8_t *markerLayers, Band &cache);
+    // LeftBandMarks for Vertical Force: the same marks, each cell's sprite markers gathered in registers (the pack's
+    // groups in its first kWords words) and stored once.
+    void LeftSpriteMarks(const vbgo_tt_eye_view &v, unsigned band, uint64_t cells, const uint8_t *leftBits,
+                         const uint32_t *leftClut, ContextGroupBits *markers, uint8_t *markerLayers, Band &cache);
+    template <unsigned kWords>
+    void LeftSpriteMarksAs(const vbgo_tt_eye_view &v, unsigned band, uint64_t cells, const uint8_t *leftBits,
+                           const uint32_t *leftClut, ContextGroupBits *markers, uint8_t *markerLayers, Band &cache);
 
     // Per-eye pairs (at most kMaxPairs a frame).
     static constexpr int kMaxPairs = 16;
