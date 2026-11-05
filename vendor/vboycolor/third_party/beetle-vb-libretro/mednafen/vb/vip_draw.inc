@@ -1479,8 +1479,9 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
  }
 
  /* (drawn back to front, a background repeating every 128 pixels is drawn once and copied) */
- repeat = drawn_count >= 2 && ClipX0 == 0 && ClipX1 == 383 && (attrs[0].bgm | attrs[1].bgm) <= 1 &&
-          vbgo_tt_on && (int32)(PassNo - VbgoRepeatRetry[DrawingFB][block_no]) >= 0
+ repeat = vbgo_vip_repeat_game && drawn_count >= 2 && ClipX0 == 0 && ClipX1 == 383 &&
+          (attrs[0].bgm | attrs[1].bgm) <= 1 && vbgo_tt_on &&
+          (int32)(PassNo - VbgoRepeatRetry[DrawingFB][block_no]) >= 0
              ? VbgoRepeatTest(attrs, block_no) : 0;
 
  for(lr = 0; lr < 2; lr++)

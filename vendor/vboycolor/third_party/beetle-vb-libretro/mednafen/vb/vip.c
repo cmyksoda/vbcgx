@@ -113,6 +113,8 @@ static bool InstantDisplayHack;
 static bool AllowDrawSkip;
 /* (set by the frontend for Innsmouth no Yakata, whose fog scene is drawn and shown from frame buffer 0 only) */
 bool vbgo_vip_fog_game;
+/* (set by the frontend for Vertical Force, whose stage 5 background repeats every 128 pixels: see vip_draw.inc) */
+bool vbgo_vip_repeat_game;
 static bool Fb1Stale, Fb1PassSkipped, Held, LeftOnly;
 bool vbgo_vip_held(void) { return Held; }
 
@@ -3476,7 +3478,7 @@ void vbgo_vip_fresh(void)
 
 bool vbgo_vip_repeating(void)
 {
-   return VbgoRepeatLast >= 8 || VbgoRepeatNow >= 8;
+   return vbgo_vip_repeat_game && (VbgoRepeatLast >= 8 || VbgoRepeatNow >= 8);
 }
 
 int vbgo_vip_block_sprites(unsigned fb, unsigned block, const vbgo_vip_sprite **sprites)

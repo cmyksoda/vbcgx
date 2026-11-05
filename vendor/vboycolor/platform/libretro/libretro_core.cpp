@@ -64,6 +64,7 @@ extern "C"
     // An id for the picture the VIP displayed in the frame that just ended.
     uint32_t vbgo_vip_last_frame_picture(void);
     extern bool vbgo_vip_fog_game;
+    extern bool vbgo_vip_repeat_game;
     bool vbgo_vip_held(void);
 
     // A frontend still reading a shown picture (the Wii's GPU) waits here before one is painted again.
@@ -940,6 +941,8 @@ extern "C"
         g_romSize = static_cast<uint32_t>(game->size);
         // Innsmouth no Yakata's fog scene is drawn and colored every other frame only (Jaxi's choice, that scene alone).
         vbgo_vip_fog_game = g_romCrc == 0x83CB6A00u;
+        // Vertical Force (USA, Japan) draws its stage 5 background once per 128 pixels and copies it (that game alone).
+        vbgo_vip_repeat_game = g_romCrc == 0x4C32BA5Eu || g_romCrc == 0x9E9B8B92u;
 
         if (!beetle_retro_load_game(game))
             return false;
