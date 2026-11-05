@@ -146,7 +146,7 @@ $(OUTPUT).wuhb: $(OUTPUT).rpx
 	@echo packaging $@ ...
 	@$(DEVKITPRO)/tools/bin/wuhbtool $< $@ \
 		--name="VBoy Color GX" \
-		--short-name="vbcgx" \
+		--short-name="VBoy Color GX" \
 		--author="cmyksoda" \
 		--icon=$(TOPDIR)/meta/icon.png \
 		--tv-image=$(TOPDIR)/meta/tv_splash.png \

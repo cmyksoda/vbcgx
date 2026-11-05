@@ -316,6 +316,23 @@ void WutAudioDriver::handleStreamCallback() {
 
 	// Query exactly where the hardware is right now. streamBuf is the required base pointer.
 	uint32_t currentOffset = AXGetVoiceCurrentOffsetEx(streamVoiceL, streamBufL);
+
+	// A stream started a few frames after AXInit can read as playing while the DSP never runs it:
+	// stop the voices once the playhead sits still, and the check above starts them again next frame
+	static uint32_t lastOffset = 0xFFFFFFFF;
+	static int stillFrames = 0;
+	if (currentOffset == lastOffset) {
+		if (++stillFrames >= 30) {
+			AXSetVoiceState(streamVoiceL, 0);
+			AXSetVoiceState(streamVoiceR, 0);
+			stillFrames = 0;
+			lastOffset = 0xFFFFFFFF;
+			return;
+		}
+	} else {
+		stillFrames = 0;
+	}
+	lastOffset = currentOffset;
 	
 	// Calculate how many valid, unplayed samples are queued ahead of the hardware playhead
 	uint32_t queuedSamples = (writeOffset - currentOffset + STREAM_BUFFER_SAMPLES) % STREAM_BUFFER_SAMPLES;
