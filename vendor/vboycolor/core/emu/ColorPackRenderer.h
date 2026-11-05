@@ -40,6 +40,7 @@ public:
     void SetAutoColors(bool on) { m_auto = on; }
     // With a pack, the hidden right eye's picture goes uncolored: only the layers it draws are read, for Auto colors.
     void SetRightEyeUncolored(bool on) { m_rightUncolored = on; }
+    void SetDepthReach(int reach) { m_depth.SetReach(reach); }
     // Something to paint: a pack, or automatic colors.
     bool Active() const { return m_pack != nullptr || m_auto; }
 

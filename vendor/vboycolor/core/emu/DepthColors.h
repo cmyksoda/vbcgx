@@ -81,14 +81,17 @@ public:
     static void Color(int disparity, unsigned shade, uint8_t rgb[3]);
     // Forget everything (a new game).
     void Reset();
+    // Searches disparities up to reach (even, 2 to kMaxDisparity) either side of 0; the matching's work goes with the
+    // count. A change starts afresh.
+    void SetReach(int reach)
+    {
+        if (reach != m_reach)
+            m_reach = reach, Reset();
+    }
 
 private:
     static constexpr int kDisparities = 2 * kMaxDisparity + 1;
     static constexpr int kStride = kDisparities + 1; // (per block in State::cost)
-    // (the disparities searched, kSearchFrom to kSearchTo, are kReach either side of 0: games draw next to nothing
-    // further out - Red Alarm about one pick in 10,000 - and the matching's work goes with their count)
-    static constexpr int kReach = 24, kSearchFrom = kMaxDisparity - kReach, kSearchTo = kMaxDisparity + kReach;
-    static_assert(kReach % 2 == 0, "(the smoothing's pairs: two at a time, from an even disparity)");
     static constexpr int kBlocksX = kWidth / 8, kBlocksY = kHeight / 8, kBlocks = kBlocksX * kBlocksY;
     // A row of one shade's pixels as bits, byte by byte, a byte's lowest bit first (pixel x at bit x + 64): a guard
     // word before and two after, so a shift by up to 64 either way stays inside. Three empty rows above and below the
@@ -115,7 +118,7 @@ private:
     // (the smoothing along a line of blocks, paired singles on the Wii: chain records for count blocks from `first`,
     // each from the one before; `before` is the record of the block before the first, or null at the line's start)
     static void SmoothChain(const int16_t *cost, int16_t *records, int first, int step, int count,
-                            const int16_t *before);
+                            const int16_t *before, int reach);
     int Votes(unsigned s, const unsigned left[7], int x, int y, int d) const;
     void LeftWindow(unsigned s, int x, int y, unsigned left[7]) const;
     static int WindowPixels(const unsigned left[7]);
@@ -148,6 +151,7 @@ private:
     std::array<int, 4> m_prevPlanes{};
     uint32_t m_pickGen = 1;
     State m_state;
+    int m_reach = kMaxDisparity;
     // Per eye the masks of the last update ([eye][m_lastMasks]) and the next ones (the other).
     LitMasks m_masks[2][2];
     int m_lastMasks = 0;

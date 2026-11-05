@@ -634,6 +634,8 @@ namespace
         const bool rightUncolored = g_romCrc == 0x4C32BA5Eu || g_romCrc == 0x9E9B8B92u || g_romCrc == 0xA44DE03Cu ||
                                     g_romCrc == 0xCAB61E8Bu;
         g_renderer.SetRightEyeUncolored(rightUncolored);
+        // Red Alarm (USA, Japan) searches depths 24 either side, not 40: Jaxi's choice, this game alone.
+        g_renderer.SetDepthReach(g_romCrc == 0xAA10A7B4u || g_romCrc == 0x7E85C45Du ? 24 : DepthColors::kMaxDisparity);
         const bool packed = g_shadeColors && g_options.packs && !g_pack.Empty();
         g_renderer.SetPack(packed ? &g_pack : nullptr);
         vbgo_tiletrack_set_right_tags(!(rightUncolored && packed));

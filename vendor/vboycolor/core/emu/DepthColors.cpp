@@ -518,8 +518,9 @@ void DepthColors::Update()
 // Estimate's smoothing along a line of blocks with paired singles: two disparities at a time, as floats loaded from
 // and stored to int16 (GQR7). Every value is a small integer, so the float sums and mins are exact.
 void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, int step, int count,
-                              const int16_t *before)
+                              const int16_t *before, int reach)
 {
+    const int searchFrom = kMaxDisparity - reach, searchTo = kMaxDisparity + reach;
     constexpr int kS = kStride;
     alignas(8) static const int16_t kConst[6] = {kStep, kStep, kJump, kJump, kWall, kWall};
     alignas(8) int16_t low[2] = {kWall, kWall};
@@ -533,14 +534,14 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
     {
         {
             const int b = first + k * step;
-            const int16_t *c = cost + static_cast<size_t>(b) * kS + kSearchFrom;
-            int16_t *rec = records + static_cast<size_t>(b) * kRecord, *out = rec + 2 + kSearchFrom;
+            const int16_t *c = cost + static_cast<size_t>(b) * kS + searchFrom;
+            int16_t *rec = records + static_cast<size_t>(b) * kRecord, *out = rec + 2 + searchFrom;
             for (int line = 0; line < kRecord / 16; ++line)
                 ClearLine32(reinterpret_cast<uint8_t *>(rec) + 32 * line);
 
             // (prev[-2]: the walls left of the first disparity searched, and past the last for the last pair's loads)
             const int16_t *prev =
-                (k ? rec - static_cast<ptrdiff_t>(step) * kRecord : before ? before : rec) + 2 + kSearchFrom;
+                (k ? rec - static_cast<ptrdiff_t>(step) * kRecord : before ? before : rec) + 2 + searchFrom;
             out[-2] = out[-1] = kWall;
 
             if (!k && !before)
@@ -568,7 +569,7 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
                     "ps_sel  12, 11, 9, 12\n\t"
                     "psq_st  12, 0(%[low]), 0, 7\n\t"
                     : [c] "+b"(c), [out] "+b"(out)
-                    : [kc] "b"(kConst), [low] "b"(low), [pairs] "r"(kReach)
+                    : [kc] "b"(kConst), [low] "b"(low), [pairs] "r"(reach)
                     : "ctr", "fr9", "fr10", "fr11", "fr12", "memory");
             }
             else
@@ -650,13 +651,13 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
                     "ps_sel  12, 11, 9, 12\n\t"
                     "psq_st  12, 0(%[low]), 0, 7\n\t"
                     : [c] "+b"(c), [out] "+b"(out), [prev] "+b"(prev)
-                    : [kc] "b"(kConst), [low] "b"(low), [quads] "r"(kReach / 2)
+                    : [kc] "b"(kConst), [low] "b"(low), [quads] "r"(reach / 2)
                     : "ctr", "fr0", "fr1", "fr2", "fr3", "fr4", "fr5", "fr6", "fr7", "fr8", "fr9", "fr10", "fr11",
                       "fr12", "fr13", "fr14", "fr15", "fr16", "fr17", "fr18", "fr19", "fr20", "fr21", "fr22", "memory");
             }
 
-            rec[2 + kSearchTo + 1] = kWall; // (the last disparity's pair wrote the wall after it)
-            rec[2 + kSearchTo + 2] = rec[2 + kSearchTo + 3] = kWall; // (and the walls the last pair's loads read)
+            rec[2 + searchTo + 1] = kWall; // (the last disparity's pair wrote the wall after it)
+            rec[2 + searchTo + 2] = rec[2 + searchTo + 3] = kWall; // (and the walls the last pair's loads read)
             rec[kLowAt] = low[0];
         }
     }
@@ -664,8 +665,9 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
 }
 #else
 void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, int step, int count,
-                              const int16_t *before)
+                              const int16_t *before, int reach)
 {
+    const int searchFrom = kMaxDisparity - reach, searchTo = kMaxDisparity + reach;
     int low = before ? before[kLowAt] : kWall;
     for (int k = 0; k < count; ++k)
     {
@@ -678,9 +680,9 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
 
         // (each block's lowest is found while it's written, for the next)
         int nextLow = kWall;
-        out[kSearchFrom - 2] = out[kSearchFrom - 1] = kWall;
+        out[searchFrom - 2] = out[searchFrom - 1] = kWall;
         if (!k && !before)
-            for (int di = kSearchFrom; di <= kSearchTo; ++di)
+            for (int di = searchFrom; di <= searchTo; ++di)
             {
                 const int o = c[di];
                 out[di] = static_cast<int16_t>(o);
@@ -689,8 +691,8 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
         else
         {
             const int jump = low + kJump;
-            int beforeCost = prev[kSearchFrom - 1], here = prev[kSearchFrom];
-            for (int di = kSearchFrom; di <= kSearchTo; ++di)
+            int beforeCost = prev[searchFrom - 1], here = prev[searchFrom];
+            for (int di = searchFrom; di <= searchTo; ++di)
             {
                 const int after = prev[di + 1];
                 const int step1 = static_cast<int16_t>(std::min(beforeCost, after) + kStep);
@@ -701,7 +703,7 @@ void DepthColors::SmoothChain(const int16_t *cost, int16_t *records, int first, 
                 beforeCost = here, here = after;
             }
         }
-        out[kSearchTo + 1] = out[kSearchTo + 2] = out[kSearchTo + 3] = kWall;
+        out[searchTo + 1] = out[searchTo + 2] = out[searchTo + 3] = kWall;
         rec[kLowAt] = static_cast<int16_t>(nextLow);
         low = nextLow;
     }
@@ -749,6 +751,7 @@ struct DepthColors::CostRowArgs
     uint8_t *cheapestAt;       // ... where each one's lowest cost is
     bool hadLast;
     uint64_t active;           // the blocks whose costs are worked out (bit per block): the others' stay
+    int reach;                 // the disparities searched, either side of 0
 };
 
 // (the prefix sums' rows: a block's windows reach 5 blocks either side; the stride is no power of two, to spread the
@@ -805,6 +808,7 @@ static void CostBlock(const int16_t *__restrict e, int diLo, int diHi, const int
 
 void DepthColors::CostRow(const CostRowArgs &a)
 {
+    const int reach = a.reach, searchFrom = kMaxDisparity - reach, searchTo = kMaxDisparity + reach;
     static const CostTables &tables = Tables();
     constexpr int kPadded = kBlocksX + 2 * kWideBlocks, kEdge = 8;
     const int32_t *const perMille = a.perMille;
@@ -887,7 +891,7 @@ void DepthColors::CostRow(const CostRowArgs &a)
         const int reachFirst = std::max(0, first - kWideBlocks), reachLast = std::min(kBlocksX - 1, last + kWideBlocks);
         const int from = reachFirst & ~3, to = reachLast | 3;
         alignas(64) static int16_t prefixAll[kDisparities][kPrefixStride]; // (doubled: see CostBlock)
-        for (int di = kSearchFrom; di <= kSearchTo; ++di)
+        for (int di = searchFrom; di <= searchTo; ++di)
         {
             const uint8_t *M = a.matches[1] + di * a.step[1], *Mu = a.matches[0] + di * a.step[0],
                           *Md = a.matches[2] + di * a.step[2];
@@ -918,8 +922,8 @@ void DepthColors::CostRow(const CostRowArgs &a)
         for (int k = 0; k < blockCount; ++k)
         {
             const int bx = blocks[k];
-            const int negMax = bx >= 6 ? std::min(kReach, 8 * (bx - 5)) : 0;
-            const int posMax = std::max(0, std::min(kReach, 8 * (kBlocksX - 6 - bx)));
+            const int negMax = bx >= 6 ? std::min(reach, 8 * (bx - 5)) : 0;
+            const int posMax = std::max(0, std::min(reach, 8 * (kBlocksX - 6 - bx)));
             const int diLo = kMaxDisparity - negMax, diHi = kMaxDisparity + posMax;
             diLoOf[bx] = static_cast<uint8_t>(diLo), diHiOf[bx] = static_cast<uint8_t>(diHi);
             const int16_t *const e = &prefixAll[diLo][kPad + bx];
@@ -958,7 +962,7 @@ void DepthColors::CostRow(const CostRowArgs &a)
 
         // (and the disparities where blocks near an edge lose pixels: the edge word's blocks and those whose windows
         // and strips reach them count fewer than at disparity 0, by what the edge word's blocks lose)
-        int leftEnd = kSearchFrom, rightStart = kSearchTo + 1;
+        int leftEnd = searchFrom, rightStart = searchTo + 1;
         for (int k = 0; k < blockCount; ++k)
         {
             leftEnd = std::max<int>(leftEnd, diLoOf[blocks[k]]);
@@ -971,7 +975,7 @@ void DepthColors::CostRow(const CostRowArgs &a)
             int16_t sum3[kEdge + 1], sumN[kEdge + 1];
         };
         alignas(64) static EdgeLoss lossAll[kDisparities];
-        for (int di = kSearchFrom; di <= kSearchTo; ++di)
+        for (int di = searchFrom; di <= searchTo; ++di)
         {
             if (di >= leftEnd && di < rightStart)
                 continue; // (nothing here loses pixels, or it is disparity 0)
@@ -1040,19 +1044,19 @@ void DepthColors::CostRow(const CostRowArgs &a)
         for (int k = 0; k < blockCount; ++k)
         {
             const int bx = blocks[k];
-            if (diLoOf[bx] > kSearchFrom)
+            if (diLoOf[bx] > searchFrom)
             {
                 if (a.hadLast)
-                    edgeRun(std::true_type{}, bx, 0, kSearchFrom, diLoOf[bx] - 1);
+                    edgeRun(std::true_type{}, bx, 0, searchFrom, diLoOf[bx] - 1);
                 else
-                    edgeRun(std::false_type{}, bx, 0, kSearchFrom, diLoOf[bx] - 1);
+                    edgeRun(std::false_type{}, bx, 0, searchFrom, diLoOf[bx] - 1);
             }
-            if (diHiOf[bx] < kSearchTo)
+            if (diHiOf[bx] < searchTo)
             {
                 if (a.hadLast)
-                    edgeRun(std::true_type{}, bx, kBlocksX - kEdge, diHiOf[bx] + 1, kSearchTo);
+                    edgeRun(std::true_type{}, bx, kBlocksX - kEdge, diHiOf[bx] + 1, searchTo);
                 else
-                    edgeRun(std::false_type{}, bx, kBlocksX - kEdge, diHiOf[bx] + 1, kSearchTo);
+                    edgeRun(std::false_type{}, bx, kBlocksX - kEdge, diHiOf[bx] + 1, searchTo);
             }
         }
     }
@@ -1064,12 +1068,12 @@ void DepthColors::CostRow(const CostRowArgs &a)
         if (a.hadLast)
         {
             // (unrolled, as the compare loop in CountBand is)
-#pragma GCC unroll 7
-            for (int di = kSearchFrom; di <= kSearchTo; ++di)
+#pragma GCC unroll 9
+            for (int di = searchFrom; di <= searchTo; ++di)
                 out[di] = static_cast<int16_t>((priors154[di] + out[di] * kKeepLast) >> 8);
         }
         else
-            for (int di = kSearchFrom; di <= kSearchTo; ++di)
+            for (int di = searchFrom; di <= searchTo; ++di)
                 out[di] = static_cast<int16_t>(priors[di]);
     }
 }
@@ -1400,6 +1404,7 @@ void DepthColors::Estimate()
         a.blockPixels = blockPixels + by * kBlocksX;
         a.cheapestAt = cheapestAt + by * kBlocksX;
         a.hadLast = hadLast;
+        a.reach = m_reach;
         a.active = kAll;
         if (hadLast)
         {
@@ -1531,7 +1536,7 @@ void DepthColors::Estimate()
         for (int k = *valid, b = start + k * step; k <= to; ++k, b += step)
             if (blockPixels[b] && !taken[b])
                 taken[b] = 1, pull(b, kPlaneBonus);
-        SmoothChain(cost, chain[dir], start + *valid * step, step, to + 1 - *valid, before);
+        SmoothChain(cost, chain[dir], start + *valid * step, step, to + 1 - *valid, before, m_reach);
         *valid = to + 1;
     };
 
@@ -1559,8 +1564,8 @@ void DepthColors::Estimate()
                 const size_t b = static_cast<size_t>(by * kBlocksX + bx);
                 const int16_t *c0 = chain[0] + b * kRecord + 2, *c1 = chain[1] + b * kRecord + 2,
                               *c2 = chain[2] + b * kRecord + 2, *c3 = chain[3] + b * kRecord + 2;
-                int best = kSearchFrom, lowest = c0[best] + c1[best] + c2[best] + c3[best];
-                for (int di = kSearchFrom + 1; di <= kSearchTo; ++di)
+                int best = kMaxDisparity - m_reach, lowest = c0[best] + c1[best] + c2[best] + c3[best];
+                for (int di = best + 1; di <= kMaxDisparity + m_reach; ++di)
                 {
                     const int sum = c0[di] + c1[di] + c2[di] + c3[di];
                     if (sum < lowest)
