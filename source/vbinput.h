@@ -21,7 +21,8 @@ inline uint32_t VBStickBits(const InputPadData &pad, unsigned h)
     return s;
 }
 
-inline constexpr uint32_t VB_STICK_INPUTS = INPUT_LSTICK_UP | INPUT_LSTICK_DOWN | INPUT_LSTICK_LEFT | INPUT_LSTICK_RIGHT |
+inline constexpr uint32_t VB_STICK_INPUTS =
+    INPUT_LSTICK_UP | INPUT_LSTICK_DOWN | INPUT_LSTICK_LEFT | INPUT_LSTICK_RIGHT |
     INPUT_RSTICK_UP | INPUT_RSTICK_DOWN | INPUT_RSTICK_LEFT | INPUT_RSTICK_RIGHT;
 
 // The left stick joins the VB's left pad and the right stick its right pad, beside their buttons

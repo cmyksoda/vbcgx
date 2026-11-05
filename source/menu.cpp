@@ -2595,16 +2595,20 @@ static uint32_t ButtonMappingWindow()
 			sprintf(msg, "Press any button on the Wiimote now. Press Home to clear the existing mapping.");
 			break;
 		case INPUT_HW_CLASSIC:
-			sprintf(msg, "Press any button or move a stick on the Classic Controller now. Press Home to clear the existing mapping.");
+			sprintf(msg, "Press any button or move a stick on the Classic Controller now. "
+				"Press Home to clear the existing mapping.");
 			break;
 		case INPUT_HW_WUPC:
-			sprintf(msg, "Press any button or move a stick on the Wii U Pro Controller now. Press Home to clear the existing mapping.");
+			sprintf(msg, "Press any button or move a stick on the Wii U Pro Controller now. "
+				"Press Home to clear the existing mapping.");
 			break;
 		case INPUT_HW_DRC:
-			sprintf(msg, "Press any button or move a stick on the Wii U GamePad now. Press Home to clear the existing mapping.");
+			sprintf(msg, "Press any button or move a stick on the Wii U GamePad now. "
+				"Press Home to clear the existing mapping.");
 			break;
 		case INPUT_HW_NUNCHUK:
-			sprintf(msg, "Press any button or move the stick on the Wiimote or Nunchuk now. Press Home to clear the existing mapping.");
+			sprintf(msg, "Press any button or move the stick on the Wiimote or Nunchuk now. "
+				"Press Home to clear the existing mapping.");
 			break;
 		default:
 			sprintf(msg, "Press any button to map. Press Home to clear.");
