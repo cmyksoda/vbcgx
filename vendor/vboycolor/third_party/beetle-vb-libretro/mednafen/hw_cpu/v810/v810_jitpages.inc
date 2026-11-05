@@ -18,7 +18,7 @@ bool V810::JitPools(void)
 }
 
 /* (jit is the page being written's, or NULL when the block couldn't be compiled) */
-V810::Block *V810::AddBlock(const Decoded *decoded, void *jit)
+V810::Block *V810::AddBlock(const Decoded *decoded, void *jit, void *entry)
 {
    while(!BlockFreed && BlockPoolUsed == BLOCK_POOL)
    {
@@ -35,6 +35,7 @@ V810::Block *V810::AddBlock(const Decoded *decoded, void *jit)
    block->pc = decoded->pc;
    block->code = decoded->code;
    block->jit = jit;
+   block->entry = entry;
    block->next = *slot;
    *slot = block;
    JitPage &page = JitPages[JitWritePage];

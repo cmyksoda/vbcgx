@@ -21,7 +21,7 @@ enum { JIT_EXIT_STOPPED = 0, JIT_EXIT_BRANCH = 1, JIT_EXIT_INTERPRET = 2, JIT_EX
 /* JitStub[JIT_STUB_ENTER](P_REG, &timestamp, code) runs compiled code; the exit leaves the next PC in JitTarget. */
 enum { JIT_STUB_ENTER, JIT_STUB_LEAVE, JIT_STUB_LEAVE_TS, JIT_STUB_EVENTS, JIT_STUB_INTERPRET, JIT_STUB_INTERPRET_FIRST,
        JIT_STUB_BRANCH, JIT_STUB_IDLE, JIT_STUB_READ8, JIT_STUB_READ16, JIT_STUB_READ32, JIT_STUB_WRITE8,
-       JIT_STUB_WRITE16, JIT_STUB_WRITE32, JIT_STUB_WAIT, JIT_STUB_SAME16, JIT_STUB_SAME32, JIT_STUBS };
+       JIT_STUB_WRITE16, JIT_STUB_WRITE32, JIT_STUB_WAIT, JIT_STUB_SAME16, JIT_STUB_SAME32, JIT_STUB_FPP, JIT_STUBS };
 
 /* The code buffer is pages: hot code, then the cold code that goes with it (slow paths, exits), so what runs sits
  * packed together. A page is as far as a conditional branch reaches. */
@@ -44,6 +44,8 @@ enum BlockKind : uint8
    /* stores (r1 = data, r2 = base, imm = displacement) */
    BK_ST_B, BK_ST_H, BK_ST_W,
    BK_NOP,
+   /* a floating-point or extended op (r1 = its arg2, r2 = its arg1, the result's; imm = its second halfword) */
+   BK_FPP,
    /* the ops that end a block (WAIT: Bcond that waits for the next event, from the idle patches) */
    BK_BCOND, BK_WAIT, BK_JMP, BK_JR, BK_JAL
 };
@@ -65,7 +67,7 @@ const uint8 kBlockKinds[128] = {
    BK_LD_B, BK_LD_B, BK_LD_H, BK_LD_H, BK_WAIT, BK_WAIT, BK_LD_W, BK_LD_W,
    BK_ST_B, BK_ST_B, BK_ST_H, BK_ST_H, BK_WAIT, BK_WAIT, BK_ST_W, BK_ST_W,
    BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE,
-   BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_NONE,
+   BK_NONE, BK_NONE, BK_NONE, BK_NONE, BK_FPP, BK_FPP, BK_NONE, BK_NONE,
 };
 
 enum { PAGE_FREE, PAGE_WRITING, PAGE_LIVE, PAGE_PROBATION };
@@ -110,7 +112,7 @@ JitLookupEntry JitLookup[JIT_LOOKUP_SIZE];
 
 inline unsigned BlockOpLength(unsigned kind)
 {
-   return (kind >= BK_MOVEA && kind <= BK_ST_W) || kind == BK_JR || kind == BK_JAL ? 4 : 2;
+   return (kind >= BK_MOVEA && kind <= BK_ST_W) || kind == BK_FPP || kind == BK_JR || kind == BK_JAL ? 4 : 2;
 }
 } // namespace
 
@@ -168,6 +170,10 @@ const V810::Decoded *V810::DecodeBlock(uint32 pc)
       if(kind == BK_NONE)
          break;
 
+      /* (an FPP into r0 is left to the interpreter, which zeroes r0 before every op) */
+      if(kind == BK_FPP && !((tmpop >> 5) & 0x1F))
+         break;
+
       /* (as op_WAIT_BE and the rest check, else they're invalid ops) */
       if(kind == BK_WAIT && (!idlePatches || ((op_pc >> 24) & 7) != 7
                              || code != &FastMap[op_pc >> V810_FAST_MAP_SHIFT][op_pc]))
@@ -189,6 +195,8 @@ const V810::Decoded *V810::DecodeBlock(uint32 pc)
          op.r1 = tmpop & 0x1F, op.r2 = (tmpop >> 5) & 0x1F;
       else if(kind == BK_JR || kind == BK_JAL)
          op.imm = ((tmpop & 0x3FF) << 16) | LoadU16_LE((const uint16 *)(code + 2));
+      else if(kind == BK_FPP)
+         op.r1 = tmpop & 0x1F, op.r2 = (tmpop >> 5) & 0x1F, op.imm = LoadU16_LE((const uint16 *)(code + 2));
       code += BlockOpLength(kind);
       if(kind >= BK_BCOND)
          break;
@@ -202,6 +210,23 @@ const V810::Decoded *V810::DecodeBlock(uint32 pc)
 }
 
 /* The interpreter's idle check after a short branch back, for compiled code. */
+/* The interpreter's FPP case for compiled code (op: the second halfword, then the first): 1 if it took an exception,
+ * whose handler compiled code then leaves to the interpreter loop. */
+uint32 V810::JitFpp(V810 *cpu, v810_timestamp_t *timestamp, uint32 pc, uint32 op)
+{
+   cpu->SetPC(pc + 4);
+   ++*timestamp;
+   cpu->fpu_subop(*timestamp, op >> 26, (op >> 5) & 0x1F, op & 0x1F);
+   cpu->lastop = -1;
+   if(cpu->Halted && *timestamp < cpu->next_event_ts)
+      *timestamp = cpu->next_event_ts;
+   if(cpu->GetPC() == pc + 4)
+      return 0;
+   cpu->JitTarget = cpu->GetPC();
+   cpu->JitResumeAt = NULL;
+   return 1;
+}
+
 v810_timestamp_t V810::JitIdleLoop(V810 *cpu, v810_timestamp_t timestamp, uint32 target)
 {
    cpu->SetPC(target);
@@ -236,8 +261,9 @@ int V810::RunBlock(v810_timestamp_t &timestamp)
          const Decoded *const decoded = BlockEntryOk && JitPools() ? DecodeBlock(block_pc) : NULL;
          if(decoded)
          {
-            void *const jit = CompileBlock(decoded);
-            block = AddBlock(decoded, jit);
+            void *entry = NULL;
+            void *const jit = CompileBlock(decoded, &entry);
+            block = AddBlock(decoded, jit, entry);
          }
          if(!block)
          {
@@ -252,11 +278,11 @@ int V810::RunBlock(v810_timestamp_t &timestamp)
          BlockEntryOk = true; /* (whatever the interpreter's op does, it goes the same way every time) */
          return 0;
       }
-      code = block->jit;
+      code = block->entry;
       if(block->code == &FastMap[block_pc >> V810_FAST_MAP_SHIFT][block_pc]) /* (as a jump there finds it) */
-         JitLookup[(block_pc >> 1) & (JIT_LOOKUP_SIZE - 1)] = JitLookupEntry{block_pc, code};
+         JitLookup[(block_pc >> 1) & (JIT_LOOKUP_SIZE - 1)] = JitLookupEntry{block_pc, block->jit};
       if(JitLinkSite && JitLinkTarget == block_pc)
-         JitLink(JitLinkSite, code); /* (the branch that came here now jumps straight into this block's code) */
+         JitLink(JitLinkSite, block->jit); /* (the branch that came here now jumps straight into this block's code) */
    }
    JitLinkSite = NULL;
    const uint32 exit =
