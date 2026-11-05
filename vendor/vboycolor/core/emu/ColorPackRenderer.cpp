@@ -514,6 +514,7 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
     m_pack = pack && !pack->Empty() ? pack : nullptr;
     m_cellStart.clear();
     m_cellHasTiles.fill(0);
+    m_cellMaps = 0;
     m_fillCells.clear();
     m_layered.clear();
     m_markerBits.clear();
@@ -578,7 +579,7 @@ void ColorPackRenderer::SetPack(const TileColorPack *pack)
     for (size_t i = 1; i < m_cellStart.size(); ++i)
         m_cellStart[i] += m_cellStart[i - 1];
     for (const TileColorPack::CellTile &cell : cells)
-        m_cellHasTiles[cell.cell >> 5] |= 1u << (cell.cell & 31);
+        m_cellHasTiles[cell.cell >> 5] |= 1u << (cell.cell & 31), m_cellMaps |= 1u << (cell.cell >> 12);
 
     // Fills: a cell has some if an entry colors a pixel its tile leaves transparent; marking every cell with an entry
     // is simplest (the tracker only uses this to decide where tagging fills is worth it).
@@ -3128,6 +3129,69 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                 copyBands |= 1u << b;
             }
         }
+
+        // Cells repeating one a few cells to their left in this picture (a background tiled every 16-256 pixels): copied
+        // from it where painting would come out the same - its tags, shades and map cells' layout alike.
+        uint32_t repeatBands = 0;
+        uint32_t repeatWorlds = 0; // (worlds whose map cells keep their order along a row and give no colors of their own)
+        bool repeatLooked = false;
+        if (m_repeatRest)
+            --m_repeatRest; // (a Paint that found little to copy: the next 15 don't look)
+        // (only while the VIP finds the background repeating across the picture: elsewhere looking costs the consoles
+        // more than the copies save)
+        else if (vbgo_vip_repeating() && v.worlds && v.clut && v.band_chr && v.cell_worlds && v.tagged && v.obj_cells && v.filled_cells &&
+                 !unfaded && !depth)
+        {
+            repeatLooked = true;
+            for (unsigned w = 0; w < 32; ++w)
+            {
+                const uint16_t *const a = v.worlds + w * 16;
+                if (VBGO_WORLD_TYPE(a) > 1 || (a[0] >> 7 & 1))
+                    continue;
+                uint32_t maps = 0;
+                for (unsigned m = 0; m < (1u << (a[0] >> 10 & 3) << (a[0] >> 8 & 3)); ++m)
+                    maps |= 1u << ((VBGO_WORLD_MAP(a) + m) & 15);
+                if (!(maps & m_cellMaps))
+                    repeatWorlds |= 1u << w;
+            }
+
+            // (every column's colors the same: copied columns color alike)
+            if (repeatWorlds && !std::memcmp(eyeClut + 4, eyeClut, (VBGO_TT_WIDTH * 4 - 4) * sizeof(uint32_t)))
+            {
+                static const uint32_t kNoSlots[2048 / 32] = {};
+                const uint32_t *ambiguous = pack ? m_ambiguousSlots : kNoSlots;
+                for (unsigned b = 0; b < static_cast<unsigned>(kBands); ++b)
+                {
+                    uint32_t ambiguousHere = 0;
+                    for (unsigned i = 0; i < 2048 / 32; ++i)
+                        ambiguousHere |= v.band_chr[b * (2048 / 32) + i] & ambiguous[i];
+                    if (ambiguousHere || !v.band_key[b])
+                        continue;
+
+                    // (a band that found little to copy is looked at again only every 8th Paint)
+                    uint8_t &wait = m_repeatWait[buffer][b];
+                    if (wait)
+                        --wait;
+                    else
+                        repeatBands |= 1u << b;
+                }
+            }
+        }
+        uint8_t repeatTries[kBands] = {}, repeatCopies[kBands] = {};
+
+        // (per cell column, the bands whose cell may repeat one to its left: tagged, no sprite or fill, only such worlds)
+        std::array<uint32_t, kGridW> repeatAt{};
+        for (uint32_t r = repeatBands; r; r &= r - 1)
+        {
+            const unsigned b = static_cast<unsigned>(__builtin_ctz(r));
+            for (uint64_t cells = v.tagged[b] & ~(v.obj_cells[b] | v.filled_cells[b]) & ~3ull; cells; cells &= cells - 1)
+            {
+                const unsigned c = static_cast<unsigned>(__builtin_ctzll(cells));
+                const uint32_t worlds = v.cell_worlds[b * kGridW + c];
+                if (worlds && !(worlds & ~repeatWorlds))
+                    repeatAt[c] |= 1u << b;
+            }
+        }
         const bool claimRows = !((reinterpret_cast<uintptr_t>(frame) | rowBytes | eyeOffset[0] * 4) & 31);
 
         // (a copied column's runs after its first are counted into its cell, and layer pairs' tiles noted, as painting
@@ -3361,6 +3425,114 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             return true;
         };
 
+        // (no local it doesn't write is taken by reference: the walk keeps those in registers)
+        auto repeatCell = [this, &v, repeatWorlds, &repeatTries, &repeatCopies, &bands, &keptBands, eyeBits, &bandsActive,
+                           &bandColumns, &summaryState, &copyColors, &copyLit, pairs, copyColumns, notePairSlot, frame,
+                           fbWidth, eyeOffset, rowBytes,
+                           claimRows](unsigned b, unsigned c, uint32_t done) __attribute__((always_inline)) {
+            const uint64_t clear = v.tagged[b] & ~((v.obj_cells[b] | v.filled_cells[b]) & v.tagged[b]);
+            if (!(clear >> c & 1) || (v.cell_worlds[b * kGridW + c] & ~repeatWorlds))
+                return false;
+            ++repeatTries[b];
+            static constexpr uint8_t kDistances[] = {16, 32, 8, 4, 2, 24, 12, 6};
+            for (const unsigned distance : kDistances)
+            {
+                if (distance > c)
+                    continue;
+                const unsigned cs = c - distance;
+                // (a kept source holds an older Paint's bookkeeping: its brightness level and automatic-color marks may
+                // have changed since)
+                if (!(clear >> cs & 1) || v.cell_worlds[b * kGridW + cs] != v.cell_worlds[b * kGridW + c] ||
+                    (bands[b].unreached >> cs & 1) || (keptBands[cs] >> b & 1))
+                    continue;
+                bool same = true;
+                uint32_t marks = 0;
+                for (unsigned k = 0; same && k < 8; ++k)
+                {
+                    const unsigned tx = c * 8 + k, sx = cs * 8 + k;
+                    const uint32_t *t = v.columns[tx], *s = v.columns[sx];
+                    if (!t || !s)
+                    {
+                        same = false;
+                        break;
+                    }
+                    t += b * 8, s += b * 8;
+                    const uint8_t *tb = eyeBits + tx * 56 + b * 2, *sb = eyeBits + sx * 56 + b * 2;
+                    same = tb[0] == sb[0] && tb[1] == sb[1];
+                    for (unsigned j = 0; same && j < 8; ++j)
+                        same = t[j] == s[j];
+                    if (bandsActive[sx] >> b & 1)
+                        marks |= static_cast<uint32_t>(bandColumns[sx * kBands + b].first >> 32);
+                }
+                if (same && !(marks & kSlowColumnHi))
+                {
+                    std::memset(&summaryState[c * 8], 0, 8);
+                    CopyColumns columns;
+                    columns.columns = v.columns + c * 8, columns.cells = v.cells + c * 8;
+                    columns.eyeBits = eyeBits + c * 8 * 56 + b * 2;
+                    columns.colors = &copyColors, columns.lit = &copyLit;
+                    columns.upper = columns.lower = &bandColumns[cs * 8 * kBands + b];
+                    columns.activeFrom = &bandsActive[cs * 8];
+                    columns.here = &bandColumns[c * 8 * kBands + b], columns.activeAt = &bandsActive[c * 8];
+                    columns.worlds = m_worlds.data(), columns.pairOfLeft = pairs ? m_pairOfLeft.data() : nullptr;
+                    columns.sums = &bands[b].cells;
+                    columns.b = columns.b0 = columns.b1 = b, columns.shift = 0, columns.c = c;
+                    columns.claim = !(done >> (b ^ 1) & 1);
+                    copyColumns(columns);
+
+                    // (the sources' run keys hold their own map cells)
+                    for (unsigned k = 0; k < 8; ++k)
+                    {
+                        if (!(bandsActive[c * 8 + k] >> b & 1))
+                            continue;
+                        BandColumn &here = bandColumns[(c * 8 + k) * kBands + b];
+                        const unsigned f = static_cast<unsigned>(here.first >> 48 & 7);
+                        const uint32_t starts = static_cast<uint32_t>(here.last >> 48);
+                        const unsigned l = starts ? 31 - static_cast<unsigned>(__builtin_clz(starts)) : f;
+                        const uint16_t *cells = v.cells[c * 8 + k] + vbgo_tt_cell_at(b * 8);
+                        here.first = (here.first & ~(0xFFFFull << 32)) |
+                                     static_cast<uint64_t>(cells[vbgo_tt_cell_at(f)]) << 32;
+                        here.last = (here.last & ~(0xFFFFull << 32)) |
+                                    static_cast<uint64_t>(cells[vbgo_tt_cell_at(l)]) << 32;
+                    }
+                    for (unsigned i = 0; i < columns.notes; ++i)
+                    {
+                        const uint32_t chr = columns.note[i] & 0x7FF, pair = columns.note[i] >> 11;
+                        NoteLeftPair(chr, 1u << pair);
+                        notePairSlot(bands[b].pairSlots, static_cast<uint64_t>(c) << 32 | chr | 1u << pair << 11);
+                    }
+                    uint8_t &brightestHere = bands[b].cells.brightest[c];
+                    brightestHere = static_cast<uint8_t>(std::max<unsigned>(brightestHere, columns.level));
+                    if (marks & kAutoColumnHi)
+                        bands[b].autoCells |= 1ull << c;
+                    uint8_t *to = frame + (static_cast<size_t>(b) * 8 * fbWidth + eyeOffset[0]) * 4 + c * 32;
+                    const uint8_t *row = frame + (static_cast<size_t>(b) * 8 * fbWidth + eyeOffset[0]) * 4 + cs * 32;
+                    for (unsigned r = 0; r < 8; ++r, to += rowBytes, row += rowBytes)
+                    {
+                        if (claimRows)
+                            ClearLine32(to);
+                        vbgo_copy8(to, row, 4);
+                    }
+                    ++repeatCopies[b];
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // (cells bands of cell column c that may repeat one to their left, after its motion copies: the ones copied;
+        // done, the bands neither painted nor to be: see copyCell's claim)
+        auto repeatCells = [&repeatCell](uint32_t cells, unsigned c, uint32_t done) __attribute__((noinline)) {
+            uint32_t copied = 0;
+            for (; cells; cells &= cells - 1)
+            {
+                const unsigned b = static_cast<unsigned>(__builtin_ctz(cells));
+                if (repeatCell(b, c, done | copied))
+                    copied |= 1u << b;
+            }
+            return copied;
+        };
+
         // (per cell column, the bands whose cell may have a motion record)
         std::array<uint32_t, kGridW> recordedBands{};
         for (uint32_t bands = copyBands; bands; bands &= bands - 1)
@@ -3394,6 +3566,8 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                     const unsigned b = static_cast<unsigned>(__builtin_ctz(cells));
                     copiedHere |= static_cast<uint32_t>(copyCell(b, c)) << b;
                 }
+                if (const uint32_t repeats = repeatAt[c] & unkept & ~copiedHere)
+                    copiedHere |= repeatCells(repeats, c, keptBands[c] | copiedHere);
                 shade.cellColumn(c, unkept & ~copiedHere);
                 for (uint32_t cells = unkept; cells; cells &= cells - 1)
                 {
@@ -3815,6 +3989,19 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
             }
         }
         noteAutoCells(kGridW - 1);
+        if (repeatLooked)
+        {
+            unsigned tried = 0, copied = 0;
+            for (uint32_t r = repeatBands; r; r &= r - 1)
+            {
+                const unsigned b = static_cast<unsigned>(__builtin_ctz(r));
+                tried += repeatTries[b], copied += repeatCopies[b];
+                if (repeatTries[b] >= 2 && repeatCopies[b] * 8 < repeatTries[b])
+                    m_repeatWait[buffer][b] = 7;
+            }
+            if (tried < 16 || copied * 8 < tried)
+                m_repeatRest = 15;
+        }
         m_paintedStamp[buffer] = v.stamp;
 
         // The bands' own bookkeeping, kept or just made; the kept ones' pair slots.

@@ -563,6 +563,9 @@ private:
     const TileColorPack *m_pack = nullptr;
     HotVector<uint32_t, 65537, 1> m_cellStart;  // 65537 entries: cell n's CellTiles are [m_cellStart[n], m_cellStart[n + 1])
     std::array<uint32_t, 65536 / 32> m_cellHasTiles{}; // (bit per map cell with CellTiles)
+    uint32_t m_cellMaps = 0; // (bit per BG map with CellTiles)
+    unsigned m_repeatRest = 0; // (Paints before looking for repeats again)
+    std::array<std::array<uint8_t, VBGO_TT_HEIGHT / 8>, 2> m_repeatWait{}; // [buffer][band]: Paints before looking for repeats again
     std::vector<uint8_t> m_fillCells;
     std::unordered_set<uint32_t> m_layered; // hashes with per-layer colors
     std::array<Slot, 2048> m_slots{};

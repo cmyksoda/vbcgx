@@ -1220,6 +1220,171 @@ static INLINE void VbgoStartEye(uint8 *fb_eye, unsigned lr)
 
 #include "vip_front.inc"
 
+/* Eyes (bit per eye) where the block's two back-most worlds are background worlds drawn across the whole width whose map
+ * rows here repeat every 16 cells and leave no fills: their picture then repeats every 128 pixels. */
+static INLINE unsigned VbgoRepeatEyes(const VbgoWorldAttr *attrs, unsigned block_no)
+{
+ unsigned eyes = 3, k, lr, y, m;
+ if(vbgo_tt_fill == VBGO_TT_FILLS_ALL)
+  return 0;
+ for(k = 0; k < 2; k++)
+ {
+  const VbgoWorldAttr *a = &attrs[k];
+  if(a->over || a->scx || a->scy)
+   return 0;
+  for(lr = 0; lr < 2; lr++)
+  {
+   const int32 dest = (int16)sign_10_to_s16((uint16)(a->gx + (lr ? a->gp : -a->gp)));
+   if(!a->lron[lr] || dest > 0 || dest + a->window_width < 383)
+    eyes &= ~(1u << lr);
+  }
+  if(!eyes)
+   return 0;
+ }
+ for(k = 0; k < 2; k++)
+ {
+  const VbgoWorldAttr *a = &attrs[k];
+  unsigned last_row = 64;
+  for(y = 0; y < 8; y++)
+  {
+   const uint16 row_y = (uint16)((block_no * 8 + y) - a->gy);
+   const unsigned map_row = ((((uint32)(int32)(int16)(uint16)(a->my + row_y)) & 511) >> 3) & 0x3F;
+   const unsigned base = (a->bgmap_base << 12) | (map_row * 0x40);
+   uint16 f[4];
+   if(row_y > a->window_height || map_row == last_row)
+    continue;
+   last_row = map_row;
+   memcpy(f, &vbgo_tt_fill_cells[base >> 3], 8);
+   if(vbgo_tt_fill && (f[0] | f[1] | f[2] | f[3]))
+    return 0;
+   for(m = 0; m < 48; m += 2)
+   {
+    uint32 w0, w1;
+    memcpy(&w0, &DRAM[base + m], 4);
+    memcpy(&w1, &DRAM[base + m + 16], 4);
+    if(w0 != w1)
+     return 0;
+   }
+  }
+ }
+ return eyes;
+}
+
+/* (a block whose background didn't repeat is looked at again 8 passes on; one that repeats is copied only while most of
+ * the last pass's blocks did: a copy costs the same however little the worlds draw, a few stray blocks lose) */
+static uint32 VbgoRepeatRetry[2][28];
+static uint32 VbgoRepeatPass;
+static unsigned VbgoRepeatNow, VbgoRepeatLast;
+
+static VBGO_NOINLINE unsigned VbgoRepeatTest(const VbgoWorldAttr *attrs, unsigned block_no)
+{
+ const unsigned eyes = VbgoRepeatEyes(attrs, block_no);
+ if(VbgoRepeatPass != PassNo)
+  VbgoRepeatPass = PassNo, VbgoRepeatLast = VbgoRepeatNow, VbgoRepeatNow = 0;
+ if(!eyes)
+ {
+  VbgoRepeatRetry[DrawingFB][block_no] = PassNo + 8;
+  return 0;
+ }
+ VbgoRepeatNow++;
+ return VbgoRepeatLast >= 8 ? eyes : 0;
+}
+
+/* Columns 128-383 of the block's rows in one eye as the two back-most worlds would draw them, from columns 0-127 (see
+ * VbgoRepeatEyes): pixels, and where stored tags and cells (16 map cells on along the row). */
+static INLINE void VbgoRepeatCopy(uint8 *fb_eye, bool tagged)
+{
+ unsigned x, y;
+ for(y = 0; y < 8; y++)
+ {
+  uint8 *const row = fb_eye + y * 512;
+  vbgo_copy8(row + 128, row, 8), vbgo_copy8(row + 192, row + 64, 8);
+  vbgo_copy8(row + 256, row, 8), vbgo_copy8(row + 320, row + 64, 8);
+ }
+ if(tagged)
+ {
+  uint32_t *const tags = vbgo_tt_row(fb_eye);
+  uint16_t *const cells = vbgo_tt_cell_row(fb_eye);
+  for(x = 128; x < 384; x++)
+  {
+   const uint32_t *const from = tags + (x - 128) * VBGO_TT_COLUMN;
+   vbgo_copy8(tags + x * VBGO_TT_COLUMN, from, 4);
+   for(y = 0; y < 8; y++)
+    if(from[y])
+    {
+     const unsigned c = cells[vbgo_tt_cell_at(y) + x - 128];
+     cells[vbgo_tt_cell_at(y) + x] = (uint16_t)((c & ~63u) | ((c + 16) & 63u));
+    }
+  }
+ }
+}
+
+/* Whether world a in eye lr has a drawn pixel, in a row of the block, in the tile that columns 127 and 128 share (one
+ * starts there where the row's source x isn't a multiple of 8): drawn whole, it marks cell columns 15 and 16. */
+static INLINE uint32_t VbgoRepeatCut(unsigned block_no, unsigned lr, const VbgoWorldAttr *a)
+{
+ const uint16 srcX = a->mx + (lr ? a->mp : -a->mp);
+ uint16 DestX = a->gx + (lr ? a->gp : -a->gp);
+ uint32 SourceX = (uint32)(int32)(int16)srcX;
+ unsigned y;
+ DestX = sign_10_to_s16(DestX);
+ if(DestX & 0x8000)
+  SourceX -= DestX;
+ SourceX -= (uint32)(int32)(int16)srcX; /* (as DrawBGBlockAs: what the window adds to a row's source x) */
+ for(y = 0; y < 8; y++)
+ {
+  const uint16 row_y = (uint16)((block_no * 8 + y) - a->gy);
+  uint16 row_srcX = srcX;
+  uint32 sx, sy, bgsc;
+  if(row_y > a->window_height)
+   continue;
+  if(a->bgm == 1)
+   row_srcX = srcX + (int16)DRAM[(a->param_base + ((row_y * 2) | lr)) & 0xFFFF];
+  sx = (uint32)(int32)(int16)row_srcX + SourceX;
+  if(!(sx & 7))
+   continue;
+  sx = (sx + 128) & 511;
+  sy = ((uint32)(int32)(int16)(uint16)(a->my + row_y)) & 511;
+  bgsc = DRAM[(a->bgmap_base << 12) | (((sy >> 3) & 0x3F) * 0x40) | ((sx >> 3) & 0x3F)];
+  if(CHR_RAM[(bgsc & 0x7FF) * 8 + (((bgsc & 0x1000) ? 7 : 0) ^ (sy & 7))])
+   return 1;
+ }
+ return 0;
+}
+
+/* The block's two back-most worlds in eye lr, where VbgoRepeatEyes found them repeating: drawn in columns 0-127, copied on. */
+static VBGO_NOINLINE void VbgoRepeatBack(uint8 *fb_eye, unsigned block_no, unsigned lr, const VbgoWorldAttr *attrs)
+{
+ uint32_t before[48], cut = 0;
+ unsigned k, x;
+
+ /* (this eye's two worlds' cells counted apart: a copy of a column's marks is exact only for them) */
+ memcpy(before, vbgo_tt_wcells, sizeof(before));
+ memset(vbgo_tt_wcells, 0, sizeof(before));
+ ClipX1 = 127;
+ for(k = 0; k < 2; k++)
+ {
+  vbgo_tt_world = attrs[k].tt_world;
+  vbgo_tt_right_now |= attrs[k].alone;
+  if(vbgo_tt_tags(fb_eye))
+   DrawBGBlockTagged(fb_eye, block_no, lr, &attrs[k]);
+  else
+   DrawBGBlockUntagged(fb_eye, block_no, lr, &attrs[k]);
+ }
+ ClipX1 = 383;
+ VbgoRepeatCopy(fb_eye, vbgo_tt_tags(fb_eye));
+
+ /* (the cells the worlds' tiles touch, as drawing every column marks them: column 47's cut tile shows what column 15's
+  * did, and the tile 127 and 128 share marks columns 15 and 16, and 31 and 32 128 pixels on) */
+ for(k = 0; k < 2; k++)
+  cut |= VbgoRepeatCut(block_no, lr, &attrs[k]) << attrs[k].tt_world;
+ for(x = 16; x < 48; x++)
+  vbgo_tt_wcells[x] |= vbgo_tt_wcells[x - 16];
+ vbgo_tt_wcells[15] |= cut, vbgo_tt_wcells[16] |= cut, vbgo_tt_wcells[31] |= cut, vbgo_tt_wcells[32] |= cut;
+ for(x = 0; x < 48; x++)
+  vbgo_tt_wcells[x] |= before[x];
+}
+
 void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
 {
  /* Eye by eye, and in each world by world, back to front, each through its 8 rows: each pixel gets the same writes in the
@@ -1230,6 +1395,7 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
  VbgoWorldAttr attrs[32];
  int counts[32], drawn_count = 0, obj_lists_used = 0, active = 0, bg_active = 0;
  bool front_ok = vbgo_tt_on != 0, overplane = false, right_alone = false;
+ unsigned repeat;
  int y, world, lr, k;
 
  obj_search_which = 3;
@@ -1312,6 +1478,11 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
   return;
  }
 
+ /* (drawn back to front, a background repeating every 128 pixels is drawn once and copied) */
+ repeat = drawn_count >= 2 && ClipX0 == 0 && ClipX1 == 383 && (attrs[0].bgm | attrs[1].bgm) <= 1 &&
+          vbgo_tt_on && (int32)(PassNo - VbgoRepeatRetry[DrawingFB][block_no]) >= 0
+             ? VbgoRepeatTest(attrs, block_no) : 0;
+
  for(lr = 0; lr < 2; lr++)
  {
   uint8 *const fb_eye = lr ? fb_r : fb_l;
@@ -1329,7 +1500,10 @@ void VIP_DrawBlock(uint8 block_no, uint8 *fb_l, uint8 *fb_r)
    * covering them where it would; DrawBG, for overplane worlds, and DrawAffine always store them) */
   vbgo_tt_right_now = vbgo_tt_right_tags || overplane || !front_ok;
   VbgoStartEye(fb_eye, lr);
-  for(k = 0; k < drawn_count; k++)
+  k = 0;
+  if(repeat >> lr & 1)
+   VbgoRepeatBack(fb_eye, block_no, lr, attrs), k = 2;
+  for(; k < drawn_count; k++)
   {
    VbgoWorldAttr *const a = &attrs[k];
    const uint32 bgmap_base = a->bgmap_base, scy = a->scy, scx = a->scx, bgm = a->bgm, param_base = a->param_base;

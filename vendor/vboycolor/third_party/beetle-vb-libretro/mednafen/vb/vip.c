@@ -3469,7 +3469,14 @@ void vbgo_vip_fresh(void)
       {
          VbgoFrontMemos[fb][b].retry = VbgoFrontMemos[fb][b].big = PassNo;
          VbgoFrontMemos[fb][b].worlds = 0;
+         VbgoRepeatRetry[fb][b] = PassNo;
       }
+   VbgoRepeatNow = VbgoRepeatLast = 0;
+}
+
+bool vbgo_vip_repeating(void)
+{
+   return VbgoRepeatLast >= 8 || VbgoRepeatNow >= 8;
 }
 
 int vbgo_vip_block_sprites(unsigned fb, unsigned block, const vbgo_vip_sprite **sprites)

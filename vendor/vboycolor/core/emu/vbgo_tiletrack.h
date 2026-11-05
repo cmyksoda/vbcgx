@@ -140,6 +140,8 @@ const uint32_t *vbgo_vip_block_pixels(unsigned fb, unsigned lr, unsigned block);
  * of 2-bit pixels (row y: byte y / 4, bits (y % 4) * 2) and the 4 pixel values they index, each the
  * 32-bit word the surface would have held (0: the display was off). */
 const uint8_t *vbgo_vip_eye_bits(int eye);
+/* Whether most blocks the VIP drew lately had a background repeating every 128 pixels (it copies them: see vip_draw.inc). */
+bool vbgo_vip_repeating(void);
 void vbgo_vip_fresh(void);
 /* While on, a block where no world drawn in the right eye alone can draw leaves its right eye undrawn (see vip.c); off,
  * every right eye left so is drawn at once. vbgo_vip_right_stale: a buffer's blocks whose right eye is an older drawing. */
