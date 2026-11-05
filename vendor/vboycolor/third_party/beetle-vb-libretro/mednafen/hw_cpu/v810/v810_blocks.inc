@@ -209,7 +209,6 @@ const V810::Decoded *V810::DecodeBlock(uint32 pc)
    return block;
 }
 
-/* The interpreter's idle check after a short branch back, for compiled code. */
 /* The interpreter's FPP case for compiled code (op: the second halfword, then the first): 1 if it took an exception,
  * whose handler compiled code then leaves to the interpreter loop. */
 uint32 V810::JitFpp(V810 *cpu, v810_timestamp_t *timestamp, uint32 pc, uint32 op)
@@ -227,6 +226,7 @@ uint32 V810::JitFpp(V810 *cpu, v810_timestamp_t *timestamp, uint32 pc, uint32 op
    return 1;
 }
 
+/* The interpreter's idle check after a short branch back, for compiled code. */
 v810_timestamp_t V810::JitIdleLoop(V810 *cpu, v810_timestamp_t timestamp, uint32 target)
 {
    cpu->SetPC(target);
