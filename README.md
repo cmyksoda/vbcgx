@@ -1,6 +1,6 @@
 # ![VBoy Color GX](images/icon_large.png)
 
-VBoy Color GX is a Wii port of [VBoy Color](https://github.com/yuk27/VBoyColor), a Virtual Boy emulator that adds color. It uses a modified version of Tantric's [FCE Ultra GX](https://github.com/dborth/fceugx) frontend for a clean, familiar way to browse and load games.
+VBoy Color GX is a Wii and Wii U port of [VBoy Color](https://github.com/yuk27/VBoyColor), a Virtual Boy emulator that adds color. It uses a modified version of Tantric's [FCE Ultra GX](https://github.com/dborth/fceugx) frontend for a clean, familiar way to browse and load games.
 
 ***You can download the forwarder for this emulator [here!](https://github.com/cmyksoda/vboy-color-gx-forwarder-channel)***
 
@@ -10,16 +10,22 @@ VBoy Color GX is a Wii port of [VBoy Color](https://github.com/yuk27/VBoyColor),
 
 ## Features
 
-- **Full speed** almost everywhere in every official Virtual Boy release, now including every room of *Virtual Boy Wario Land*.[^1]
+- **Full speed:** 21 of the 26 games (24 released, 2 unreleased prototypes) run at full speed, and 4 more at full speed or close to it, on a Wii and on a Wii U in Wii mode.[^1]
+  - At full speed: 3-D Tetris, Bound High!, Dragon Hopper, Golf, Innsmouth no Yakata, Jack Bros., Mario Clash, Mario's Tennis, Niko-chan Battle, SD Gundam - Dimension War, Space Invaders Virtual Collection, Space Squash, Teleroboxer, V-Tetris, Virtual Bowling, Virtual Boy Wario Land, Virtual Fishing, Virtual Lab, Virtual League Baseball, Waterworld, and Zero Racers.
+  - Close to full speed: Galactic Pinball, Nester's Funky Bowling, Panic Bomber, and Red Alarm.
+- **A Wii U version:** `vbcgx-wiiu.wuhb` runs on the Wii U itself under [Aroma](https://aroma.foryour.cafe/), with the GamePad and touch on its screen. It hasn't been speed-benchmarked yet, so the speeds above are for the Wii version.
 - **Lots of color options:** each game's own color pack, automatic colors, multicolor palettes, gradients, and tints (presets or your own).
 - **240p** for crisp pixels on CRT televisions, plus 480p and 480i.
 - **Save states, screenshots, and cover art** through the GX frontend.
 - **WiiFlow Lite plugin** for starting games straight from WiiFlow.
-- **Controllers:** Wii Remote + Nunchuk, Classic Controller, Wii U Pro Controller, GameCube controller, and the Wii U GamePad (in vWii).
+- **Controllers:** Wii Remote + Nunchuk, Classic Controller, Wii U Pro Controller, GameCube controller, and the Wii U GamePad.
+- **Button mapping** for buttons and stick directions. By default the left stick is mapped to the Virtual Boy's left d-pad and the right stick to its right d-pad.
 
 ## Installing
 
-Copy the `apps/vbcgx/` and `vbcgx/` folders to the root of your SD card or USB device, then put your games in `vbcgx/roms/`.
+On a Wii, or a Wii U in Wii mode: copy the `apps/vbcgx/` and `vbcgx/` folders from `vbcgx.zip` to the root of your SD card or USB device, then put your games in `vbcgx/roms/`.
+
+On a Wii U with Aroma: copy `vbcgx-wiiu.wuhb` to `sd:/wiiu/apps/`, put your games in `vbcgx/roms/` on the SD card, and start the app from the Wii U Menu.
 
 For WiiFlow Lite, also copy the `wiiflow/` folder to the root of your SD card and turn on the "Virtual Boy" plugin in WiiFlow's settings. The plugin finds your games in `sd:/vbcgx/roms/`.
 
@@ -34,6 +40,8 @@ tools/build-wii.sh
 ```
 
 The first build also downloads and builds libsmb2. The result is `executables/vbcgx-wii.dol`. To lay it out with the SD card folders, run `python3 tools/package.py`; the zip lands in `dist/`.
+
+The Wii U version builds the same way with `tools/build-wiiu.sh`, which makes `executables/vbcgx-wiiu.wuhb`.
 
 ## Credits
 
@@ -59,4 +67,4 @@ VBoy Color GX doesn't include any games. Virtual Boy is a trademark of Nintendo,
 
 *This project was made with AI assistance. For more information, see [my AI usage statement](https://github.com/cmyksoda/cmyksoda/blob/main/AI_USAGE.md).*
 
-[^1]: Speeds were measured on a Wii and on a Wii U in Wii mode, over the first minute of each game (its title screen, opening and demo). Two scenes outside gameplay can still slow down: Mario Clash's opening movie, only slightly (at its slowest about 50 frames per second on a Wii and 48 on a Wii U, against the Virtual Boy's 50.27), and the house picture at the start of Innsmouth no Yakata. Some games can still slow down during their busiest gameplay, and this is being worked on. Please see the [Speed Benchmark](https://cmyksoda.cc/vbcgx/bench) site for details. Reports of other slow spots are welcome.
+[^1]: Speeds come from the [Speed Benchmark](https://cmyksoda.cc/vbcgx/bench), which times every scene of the 26 games with the Wii build of version 2.0.0, on a Wii and on a Wii U in Wii mode. A game runs is listed as full speed when the slowest 50-frame stretch of every scene takes 18.0 ms a frame or less on both consoles. The Virtual Boy needs 19.9 or less, and the games close to full speed have some scenes between 18.1 and 19.9 ms. One scene is slightly over 19.9 ms: the second base of stage 2 in Vertical Force takes 20.1 ms on a Wii U in Wii mode. On a Wii it takes 19.5 ms. Reports of other slow spots are welcome.
