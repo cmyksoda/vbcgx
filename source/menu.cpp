@@ -3267,9 +3267,6 @@ static int MenuVBOptions(bool colors)
         for (int i = 0; i < 6; ++i)
             snprintf(options.name[i], 100, "%s",
                      EmuSettings.videoFixedRatio && (i == 1 || i == 3) ? "" : videoNames[i]);
-#ifdef __WIIU__
-        options.name[0][0] = 0; // (the Wii U picks its own output from the system settings)
-#endif
     };
 #ifdef __WIIU__
     auto is240p = []() { return false; }; // (the Wii's mode, from a shared settings.xml, doesn't apply here)
@@ -3355,11 +3352,13 @@ static int MenuVBOptions(bool colors)
             } else {
                 switch (ret) {
                 case 0:
+#ifndef __WIIU__ // (the Wii U picks its own output from the system settings)
                     do
                         EmuSettings.videoMode = (EmuSettings.videoMode + 1) % VIDEOMODE_LENGTH;
                     while (!VideoModeAvailable(EmuSettings.videoMode));
                     if (is240p() && EmuSettings.videoFixedRatio > 1) EmuSettings.videoFixedRatio = 1;
                     platform->getVideo()->startMenuVideo();
+#endif
                     break;
                 case 1:
                     EmuSettings.videoAspectRatioCorrection =
@@ -3413,9 +3412,13 @@ static int MenuVBOptions(bool colors)
                     }
                 }
             } else {
+#ifdef __WIIU__
+                snprintf(options.value[0], 100, "Set by the Wii U");
+#else
                 const char *modes[] = {"Automatic", "NTSC (480i)", "Progressive (480p)", "PAL (576i)", "PAL60 (480i)",
                                        "240p (60Hz)", "240p (50Hz)"};
                 snprintf(options.value[0], 100, "%s", modes[EmuSettings.videoMode]);
+#endif
                 const char *scaling[] = {"Maintain Aspect Ratio", "Partial Stretch", "Stretch to Fit"};
                 snprintf(options.value[1], 100, "%s", scaling[EmuSettings.videoAspectRatioCorrection]);
                 snprintf(options.value[2], 100, "%s", EmuSettings.videoBilinearFilter ? "On" : "Off");
