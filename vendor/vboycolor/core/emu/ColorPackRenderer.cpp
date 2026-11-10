@@ -1299,6 +1299,25 @@ __attribute__((noinline)) int ColorPackRenderer::RightSpriteMarks(const vbgo_tt_
     return scanned;
 }
 
+// The band's cells a sprite of a tile with sprites' markers covers in the left eye, by the VIP's list of what it drew
+// there (every cell when it has none).
+uint64_t ColorPackRenderer::LeftMarkerSpriteCells(const vbgo_tt_eye_view &v, const unsigned b) const
+{
+    const vbgo_vip_sprite *sprites = nullptr;
+    const int count = vbgo_vip_block_sprites(static_cast<unsigned>(v.fb), b, &sprites);
+    if (count < 0)
+        return kAllCells;
+    uint64_t cells = 0;
+    for (int i = 0; i < count; ++i)
+    {
+        const vbgo_vip_sprite &s = sprites[i];
+        const int x0 = std::max<int>(s.x[0], 0), x1 = std::min<int>(s.x[0] + 7, VBGO_TT_WIDTH - 1);
+        if (x0 <= x1 && (m_spriteMarkerSlots[s.chr >> 5] >> (s.chr & 31) & 1))
+            cells |= (2ull << (x1 >> 3)) - (1ull << (x0 >> 3));
+    }
+    return cells;
+}
+
 __attribute__((noinline)) uint64_t ColorPackRenderer::RightSpriteCells(const vbgo_tt_eye_view &v, const unsigned b,
                                                                        const ContextGroupBits *markers,
                                                                        const bool bound) const
@@ -1953,7 +1972,12 @@ void ColorPackRenderer::Paint(uint8_t *frame, const uint8_t *other, uint32_t fbW
                                                    (spriteCells >> gx & 1))
                              << gx;
                 if (vbgo_vip_repeat_game)
+                {
+                    // (only sprites' markers count here: a cell no sprite with any covers adds none)
+                    if (!boundHere && v.tagged && v.obj_cells)
+                        cells &= LeftMarkerSpriteCells(v, band);
                     LeftSpriteMarks(v, band, cells, leftBits, leftClut, markers, markerLayers, cache);
+                }
                 else
                     LeftBandMarks(v, band, cells, leftBits, leftClut, markers, markerLayers, cache);
             }

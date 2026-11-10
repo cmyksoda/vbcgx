@@ -309,6 +309,7 @@ private:
     // The right eye's cells in band b (a bit each) where a sprite the VIP drew there may add a marker its left-eye cells
     // don't hold yet: all of them when that drawing isn't known.
     uint64_t RightSpriteCells(const vbgo_tt_eye_view &v, unsigned b, const ContextGroupBits *markers, bool bound) const;
+    uint64_t LeftMarkerSpriteCells(const vbgo_tt_eye_view &v, unsigned b) const;
 
     // The right eye's background tiles with layer-bound markers as its walk reads them: their markers and layers, each
     // at its left-eye cell, in the walk's order per cell, and the layer pairs their runs want (bits in wanted). Returns
