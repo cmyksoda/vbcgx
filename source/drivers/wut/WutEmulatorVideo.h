@@ -40,8 +40,13 @@ class WutEmulatorVideo : public EmulatorVideoDriver
 
 		WutVideoDriver* videoDriver;
 
-		GX2Texture* texture;
+		GX2Texture* texture; // (the copy drawn last)
 		GX2Sampler sampler;
+
+		// A texture per picture the core alternates between, each as that picture was when last uploaded
+		struct Copy { GX2Texture* texture; const uint8_t* src; uint32_t at, used; };
+		Copy copies[2];
+		uint32_t uploads;
 
 		// The game quad on each output target, in that target's pixels (top-left x/y, size w/h)
 		struct TargetPlacement { float x, y, w, h; };

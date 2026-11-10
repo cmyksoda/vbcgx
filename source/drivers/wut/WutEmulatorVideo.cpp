@@ -44,7 +44,7 @@ namespace
 }
 
 WutEmulatorVideo::WutEmulatorVideo()
-	: videoDriver(nullptr), texture(nullptr)
+	: videoDriver(nullptr), texture(nullptr), copies{}, uploads(0)
 	, placement{ {0, 0, 0, 0}, {0, 0, 0, 0} }
 	, shown(nullptr), shownPitch(0)
 {
@@ -140,13 +140,16 @@ void WutEmulatorVideo::resetVideo()
 
 void WutEmulatorVideo::destroyTexture()
 {
-	if (!texture)
-		return;
-
-	if (texture->surface.image)
-		MEMFreeToDefaultHeap(texture->surface.image);
-
-	delete texture;
+	for (Copy& copy : copies)
+	{
+		if (copy.texture)
+		{
+			if (copy.texture->surface.image)
+				MEMFreeToDefaultHeap(copy.texture->surface.image);
+			delete copy.texture;
+		}
+		copy = {};
+	}
 	texture = nullptr;
 }
 
@@ -157,32 +160,87 @@ void WutEmulatorVideo::rebuildTexture(int width, int height)
 	if (width <= 0 || height <= 0)
 		return;
 
-	texture = new GX2Texture();
-	GX2InitTexture(texture, width, height, 1, 0, GX2_SURFACE_FORMAT_UNORM_R8_G8_B8_A8, GX2_SURFACE_DIM_TEXTURE_2D, GX2_TILE_MODE_LINEAR_ALIGNED);
-	// The core's pixels are B, G, R, unused in memory: the sampler puts them in order
-	texture->compMap = GX2_COMP_MAP(GX2_SQ_SEL_Z, GX2_SQ_SEL_Y, GX2_SQ_SEL_X, GX2_SQ_SEL_1);
-
-	GX2CalcSurfaceSizeAndAlignment(&texture->surface);
-	GX2InitTextureRegs(texture);
-
-	texture->surface.image = MEMAllocFromDefaultHeapEx(texture->surface.imageSize, texture->surface.alignment);
-	if (!texture->surface.image)
+	for (Copy& copy : copies)
 	{
-		delete texture;
-		texture = nullptr;
+		GX2Texture* made = new GX2Texture();
+		GX2InitTexture(made, width, height, 1, 0, GX2_SURFACE_FORMAT_UNORM_R8_G8_B8_A8, GX2_SURFACE_DIM_TEXTURE_2D, GX2_TILE_MODE_LINEAR_ALIGNED);
+		// The core's pixels are B, G, R, unused in memory: the sampler puts them in order
+		made->compMap = GX2_COMP_MAP(GX2_SQ_SEL_Z, GX2_SQ_SEL_Y, GX2_SQ_SEL_X, GX2_SQ_SEL_1);
+
+		GX2CalcSurfaceSizeAndAlignment(&made->surface);
+		GX2InitTextureRegs(made);
+
+		made->surface.image = MEMAllocFromDefaultHeapEx(made->surface.imageSize, made->surface.alignment);
+		if (!made->surface.image)
+		{
+			delete made;
+			destroyTexture();
+			return;
+		}
+		copy.texture = made;
+	}
+	texture = copies[0].texture;
+}
+
+namespace
+{
+	// Rows of `bytes` from src into the texture, written straight to memory: whole cache lines are zeroed first (no
+	// fetch of what they held) and stored after, as the Wii's picture store does for the GPU
+	void StoreLines(uint8_t* dst, uint32_t dstStride, const uint8_t* src, size_t srcStride, unsigned rows, uint32_t bytes)
+	{
+		const uint32_t whole = bytes & ~31u;
+		for (unsigned y = 0; y < rows; ++y, dst += dstStride, src += srcStride)
+		{
+			for (uint32_t x = 0; x < whole; x += 32)
+			{
+				__asm__ volatile("dcbz 0,%0" : : "r"(dst + x) : "memory");
+				memcpy(dst + x, src + x, 32);
+				__asm__ volatile("dcbst 0,%0" : : "r"(dst + x) : "memory");
+			}
+			if (whole < bytes)
+			{
+				memcpy(dst + whole, src + whole, bytes - whole);
+				__asm__ volatile("dcbst 0,%0" : : "r"(dst + whole) : "memory");
+			}
+		}
 	}
 }
 
 void WutEmulatorVideo::uploadFrame(const uint8_t* buffer, size_t pitch)
 {
-	uint8_t* dst = static_cast<uint8_t*>(texture->surface.image);
-	const uint32_t dstStride = texture->surface.pitch * 4;
-	const uint32_t rowBytes = texture->surface.width * 4;
+	Copy* copy = copies[1].src == buffer
+		? &copies[1]
+		: copies[0].src == buffer || copies[0].used <= copies[1].used
+			? &copies[0]
+			: &copies[1];
+	copy->used = ++uploads;
+	GX2Texture* const tex = copy->texture;
+	uint8_t* dst = static_cast<uint8_t*>(tex->surface.image);
+	const uint32_t dstStride = tex->surface.pitch * 4;
+	const uint32_t w = tex->surface.width, h = tex->surface.height;
 
-	for (uint32_t y = 0; y < texture->surface.height; y++)
-		memcpy(dst + y * dstStride, buffer + y * pitch, rowBytes);
+	// (only the cells changed since this texture last took this picture, when it did)
+	uint32_t since = 0, at = 0;
+	const uint64_t* changed = vboycolor_changed_cells(buffer, &since, &at);
+	const bool held = changed && copy->src == buffer && copy->at && since == copy->at && h % 8 == 0 && w % 8 == 0 && w <= 64 * 8
+		&& reinterpret_cast<uintptr_t>(buffer) % 32 == 0 && pitch % 32 == 0;
+	if (held)
+	{
+		for (uint32_t band = 0; band < h / 8; ++band)
+			for (uint64_t cells = changed[band]; cells; cells &= cells - 1)
+			{
+				const uint32_t offset = __builtin_ctzll(cells) * 32;
+				StoreLines(dst + band * 8 * dstStride + offset, dstStride, buffer + band * 8 * pitch + offset, pitch, 8, 32);
+			}
+	}
+	else
+		StoreLines(dst, dstStride, buffer, pitch, h, w * 4);
+	__asm__ volatile("sync" : : : "memory");
+	GX2Invalidate(GX2_INVALIDATE_MODE_TEXTURE, tex->surface.image, tex->surface.imageSize);
 
-	GX2Invalidate(GX2_INVALIDATE_MODE_CPU_TEXTURE, texture->surface.image, texture->surface.imageSize);
+	copy->src = buffer;
+	copy->at = changed ? at : 0;
+	texture = tex;
 }
 
 void WutEmulatorVideo::drawQuad()
