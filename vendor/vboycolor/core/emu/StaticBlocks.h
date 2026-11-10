@@ -4,6 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <new>
+#ifdef __WIIU__
+#include "emu/vbgo_mem1.h"
+#endif
 
 // A few buffers of one kind in static storage: on the Wii that's MEM1, where a miss costs about a third of MEM2's, and
 // the heap's MEM1 part is full by game time. A buffer too big for a block, or finding every block taken, uses the heap.
@@ -12,7 +15,11 @@ struct StaticBlocks
 {
     static_assert(kCount >= 1 && kCount <= 32);
     static constexpr size_t kStride = (kBytes + 63) & ~static_cast<size_t>(63);
+#ifdef __WIIU__
+    static inline uint8_t (*const storage)[kStride] = static_cast<uint8_t (*)[kStride]>(vbgo_mem1(kCount * kStride));
+#else
     alignas(64) static inline uint8_t storage[kCount][kStride];
+#endif
     static inline std::atomic<uint32_t> taken{0};
 
     static void *Take(size_t bytes)
@@ -34,7 +41,7 @@ struct StaticBlocks
     static bool Give(void *p)
     {
         const uintptr_t at = reinterpret_cast<uintptr_t>(p) - reinterpret_cast<uintptr_t>(&storage[0][0]);
-        if (at >= sizeof(storage))
+        if (at >= kCount * kStride)
             return false;
         taken.fetch_and(~(1u << (at / kStride)));
         return true;

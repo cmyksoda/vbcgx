@@ -27,6 +27,17 @@
 #include "../masmem.h"
 #include "../state_helpers.h"
 
+#ifdef __WIIU__
+/* (in MEM1 on the Wii U: each definition below declares the pointer, vbgo_vip_place sets it) */
+#include "vbgo_mem1.h"
+#define FB (*FB_mem1)
+#define CHR_RAM (*CHR_RAM_mem1)
+#define DRAM (*DRAM_mem1)
+#define Blocks (*Blocks_mem1)
+#define EyeBits (*EyeBits_mem1)
+#define EyeClut (*EyeClut_mem1)
+#endif
+
 /* VirtualBoyGo: the statics depth reads are 64-byte aligned, so their phase in the L2's 64-byte lines
  * doesn't move with the link (depth's time did, by 0.2 ms). */
 /* (stored by band - see FBOffset - so a block's drawing fills one run of bytes, not 2 bytes of each column's cache line) */
@@ -3498,3 +3509,15 @@ const uint16_t *vbgo_vip_chr_since_pass(unsigned fb, const uint32_t **changed)
    *changed = ChrChangedInPass[fb & 1];
    return CHR_RAM;
 }
+
+#ifdef __WIIU__
+__attribute__((constructor)) static void vbgo_vip_place(void)
+{
+   FB_mem1 = vbgo_mem1(sizeof(FB));
+   CHR_RAM_mem1 = vbgo_mem1(sizeof(CHR_RAM));
+   DRAM_mem1 = vbgo_mem1(sizeof(DRAM));
+   Blocks_mem1 = vbgo_mem1(sizeof(Blocks));
+   EyeBits_mem1 = vbgo_mem1(sizeof(EyeBits));
+   EyeClut_mem1 = vbgo_mem1(sizeof(EyeClut));
+}
+#endif

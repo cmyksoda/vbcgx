@@ -11,6 +11,9 @@
 #include "emu/StaticBlocks.h"
 #include "emu/TileColorPack.h"
 #include "vbgo_tiletrack.h"
+#ifdef __WIIU__
+#include "emu/vbgo_mem1.h"
+#endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_STATIC
@@ -361,7 +364,11 @@ namespace
 
     // ---- Coloring ----
     TileColorPack g_pack;
+#ifdef __WIIU__
+    ColorPackRenderer &g_renderer = *new (vbgo_mem1(sizeof(ColorPackRenderer))) ColorPackRenderer;
+#else
     alignas(64) ColorPackRenderer g_renderer; // (64-byte aligned like the statics depth reads: see FB in vip.c)
+#endif
     alignas(64) ShadeColorizer g_colorizer;
     ShadeRgb g_background{};
     bool g_shadeColors = false; // Auto or Multicolor (else a brightness scheme)
@@ -408,7 +415,11 @@ namespace
     // The two colored pictures: the left eye only, each row padded by a cache line (a column's rows spread over the
     // cache sets), kept in the program's own memory - on the Wii MEM1, not wherever earlier games left the heap.
     constexpr size_t kPictureRowBytes = (VBGO_TT_WIDTH + 8) * 4, kPictureBytes = kPictureRowBytes * VBGO_TT_HEIGHT;
+#ifdef __WIIU__
+    uint8_t (*const g_pictureStore)[kPictureBytes] = static_cast<uint8_t (*)[kPictureBytes]>(vbgo_mem1(2 * kPictureBytes));
+#else
     alignas(64) uint8_t g_pictureStore[2][kPictureBytes];
+#endif
     bool g_pictureStoreUsed[2];
     template <typename T>
     struct PictureStore : LineAligned<T>

@@ -15,6 +15,7 @@
 #include <malloc.h>
 
 #include "WutPlatform.h"
+#include "WutMem1.h"
 #include "../../libgui/GuiImageDataCache.h"
 #include "imagelist.h"
 
@@ -26,6 +27,9 @@ void WutPlatform::init(const PlatformConfig& config)
 
 	// WHBProcInit()'s save callback only acknowledges the OS. Use ours, so the app can save first
 	ProcUISetSaveCallback(&WutPlatform::procSaveCallback, this);
+
+	// (from this thread, as WHBGfxInit registers its own: ProcUI orders callbacks within a core)
+	WutMem1KeepThroughForeground();
 
 	this->threadDriver = new WutThreadDriver();
 	this->threadDriver->init();

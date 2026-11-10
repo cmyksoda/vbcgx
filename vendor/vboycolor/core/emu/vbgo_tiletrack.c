@@ -3,6 +3,16 @@
 
 #include <string.h>
 
+#ifdef __WIIU__
+/* (in MEM1 on the Wii U: each definition below declares the pointer, vbgo_tt_place sets it) */
+#include "vbgo_mem1.h"
+#define s_tags (*s_tags_mem1)
+#define s_cells (*s_cells_mem1)
+#define s_chr (*s_chr_mem1)
+#define s_motion (*s_motion_mem1)
+#define s_hashed_chr (*s_hashed_chr_mem1)
+#endif
+
 int vbgo_tt_on = 0;
 int vbgo_tt_right_tags = 1, vbgo_tt_right_now = 1, vbgo_tt_right_undrawn;
 int vbgo_tt_fill = VBGO_TT_FILLS_NONE;
@@ -1522,3 +1532,14 @@ bool vbgo_tiletrack_eye_view(unsigned eye, vbgo_tt_eye_view *view)
 
    return true;
 }
+
+#ifdef __WIIU__
+__attribute__((constructor)) static void vbgo_tt_place(void)
+{
+   s_tags_mem1 = vbgo_mem1(sizeof(s_tags));
+   s_cells_mem1 = vbgo_mem1(sizeof(s_cells));
+   s_chr_mem1 = vbgo_mem1(sizeof(s_chr));
+   s_motion_mem1 = vbgo_mem1(sizeof(s_motion));
+   s_hashed_chr_mem1 = vbgo_mem1(sizeof(s_hashed_chr));
+}
+#endif
