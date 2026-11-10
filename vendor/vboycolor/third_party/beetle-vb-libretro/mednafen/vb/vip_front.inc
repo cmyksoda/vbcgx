@@ -758,6 +758,12 @@ static inline __attribute__((always_inline)) void DrawOBJFrontAs(uint8 *fb, Vbgo
       /* (none of the 8 covered: all the row's pixels, as they show from the left) */
       uint32 p = pixels, d0, d1, n0, n1;
       uint32_t *const tag = trow + x * VBGO_TT_COLUMN;
+      /* (a pointer, not row[x + j]: the compiler would keep each x + j in a register of its own) */
+      uint8 *const dst = row + x;
+      uint16_t *const cdst = crow + x * VBGO_TT_CELL_COLUMN;
+      /* (pixel j's tag: in-tile x j, or 7 - j = 7 ^ j flipped; each stored before the next is made) */
+      uint32_t b = obits | (flipped ? 7u << 11 : 0u);
+      VBGO_HIDE(b);
       if(flipped)
       {
        p = ((p >> 2) & 0x3333) | ((p & 0x3333) << 2);
@@ -766,25 +772,23 @@ static inline __attribute__((always_inline)) void DrawOBJFrontAs(uint8 *fb, Vbgo
       }
       if(((pixels | (pixels >> 1)) & 0x5555) == 0x5555)
       {
-       const uint32_t b = obits | (flipped ? 7u << 11 : 0u);
-       const int step = flipped ? -(1 << 11) : (1 << 11);
        const uint32 cells = (uint32)ocell * 0x10001u;
 #define VBGO_FRONT_OBJ(j) \
  { \
-  const uint32 pv = (p >> ((j) * 2)) & 3; \
-  row[x + (j)] = plt[pv]; \
+  dst[j] = plt[(p >> ((j) * 2)) & 3]; \
   if(tags) \
-   tag[(j) * VBGO_TT_COLUMN] = (b + (uint32_t)((j) * step)) | pv << 20; \
+   tag[(j) * VBGO_TT_COLUMN] = ((b ^ (uint32_t)(j) << 11) & ~(3u << 20)) | ((p << (20 - 2 * (j))) & (3u << 20)); \
+  VBGO_ORDER; \
  }
        VBGO_FRONT_OBJ(0) VBGO_FRONT_OBJ(1) VBGO_FRONT_OBJ(2) VBGO_FRONT_OBJ(3)
        VBGO_FRONT_OBJ(4) VBGO_FRONT_OBJ(5) VBGO_FRONT_OBJ(6) VBGO_FRONT_OBJ(7)
 #undef VBGO_FRONT_OBJ
        if(tags)
        {
-        memcpy(crow + x * VBGO_TT_CELL_COLUMN, &cells, 4);
-        memcpy(crow + x * VBGO_TT_CELL_COLUMN + 2, &cells, 4);
-        memcpy(crow + x * VBGO_TT_CELL_COLUMN + 4, &cells, 4);
-        memcpy(crow + x * VBGO_TT_CELL_COLUMN + 6, &cells, 4);
+        memcpy(cdst, &cells, 4);
+        memcpy(cdst + 2, &cells, 4);
+        memcpy(cdst + 4, &cells, 4);
+        memcpy(cdst + 6, &cells, 4);
        }
        d0 = d1 = 0xFFFFFFFFu;
       }
@@ -795,13 +799,14 @@ static inline __attribute__((always_inline)) void DrawOBJFrontAs(uint8 *fb, Vbgo
         const uint32 pv = (p >> (2 * n)) & 3;
         if(pv)
         {
-         row[x + n] = plt[pv];
+         dst[n] = plt[pv];
          if(tags)
-          tag[n * VBGO_TT_COLUMN] = obits | (uint32_t)(flipped ? 7 - n : n) << 11 | pv << 20,
-           crow[(x + n) * VBGO_TT_CELL_COLUMN] = ocell;
+          tag[n * VBGO_TT_COLUMN] = ((b ^ (uint32_t)n << 11) & ~(3u << 20)) | pv << 20,
+           cdst[n * VBGO_TT_CELL_COLUMN] = ocell;
+         VBGO_ORDER;
         }
        }
-       memcpy(&d0, OpaqueQuad[p & 0xFF], 4);
+      memcpy(&d0, OpaqueQuad[p & 0xFF], 4);
        memcpy(&d1, OpaqueQuad[p >> 8], 4);
       }
       n0 = c0 | d0;
