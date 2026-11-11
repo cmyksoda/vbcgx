@@ -24,7 +24,7 @@ typedef int64_t s64;
 #endif
 
 #define APPNAME			"VBoy Color GX"
-#define APPVERSION		"2.0.0"
+#define APPVERSION		"2.0.1"
 #define APPFOLDER 		"vbcgx"
 #define PREF_FILE_NAME	"settings.xml"
 
