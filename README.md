@@ -10,10 +10,10 @@ VBoy Color GX is a Wii and Wii U port of [VBoy Color](https://github.com/yuk27/V
 
 ## Features
 
-- **Full speed:** 21 of the 26 games (24 released, 2 unreleased prototypes) run at full speed, and 4 more at full speed or close to it, on a Wii and on a Wii U in Wii mode.[^1]
+- **Full speed:** 21 of the 26 games (24 released, 2 unreleased prototypes) run at full speed, and 5 more at full speed or close to it, on a Wii and on a Wii U in Wii mode.[^1]
   - At full speed: 3-D Tetris, Bound High!, Dragon Hopper, Golf, Innsmouth no Yakata, Jack Bros., Mario Clash, Mario's Tennis, Niko-chan Battle, SD Gundam - Dimension War, Space Invaders Virtual Collection, Space Squash, Teleroboxer, V-Tetris, Virtual Bowling, Virtual Boy Wario Land, Virtual Fishing, Virtual Lab, Virtual League Baseball, Waterworld, and Zero Racers.
-  - Close to full speed: Galactic Pinball, Nester's Funky Bowling, Panic Bomber, and Red Alarm.
-- **A Wii U version:** `vbcgx-wiiu.wuhb` runs on the Wii U itself under [Aroma](https://aroma.foryour.cafe/), with the GamePad and touch on its screen. The speeds above are for the Wii version. The Wii U version has been timed too, and its numbers are on the [Speed Benchmark](https://cmyksoda.cc/vbcgx/bench)'s Wii U tab.
+  - Close to full speed: Galactic Pinball, Nester's Funky Bowling, Panic Bomber, Red Alarm, and Vertical Force.
+- **A Wii U version:** `vbcgx-wiiu.wuhb` runs on the Wii U itself under [Aroma](https://aroma.foryour.cafe/), with the GamePad and touch on its screen. On it, all 26 games run at full speed. Its own numbers are on the [Speed Benchmark](https://cmyksoda.cc/vbcgx/bench)'s Wii U tab.
 - **Lots of color options:** each game's own color pack, automatic colors, multicolor palettes, gradients, and tints (presets or your own).
 - **240p** for crisp pixels on CRT televisions, plus 480p and 480i.
 - **Save states, screenshots, and cover art** through the GX frontend.
@@ -67,4 +67,4 @@ VBoy Color GX doesn't include any games. Virtual Boy is a trademark of Nintendo,
 
 *This project was made with AI assistance. For more information, see [my AI usage statement](https://github.com/cmyksoda/cmyksoda/blob/main/AI_USAGE.md).*
 
-[^1]: Speeds come from the [Speed Benchmark](https://cmyksoda.cc/vbcgx/bench), which times every scene of the 26 games with the Wii build of version 2.0.0, on a Wii and on a Wii U in Wii mode. A game runs is listed as full speed when the slowest 50-frame stretch of every scene takes 18.0 ms a frame or less on both consoles. The Virtual Boy needs 19.9 or less, and the games close to full speed have some scenes between 18.1 and 19.9 ms. One scene is slightly over 19.9 ms: the second base of stage 2 in Vertical Force takes 20.1 ms on a Wii U in Wii mode. On a Wii it takes 19.5 ms. Reports of other slow spots are welcome.
+[^1]: Speeds come from the [Speed Benchmark](https://cmyksoda.cc/vbcgx/bench). For version 2.0.1, every *Vertical Force* scene and the slowest scenes of the other games were timed again on a Wii and on a Wii U in Wii mode, and the rest keep their 2.0.0 times. A game is listed as full speed when the slowest 50-frame stretch of every scene takes 18.0 ms a frame or less on both consoles. The Virtual Boy needs 19.9 or less, and the games close to full speed have some scenes between 18.1 and 19.9 ms. Reports of other slow spots are welcome.
