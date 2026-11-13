@@ -30,7 +30,6 @@ static WutPlatform platformInstance;
 bool vbgo_jit_attach(void);
 #else
 #include "drivers/ogc/wii/WiiPlatform.h"
-#include "drivers/ogc/wii/mem2.h"
 #include <ogc/system.h>
 static WiiPlatform platformInstance;
 #endif
@@ -96,9 +95,6 @@ int main(int argc, char **argv)
     ApplySettings();
     platform->getVideo()->startMenuVideo();
     if (argc && argv[0]) CreateAppPath(argv[0]);
-#ifndef __WIIU__
-    InitMem2Manager();
-#endif
 
     savebuffer = (unsigned char *)memalign(FILE_BUFFER_ALIGN, SAVEBUFFERSIZE);
     browserList = (BROWSERENTRY *)memalign(32, sizeof(BROWSERENTRY) * MAX_BROWSER_SIZE);

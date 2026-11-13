@@ -50,7 +50,7 @@
 
 #ifdef HW_RVL
 #include "drivers/ogc/wii/WiiPlatform.h"
-#include "drivers/ogc/wii/mem2.h"
+#include <malloc.h>
 #elif HW_DOL
 #include "drivers/ogc/gamecube/GameCubePlatform.h"
 #endif
