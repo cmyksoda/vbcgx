@@ -10,10 +10,10 @@ VBoy Color GX is a Wii and Wii U port of [VBoy Color](https://github.com/yuk27/V
 
 ## Features
 
-- **Full speed:** 21 of the 26 games (24 released, 2 unreleased prototypes) run at full speed, and 5 more at full speed or close to it, on a Wii and on a Wii U in Wii mode.[^1]
-  - At full speed: 3-D Tetris, Bound High!, Dragon Hopper, Golf, Innsmouth no Yakata, Jack Bros., Mario Clash, Mario's Tennis, Niko-chan Battle, SD Gundam - Dimension War, Space Invaders Virtual Collection, Space Squash, Teleroboxer, V-Tetris, Virtual Bowling, Virtual Boy Wario Land, Virtual Fishing, Virtual Lab, Virtual League Baseball, Waterworld, and Zero Racers.
-  - Close to full speed: Galactic Pinball, Nester's Funky Bowling, Panic Bomber, Red Alarm, and Vertical Force.
-- **A Wii U version:** `vbcgx-wiiu.wuhb` runs on the Wii U itself under [Aroma](https://aroma.foryour.cafe/), with the GamePad and touch on its screen. On it, all 26 games run at full speed. Its own numbers are on the [Speed Benchmark](https://cmyksoda.cc/vbcgx/bench)'s Wii U tab.
+- **Full speed:** all 26 games (24 released, 2 unreleased prototypes) run at full speed on a Wii and on a Wii U in Wii mode, 21 of them with room to spare.[^1]
+  - Full speed, with room to spare: 3-D Tetris, Bound High!, Dragon Hopper, Golf, Innsmouth no Yakata, Jack Bros., Mario Clash, Mario's Tennis, Niko-chan Battle, SD Gundam - Dimension War, Space Invaders Virtual Collection, Space Squash, Teleroboxer, V-Tetris, Virtual Bowling, Virtual Boy Wario Land, Virtual Fishing, Virtual Lab, Virtual League Baseball, Waterworld, and Zero Racers.
+  - Full speed: Galactic Pinball, Nester's Funky Bowling, Panic Bomber, Red Alarm, and Vertical Force.
+- **A Wii U version:** `vbcgx-wiiu.wuhb` runs on the Wii U itself under [Aroma](https://aroma.foryour.cafe/), with the GamePad and touch on its screen. On it, all 26 games run at full speed, with room to spare. Its own numbers are on the [Speed Benchmark](https://cmyksoda.cc/vbcgx/bench)'s Wii U tab.
 - **Lots of color options:** each game's own color pack, automatic colors, multicolor palettes, gradients, and tints (presets or your own).
 - **240p** for crisp pixels on CRT televisions, plus 480p and 480i.
 - **Save states, screenshots, and cover art** through the GX frontend.
