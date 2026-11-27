@@ -293,7 +293,7 @@ else ifneq (,$(filter $(platform), ngc wii wiiu))
    CXX = $(DEVKITPPC)/bin/powerpc-eabi-g++$(EXE_EXT)
    AR = $(DEVKITPPC)/bin/powerpc-eabi-ar$(EXE_EXT)
    ENDIANNESS_DEFINES += -DGEKKO -mcpu=750 -meabi -mhard-float -DMSB_FIRST
-   EXTRA_INCLUDES := -I$(DEVKITPRO)/libogc/include
+   EXTRA_INCLUDES := -I$(DEVKITPRO)/libogc2/wii/include
    STATIC_LINKING = 1
 
    # Nintendo WiiU
